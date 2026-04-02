@@ -1,0 +1,42 @@
+server:
+  port: 8080
+
+spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          # ── Google (OpenID Connect) ─────────────────────────────────────────────
+          # To use: create OAuth2 credentials at https://console.cloud.google.com
+          #   Authorized redirect URI: http://localhost:8080/login/oauth2/code/google
+          # Set env vars: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+          google:
+            client-id: ${GOOGLE_CLIENT_ID:your-google-client-id}
+            client-secret: ${GOOGLE_CLIENT_SECRET:your-google-client-secret}
+            scope:
+              - openid    # required for OIDC — gives us the "sub" claim
+              - profile   # gives us "name"
+              - email     # gives us "email"
+
+          # ── GitHub (OAuth2 only, not OIDC) ─────────────────────────────────────
+          # To use: create an OAuth App at https://github.com/settings/developers
+          #   Authorization callback URL: http://localhost:8080/login/oauth2/code/github
+          # Set env vars: GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET
+          github:
+            client-id: ${GITHUB_CLIENT_ID:your-github-client-id}
+            client-secret: ${GITHUB_CLIENT_SECRET:your-github-client-secret}
+            scope:
+              - read:user  # gives us profile info including "id", "name", "login"
+              - user:email # gives us the verified primary email address
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health, info
+
+# Enable DEBUG logging for Spring Security to trace the OAuth2 / JWT flow
+logging:
+  level:
+    org.springframework.security: DEBUG
+    com.example.oauthplayground: DEBUG
