@@ -73,26 +73,19 @@ export default function App() {
     (_id: string, patch: Partial<BpmnNodeData>) => {
       if (!graphComponent || !selection || selection.kind !== 'node') return
       const gc = graphComponent as {
-        graph: {
-          setNodeTag(node: unknown, tag: unknown): void
-          labels: { find(pred: (l: unknown) => boolean): unknown }
-          setLabelText(label: unknown, text: string): void
-        }
+        graph: { setLabelText(label: unknown, text: string): void }
         selection: { first(): unknown }
         invalidate(): void
       }
-      const node = gc.selection.first()
+      const node = gc.selection.first() as { tag: BpmnNodeData; labels: { size: number; first(): unknown } } | null
       if (!node) return
-      const updatedData = { ...selection.data, ...patch }
-      gc.graph.setNodeTag(node, updatedData)
+
+      // yFiles 3.0: assign tag directly (setNodeTag was removed)
+      node.tag = { ...selection.data, ...patch }
 
       // Update the visual label if label changed
-      if (patch.label !== undefined) {
-        const labels = gc.graph.labels as unknown as Array<{ owner: unknown; text: string }>
-        const nodeLabel = labels.find((l) => l.owner === node)
-        if (nodeLabel) {
-          gc.graph.setLabelText(nodeLabel, patch.label)
-        }
+      if (patch.label !== undefined && node.labels.size > 0) {
+        gc.graph.setLabelText(node.labels.first(), patch.label)
       }
 
       gc.invalidate()
@@ -104,16 +97,14 @@ export default function App() {
     (_id: string, patch: Partial<BpmnEdgeData>) => {
       if (!graphComponent || !selection || selection.kind !== 'edge') return
       const gc = graphComponent as {
-        graph: {
-          setEdgeTag(edge: unknown, tag: unknown): void
-          setLabelText(label: unknown, text: string): void
-        }
         selection: { first(): unknown }
         invalidate(): void
       }
-      const edge = gc.selection.first()
+      const edge = gc.selection.first() as { tag: BpmnEdgeData } | null
       if (!edge) return
-      gc.graph.setEdgeTag(edge, { ...selection.data, ...patch })
+
+      // yFiles 3.0: assign tag directly (setEdgeTag was removed)
+      edge.tag = { ...selection.data, ...patch }
       gc.invalidate()
     },
     [graphComponent, selection]

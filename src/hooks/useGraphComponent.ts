@@ -3,9 +3,10 @@
  *
  * Manages the full lifecycle of a yFiles GraphComponent.
  *
- * Palette drag-and-drop uses the yFiles NodeDropInputMode.startDrag() API
- * (not native dataTransfer) so that itemCreator receives a proper SimpleNode
- * with the BPMN tag attached.
+ * Palette drag-and-drop uses NodeDropInputMode.startDrag() so itemCreator
+ * receives a SimpleNode with the BPMN tag. Nodes are styled on creation
+ * using ShapeNodeStyle (guaranteed available) with shapes matching BPMN
+ * conventions; BpmnNodeStyle is applied asynchronously on top if available.
  */
 import { useEffect, useRef, useState, useCallback } from 'react'
 import type { RefObject } from 'react'
@@ -19,30 +20,40 @@ interface UseGraphComponentResult {
   startPaletteDrag: (event: DragEvent, data: BpmnNodeData) => void
 }
 
-/** Default node sizes per BPMN element category */
+interface YFilesClasses {
+  NodeDropInputMode: { startDrag(e: DragEvent, node: unknown, effects: unknown): void }
+  SimpleNode: new () => { tag: unknown; layout: unknown }
+  Rect: new (x: number, y: number, w: number, h: number) => unknown
+  DragDropEffects: { ALL: unknown }
+  ShapeNodeStyle: new (opts?: Record<string, unknown>) => unknown
+}
+
 function defaultSize(type: string): { width: number; height: number } {
-  if (type.includes('Event'))   return { width: 48,  height: 48 }
-  if (type.includes('Gateway')) return { width: 50,  height: 50 }
-  if (type === 'DataObject')    return { width: 40,  height: 55 }
-  if (type === 'DataStore')     return { width: 60,  height: 50 }
-  if (type === 'Pool')          return { width: 600, height: 200 }
-  if (type === 'Lane')          return { width: 600, height: 100 }
-  if (type === 'Group')         return { width: 200, height: 150 }
+  if (type.includes('Event'))    return { width: 48,  height: 48 }
+  if (type.includes('Gateway'))  return { width: 50,  height: 50 }
+  if (type === 'DataObject')     return { width: 40,  height: 55 }
+  if (type === 'DataStore')      return { width: 60,  height: 50 }
+  if (type === 'Pool')           return { width: 600, height: 200 }
+  if (type === 'Lane')           return { width: 600, height: 100 }
+  if (type === 'Group')          return { width: 200, height: 150 }
   if (type === 'TextAnnotation') return { width: 100, height: 60 }
   return { width: 120, height: 60 }
+}
+
+/** ShapeNodeStyle shapes that approximate BPMN visual conventions */
+function shapeFor(type: string): string {
+  if (type.includes('Event'))    return 'ellipse'
+  if (type.includes('Gateway'))  return 'diamond'
+  if (type === 'TextAnnotation') return 'rectangle'
+  if (type === 'DataObject')     return 'rectangle'
+  return 'round-rectangle'
 }
 
 export function useGraphComponent(
   containerRef: RefObject<HTMLDivElement | null>
 ): UseGraphComponentResult {
   const graphComponentRef = useRef<unknown>(null)
-  // Hold yFiles classes for synchronous use in drag-start handlers
-  const yfilesClassesRef = useRef<{
-    NodeDropInputMode: { startDrag(e: DragEvent, node: unknown, effects: unknown): void }
-    SimpleNode: new () => { tag: unknown; layout: unknown }
-    Rect: new (x: number, y: number, w: number, h: number) => unknown
-    DragDropEffects: { ALL: unknown }
-  } | null>(null)
+  const yfilesRef = useRef<YFilesClasses | null>(null)
 
   const [isReady, setIsReady] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -60,17 +71,9 @@ export function useGraphComponent(
 
         if (destroyed) return
 
-        const {
-          GraphComponent,
-          GraphEditorInputMode,
-          NodeDropInputMode,
-          SimpleNode,
-          Rect,
-          DragDropEffects,
-        } = yf
+        const { GraphComponent, GraphEditorInputMode, NodeDropInputMode, SimpleNode, Rect, DragDropEffects, ShapeNodeStyle } = yf
 
-        // Store for use in the synchronous startPaletteDrag callback
-        yfilesClassesRef.current = { NodeDropInputMode, SimpleNode, Rect, DragDropEffects }
+        yfilesRef.current = { NodeDropInputMode, SimpleNode, Rect, DragDropEffects, ShapeNodeStyle }
 
         const gc = new GraphComponent(containerRef.current!)
         graphComponent = gc
@@ -78,7 +81,6 @@ export function useGraphComponent(
 
         const editorMode = new GraphEditorInputMode()
 
-        // NodeDropInputMode — receives SimpleNode templates from startDrag()
         const dropMode = new NodeDropInputMode()
         dropMode.enabled = true
         dropMode.isGroupNodePredicate = null
@@ -86,7 +88,11 @@ export function useGraphComponent(
 
         dropMode.itemCreator = (
           _ctx: unknown,
-          graph: { createNode(params: unknown): unknown; addLabel(node: unknown, text: string): void },
+          graph: {
+            createNode(params: unknown): unknown
+            setStyle(node: unknown, style: unknown): void
+            addLabel(node: unknown, text: string): void
+          },
           draggedItem: { tag?: BpmnNodeData } | null,
           _dropTarget: unknown,
           dropLocation: { x: number; y: number }
@@ -102,8 +108,13 @@ export function useGraphComponent(
             height
           )
 
-          // createNode(layout, style, tag) — tag is stored on the node
-          const node = graph.createNode({ layout, tag: nodeData })
+          // Apply a ShapeNodeStyle synchronously so nodes are never plain boxes
+          const shape = shapeFor(nodeData.type)
+          const style = ShapeNodeStyle
+            ? new ShapeNodeStyle({ shape })
+            : undefined
+
+          const node = graph.createNode({ layout, tag: nodeData, style })
           graph.addLabel(node, nodeData.label ?? '')
           return node
         }
@@ -131,17 +142,12 @@ export function useGraphComponent(
       destroyed = true
       graphComponent?.cleanUp()
       graphComponentRef.current = null
-      yfilesClassesRef.current = null
+      yfilesRef.current = null
     }
   }, [containerRef])
 
-  /**
-   * Called on dragstart from a palette item.
-   * Creates a SimpleNode template carrying the BPMN tag and hands it to
-   * NodeDropInputMode.startDrag() so itemCreator receives it on drop.
-   */
   const startPaletteDrag = useCallback((event: DragEvent, data: BpmnNodeData) => {
-    const yf = yfilesClassesRef.current
+    const yf = yfilesRef.current
     if (!yf) return
 
     const { NodeDropInputMode, SimpleNode, Rect, DragDropEffects } = yf
