@@ -98,7 +98,14 @@ function subscribeSelection(gc: unknown, listener: Listener): (() => void) | nul
     }
   }
 
+  // Log available APIs so we can identify the correct yFiles 3.0 method name
+  const comp = gc as Record<string, unknown>
+  const sel = comp.selection
   console.warn('[useSelection] Could not find a selection change API on GraphComponent. Selection panel will not update.')
+  console.info('[useSelection] graphComponent methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(gc)).filter(k => k.toLowerCase().includes('select') || k.toLowerCase().includes('current') || k.toLowerCase().includes('listen') || k.toLowerCase().includes('changed')))
+  if (sel && typeof sel === 'object') {
+    console.info('[useSelection] selection methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(sel)).filter(k => k.toLowerCase().includes('listen') || k.toLowerCase().includes('changed') || k.toLowerCase().includes('add') || k.toLowerCase().includes('on')))
+  }
   return null
 }
 
