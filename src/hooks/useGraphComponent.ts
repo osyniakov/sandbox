@@ -40,13 +40,32 @@ function defaultSize(type: string): { width: number; height: number } {
   return { width: 120, height: 60 }
 }
 
-/** ShapeNodeStyle shapes that approximate BPMN visual conventions */
+/** String shape names used as fallback when the enum isn't available */
 function shapeFor(type: string): string {
   if (type.includes('Event'))    return 'ellipse'
   if (type.includes('Gateway'))  return 'diamond'
-  if (type === 'TextAnnotation') return 'rectangle'
-  if (type === 'DataObject')     return 'rectangle'
   return 'round-rectangle'
+}
+
+/** Map BPMN type to ShapeNodeStyleShape enum value (yFiles 3.0) */
+function shapeEnumFor(ShapeNodeStyleShape: Record<string, unknown>, type: string): unknown {
+  // Log available enum keys once so we can see exact names in the console
+  if (!(shapeEnumFor as { logged?: boolean }).logged) {
+    console.debug('[bpmn] ShapeNodeStyleShape keys:', Object.keys(ShapeNodeStyleShape))
+    ;(shapeEnumFor as { logged?: boolean }).logged = true
+  }
+
+  const pick = (...keys: string[]) => {
+    for (const k of keys) if (k in ShapeNodeStyleShape) return ShapeNodeStyleShape[k]
+    return undefined
+  }
+
+  if (type.includes('Event'))
+    return pick('ELLIPSE', 'Ellipse', 'ellipse')
+  if (type.includes('Gateway'))
+    return pick('DIAMOND', 'Diamond', 'diamond')
+  // Tasks and everything else
+  return pick('ROUND_RECTANGLE', 'RoundRectangle', 'roundRectangle', 'RECTANGLE', 'Rectangle', 'rectangle')
 }
 
 export function useGraphComponent(
@@ -86,10 +105,14 @@ export function useGraphComponent(
         dropMode.isGroupNodePredicate = null
         editorMode.nodeDropInputMode = dropMode
 
+        // Resolve ShapeNodeStyleShape enum for correct shape values
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const ShapeNodeStyleShape = (yf as any).ShapeNodeStyleShape
+
         dropMode.itemCreator = (
           _ctx: unknown,
           graph: {
-            createNode(params: unknown): unknown
+            createNode(layout: unknown, style: unknown, tag: unknown): unknown
             setStyle(node: unknown, style: unknown): void
             addLabel(node: unknown, text: string): void
           },
@@ -108,13 +131,23 @@ export function useGraphComponent(
             height
           )
 
-          // Apply a ShapeNodeStyle synchronously so nodes are never plain boxes
-          const shape = shapeFor(nodeData.type)
-          const style = ShapeNodeStyle
-            ? new ShapeNodeStyle({ shape })
-            : undefined
+          // Build ShapeNodeStyle using enum values (yFiles 3.0 requires enum, not strings)
+          let style: unknown
+          if (ShapeNodeStyle && ShapeNodeStyleShape) {
+            const shapeEnum = shapeEnumFor(ShapeNodeStyleShape, nodeData.type)
+            style = new ShapeNodeStyle({ shape: shapeEnum })
+          } else if (ShapeNodeStyle) {
+            // Fallback: try string shape (older builds)
+            style = new ShapeNodeStyle({ shape: shapeFor(nodeData.type) })
+          }
 
-          const node = graph.createNode({ layout, tag: nodeData, style })
+          console.debug('[bpmn] itemCreator type=%s shape=%o style=%o', nodeData.type, style && (style as Record<string,unknown>).shape, style)
+
+          // Use positional overload: createNode(layout, style, tag)
+          const node = style
+            ? graph.createNode(layout, style, nodeData)
+            : graph.createNode(layout, null, nodeData)
+
           graph.addLabel(node, nodeData.label ?? '')
           return node
         }
