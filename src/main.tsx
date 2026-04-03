@@ -1,27 +1,35 @@
 /**
  * Application entry point.
  *
- * The yFiles license is initialised here, before React mounts,
- * so it is set before any GraphComponent is created.
- *
- * If the yFiles package or license.json is missing, the app still renders —
- * the error is caught inside useGraphComponent and shown as an ErrorBanner.
+ * The yFiles license MUST be set before any GraphComponent is created.
+ * We await initLicense() before mounting React to guarantee ordering.
  */
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import { initLicense } from './yfiles/license-init'
 
-// Attempt to initialise the yFiles license.
-// Errors are surfaced at render time through the hook, not here,
-// so we do NOT await or block rendering on this call.
-import('./yfiles/license-init')
-  .then(({ initLicense }) => initLicense())
-  .catch(() => {
-    // Swallow — useGraphComponent will surface the error in the UI
-  })
+async function bootstrap() {
+  try {
+    await initLicense()
+  } catch (err) {
+    // Show a plain error screen if the license can't be loaded
+    ReactDOM.createRoot(document.getElementById('root')!).render(
+      <div style={{ padding: '2rem', fontFamily: 'monospace', color: '#c00' }}>
+        <h2>License setup required</h2>
+        <pre style={{ whiteSpace: 'pre-wrap', marginTop: '1rem' }}>
+          {err instanceof Error ? err.message : String(err)}
+        </pre>
+      </div>
+    )
+    return
+  }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-)
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  )
+}
+
+bootstrap()

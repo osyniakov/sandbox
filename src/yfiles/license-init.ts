@@ -1,15 +1,18 @@
 /**
  * Initialise the yFiles license.
  *
- * This MUST be called before any other yFiles import is used.
+ * This MUST complete before any GraphComponent is created.
  * The license data comes from `license.json` in the project root.
  * That file is gitignored — copy `license.json.example` → `license.json`
- * and fill in your evaluation or commercial license key.
+ * and fill in your yFiles evaluation or commercial license data.
+ *
+ * yFiles 3.0 changed the license API:
+ *   - 2.x: License.value = data   (named export from 'yfiles')
+ *   - 3.0: GraphComponent.license = data  (static property)
+ * We try both so the code works on either version.
  */
 export async function initLicense(): Promise<void> {
-  // Dynamic import so that a missing license.json gives a clear error
-  // rather than crashing the entire module graph at startup.
-  const [{ License }, licenseData] = await Promise.all([
+  const [yfiles, licenseData] = await Promise.all([
     import('yfiles'),
     import('../../license.json').catch(() => {
       throw new Error(
@@ -19,6 +22,24 @@ export async function initLicense(): Promise<void> {
     }),
   ])
 
-  // licenseData is a JSON module; default export is the JSON value
-  License.value = (licenseData as { default: object }).default ?? licenseData
+  // JSON module: actual data is on .default
+  const data = (licenseData as { default: object }).default ?? licenseData
+
+  const yf = yfiles as Record<string, unknown>
+
+  // yFiles 3.0: GraphComponent.license (static property)
+  if (yf.GraphComponent && typeof yf.GraphComponent === 'function') {
+    const GC = yf.GraphComponent as Record<string, unknown>
+    if ('license' in GC) {
+      GC.license = data
+    }
+  }
+
+  // yFiles 2.x: License.value
+  if (yf.License && typeof yf.License === 'object') {
+    const lic = yf.License as Record<string, unknown>
+    if ('value' in lic) {
+      lic.value = data
+    }
+  }
 }
