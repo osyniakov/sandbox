@@ -8,12 +8,16 @@ export default defineConfig({
     alias: { '@': resolve(__dirname, 'src') }
   },
   optimizeDeps: {
-    // Pre-bundle yFiles to avoid cold-start issues with large ES module
-    include: ['yfiles']
+    // yFiles MUST be excluded from Vite's esbuild pre-bundler.
+    // It uses instanceof checks across module boundaries and internal
+    // singleton registries that break when transformed by esbuild.
+    exclude: ['yfiles']
   },
   build: {
     // yFiles requires ES2017+ target
     target: 'esnext',
-    sourcemap: true
+    sourcemap: true,
+    // yFiles is legitimately large; suppress noisy chunk size warnings
+    chunkSizeWarningLimit: 4000
   }
 })
