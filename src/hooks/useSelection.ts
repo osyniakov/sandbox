@@ -99,12 +99,31 @@ function subscribeSelection(gc: unknown, listener: Listener): (() => void) | nul
   }
 
   console.warn('[useSelection] Could not find a selection change API on GraphComponent. Selection panel will not update.')
-  const gcObj = gc as Record<string, unknown>
-  const selObj = gcObj.selection
-  console.info('[useSelection] graphComponent methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(gc)).filter(k => k.toLowerCase().includes('select') || k.toLowerCase().includes('current') || k.toLowerCase().includes('listen') || k.toLowerCase().includes('changed')))
-  if (selObj && typeof selObj === 'object') {
-    console.info('[useSelection] selection methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(selObj)).filter(k => k.toLowerCase().includes('listen') || k.toLowerCase().includes('changed') || k.toLowerCase().includes('add') || k.toLowerCase().includes('on')))
+
+  // Collect ALL methods from the full prototype chain
+  function allProtoMethods(obj: unknown): string[] {
+    const names = new Set<string>()
+    let proto = Object.getPrototypeOf(obj)
+    while (proto && proto !== Object.prototype) {
+      Object.getOwnPropertyNames(proto).forEach(k => names.add(k))
+      proto = Object.getPrototypeOf(proto)
+    }
+    return [...names].sort()
   }
+
+  const gcObj = gc as Record<string, unknown>
+  console.info('[useSelection] ALL graphComponent proto methods:', allProtoMethods(gc))
+
+  const selObj = gcObj.selection
+  if (selObj && typeof selObj === 'object') {
+    console.info('[useSelection] ALL selection proto methods:', allProtoMethods(selObj))
+  }
+
+  const sim = gcObj.selectionIndicatorManager
+  if (sim && typeof sim === 'object') {
+    console.info('[useSelection] ALL selectionIndicatorManager proto methods:', allProtoMethods(sim))
+  }
+
   return null
 }
 
