@@ -1,13 +1,11 @@
 /**
- * useUndoRedo
+ * useUndoRedo — yFiles 3.0
  *
- * Subscribes to a yFiles GraphComponent's undo engine and exposes
- * undo/redo actions + availability flags as React state.
+ * Subscribes to the graph undo engine and exposes undo/redo
+ * actions + availability flags as React state.
  *
- * yFiles 3.0 notes:
- *  - The UndoEngine is on graphComponent.graph.undoEngine (not graphComponent.undoEngine)
- *  - addPropertyChangedListener was removed; use addCanUndoChangedListener /
- *    addCanRedoChangedListener, or fall back to addUndoUnitAddedListener
+ * yFiles 3.0: undoEngine is on graphComponent.graph, not graphComponent.
+ * Events: addCanUndoChangedListener / addCanRedoChangedListener.
  */
 import { useEffect, useState, useCallback } from 'react'
 
@@ -16,21 +14,10 @@ interface UndoEngine {
   canRedo(): boolean
   undo(): void
   redo(): void
-  // yFiles 2.x
-  addPropertyChangedListener?(listener: () => void): void
-  removePropertyChangedListener?(listener: () => void): void
-  // yFiles 3.0
-  addCanUndoChangedListener?(listener: () => void): void
-  removeCanUndoChangedListener?(listener: () => void): void
-  addCanRedoChangedListener?(listener: () => void): void
-  removeCanRedoChangedListener?(listener: () => void): void
-  // fallback — fires after every undo unit is added/executed
-  addUndoUnitAddedListener?(listener: () => void): void
-  removeUndoUnitAddedListener?(listener: () => void): void
-}
-
-interface GraphWithUndo {
-  undoEngine: UndoEngine | null | undefined
+  addCanUndoChangedListener(listener: () => void): void
+  removeCanUndoChangedListener(listener: () => void): void
+  addCanRedoChangedListener(listener: () => void): void
+  removeCanRedoChangedListener(listener: () => void): void
 }
 
 interface UseUndoRedoResult {
@@ -38,6 +25,11 @@ interface UseUndoRedoResult {
   canRedo: boolean
   undo: () => void
   redo: () => void
+}
+
+function getEngine(graphComponent: unknown): UndoEngine | null {
+  const graph = (graphComponent as { graph?: Record<string, unknown> } | null)?.graph
+  return (graph?.undoEngine as UndoEngine | null | undefined) ?? null
 }
 
 export function useUndoRedo(
@@ -49,53 +41,25 @@ export function useUndoRedo(
 
   useEffect(() => {
     if (!isReady || !graphComponent) return
-
-    // yFiles 3.0: undoEngine lives on graph, not on GraphComponent
-    const graph = (graphComponent as { graph?: GraphWithUndo }).graph
-    const engine = graph?.undoEngine
+    const engine = getEngine(graphComponent)
     if (!engine) return
 
-    const update = () => {
-      setCanUndo(engine.canUndo())
-      setCanRedo(engine.canRedo())
-    }
+    const onUndoChanged = () => setCanUndo(engine.canUndo())
+    const onRedoChanged = () => setCanRedo(engine.canRedo())
 
-    // Register using whichever listener API is available
-    if (engine.addCanUndoChangedListener) {
-      // yFiles 3.0
-      engine.addCanUndoChangedListener(update)
-      engine.addCanRedoChangedListener?.(update)
-    } else if (engine.addPropertyChangedListener) {
-      // yFiles 2.x
-      engine.addPropertyChangedListener(update)
-    } else if (engine.addUndoUnitAddedListener) {
-      // last-resort fallback
-      engine.addUndoUnitAddedListener(update)
-    }
-
-    update()
+    engine.addCanUndoChangedListener(onUndoChanged)
+    engine.addCanRedoChangedListener(onRedoChanged)
+    onUndoChanged()
+    onRedoChanged()
 
     return () => {
-      if (engine.removeCanUndoChangedListener) {
-        engine.removeCanUndoChangedListener(update)
-        engine.removeCanRedoChangedListener?.(update)
-      } else if (engine.removePropertyChangedListener) {
-        engine.removePropertyChangedListener(update)
-      } else if (engine.removeUndoUnitAddedListener) {
-        engine.removeUndoUnitAddedListener(update)
-      }
+      engine.removeCanUndoChangedListener(onUndoChanged)
+      engine.removeCanRedoChangedListener(onRedoChanged)
     }
   }, [graphComponent, isReady])
 
-  const undo = useCallback(() => {
-    const graph = (graphComponent as { graph?: GraphWithUndo } | null)?.graph
-    graph?.undoEngine?.undo()
-  }, [graphComponent])
-
-  const redo = useCallback(() => {
-    const graph = (graphComponent as { graph?: GraphWithUndo } | null)?.graph
-    graph?.undoEngine?.redo()
-  }, [graphComponent])
+  const undo = useCallback(() => getEngine(graphComponent)?.undo(), [graphComponent])
+  const redo = useCallback(() => getEngine(graphComponent)?.redo(), [graphComponent])
 
   return { canUndo, canRedo, undo, redo }
 }

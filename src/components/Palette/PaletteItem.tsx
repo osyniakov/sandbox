@@ -1,5 +1,5 @@
-import type { PaletteEntry } from '../../types/bpmn'
-import type { BpmnNodeData } from '../../types/bpmn'
+import { BpmnNodeType } from '../../types/bpmn'
+import type { PaletteEntry, BpmnNodeData } from '../../types/bpmn'
 
 interface PaletteItemProps {
   entry: PaletteEntry
@@ -26,27 +26,54 @@ export function PaletteItem({ entry, onDragStart }: PaletteItemProps) {
       role="listitem"
     >
       <span className="palette-item__icon" aria-hidden="true">
-        {getIcon(entry)}
+        {ICONS[entry.nodeType!] ?? '▭'}
       </span>
       <span className="palette-item__label">{entry.label}</span>
     </div>
   )
 }
 
-function getIcon(entry: PaletteEntry): string {
-  const { nodeType } = entry
-  if (!nodeType) return '→'
+/**
+ * Per-type icons using Unicode symbols that match BPMN 2.0 visual conventions:
+ *  - Events:    circles (○ ◎ ●)
+ *  - Tasks:     distinct icons matching the task marker in the shape corner
+ *  - Gateways:  diamond (◇)
+ *  - Artifacts: document / data symbols
+ */
+const ICONS: Partial<Record<BpmnNodeType, string>> = {
+  // ── Events ────────────────────────────────────────────────────────────────
+  [BpmnNodeType.StartEvent]:              '○',
+  [BpmnNodeType.EndEvent]:               '●',
+  [BpmnNodeType.IntermediateCatchEvent]: '◎',
+  [BpmnNodeType.IntermediateThrowEvent]: '◉',
+  [BpmnNodeType.BoundaryEvent]:          '◎',
 
-  if (nodeType.includes('StartEvent')) return '○'
-  if (nodeType.includes('EndEvent')) return '●'
-  if (nodeType.includes('Event')) return '◎'
-  if (nodeType.includes('Task') || nodeType === 'SubProcess' || nodeType === 'CallActivity') return '▭'
-  if (nodeType.includes('Gateway')) return '◇'
-  if (nodeType === 'DataObject') return '📄'
-  if (nodeType === 'DataStore') return '🗄'
-  if (nodeType === 'Group') return '⬜'
-  if (nodeType === 'TextAnnotation') return '📝'
-  if (nodeType === 'Pool') return '▬'
-  if (nodeType === 'Lane') return '━'
-  return '▭'
+  // ── Tasks — icons match the BPMN task-type marker shown in the top-left ──
+  [BpmnNodeType.Task]:                   '▭',   // abstract — no marker
+  [BpmnNodeType.UserTask]:               '👤',   // user/human
+  [BpmnNodeType.ServiceTask]:            '⚙',   // automated service
+  [BpmnNodeType.ScriptTask]:             '📜',  // script
+  [BpmnNodeType.ManualTask]:             '✋',   // manual (no automation)
+  [BpmnNodeType.BusinessRuleTask]:       '📋',  // business rule / decision table
+  [BpmnNodeType.SendTask]:               '✉',   // send message
+  [BpmnNodeType.ReceiveTask]:            '📩',  // receive message
+  [BpmnNodeType.CallActivity]:           '⬡',   // global reference (thick border)
+  [BpmnNodeType.SubProcess]:             '⊞',   // collapsed sub-process (+ marker)
+
+  // ── Gateways ──────────────────────────────────────────────────────────────
+  [BpmnNodeType.ExclusiveGateway]:       '✕',   // X marker
+  [BpmnNodeType.ParallelGateway]:        '✚',   // + marker
+  [BpmnNodeType.InclusiveGateway]:       '◯',   // ○ marker
+  [BpmnNodeType.EventBasedGateway]:      '⬡',   // pentagon/event marker
+  [BpmnNodeType.ComplexGateway]:         '✳',   // * marker
+
+  // ── Artifacts ─────────────────────────────────────────────────────────────
+  [BpmnNodeType.DataObject]:             '📄',
+  [BpmnNodeType.DataStore]:              '🗄',
+  [BpmnNodeType.Group]:                  '⬜',
+  [BpmnNodeType.TextAnnotation]:         '📝',
+
+  // ── Swimlanes ─────────────────────────────────────────────────────────────
+  [BpmnNodeType.Pool]:                   '▬',
+  [BpmnNodeType.Lane]:                   '━',
 }
