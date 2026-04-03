@@ -1,0 +1,15 @@
+{
+  "comment": "Copy this file to license.json and fill in your yFiles for HTML evaluation/commercial license data. Download an evaluation license at https://my.yworks.com/",
+  "company": "YOUR COMPANY NAME",
+  "contact": "YOUR NAME",
+  "date": "YYYY/MM/DD",
+  "distribution": false,
+  "domains": ["localhost"],
+  "fileSystemAllowed": true,
+  "licensefileversion": 1,
+  "key": "YOUR_LICENSE_KEY_HERE",
+  "package": "complete",
+  "product": "yFiles for HTML",
+  "purchaser": "YOUR NAME",
+  "version": "2.6"
+}

@@ -1,0 +1,115 @@
+.properties-panel {
+  width: 240px;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  background: #ffffff;
+  border-left: 1px solid #e0e0e0;
+  overflow: hidden;
+}
+
+.properties-panel__header {
+  padding: 10px 12px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+  border-bottom: 1px solid #eee;
+  flex-shrink: 0;
+}
+
+.properties-panel__empty {
+  padding: 20px 16px;
+  color: #aaa;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.properties-panel__type-badge {
+  margin: 10px 12px 0;
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+  background: #e8f0fe;
+  color: #1a56db;
+  width: fit-content;
+}
+
+.properties-panel__type-badge.edge {
+  background: #fef3e8;
+  color: #c06000;
+}
+
+/* Form fields */
+.properties-form {
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  flex: 1;
+}
+
+.prop-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.prop-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #888;
+}
+
+.prop-input,
+.prop-select,
+.prop-textarea {
+  font-size: 13px;
+  font-family: inherit;
+  padding: 6px 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  color: #222;
+  background: #fafafa;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color 0.15s;
+}
+
+.prop-input:focus,
+.prop-select:focus,
+.prop-textarea:focus {
+  outline: none;
+  border-color: #0066cc;
+  background: #fff;
+}
+
+.prop-textarea {
+  resize: vertical;
+  min-height: 60px;
+}
+
+.prop-checkboxes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.prop-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #333;
+  cursor: pointer;
+}
+
+.prop-checkbox-label input[type="checkbox"] {
+  cursor: pointer;
+}
