@@ -50,9 +50,6 @@ export function useGraphComponent(
           GraphComponent,
           GraphEditorInputMode,
           NodeDropInputMode,
-          SimpleNode,
-          Rect,
-          Size,
         } = yfiles as Record<string, unknown> as {
           GraphComponent: new (container: HTMLElement) => {
             graph: unknown
@@ -61,24 +58,8 @@ export function useGraphComponent(
             cleanUp: () => void
             undoEngine: { canUndo: () => boolean; canRedo: () => boolean }
           }
-          GraphEditorInputMode: new () => {
-            nodeDropInputMode: {
-              enabled: boolean
-              isGroupNodePredicate: null
-              itemCreator: (
-                ctx: unknown,
-                graph: unknown,
-                draggedItem: unknown,
-                dropTarget: unknown,
-                dropLocation: unknown
-              ) => unknown
-            }
-            addEdgeMode: { enabled: boolean }
-          }
+          GraphEditorInputMode: new () => unknown
           NodeDropInputMode: new () => unknown
-          SimpleNode: new () => { tag: unknown; layout: unknown }
-          Rect: new (x: number, y: number, w: number, h: number) => unknown
-          Size: new (w: number, h: number) => unknown
         }
 
         if (destroyed) return
@@ -93,8 +74,26 @@ export function useGraphComponent(
         // Set up editor input mode
         const editorMode = new GraphEditorInputMode()
 
-        // NodeDropInputMode — handles drag-from-palette
-        const dropMode = editorMode.nodeDropInputMode
+        // NodeDropInputMode — handles drag-from-palette.
+        // In yFiles 3.0 the mode is NOT pre-created on GraphEditorInputMode;
+        // create it explicitly and assign it back.
+        let dropMode = (editorMode as unknown as Record<string, unknown>).nodeDropInputMode as {
+          enabled: boolean
+          isGroupNodePredicate: unknown
+          itemCreator: unknown
+        } | undefined
+
+        if (!dropMode) {
+          // yFiles 3.0+: instantiate and assign explicitly
+          const NodeDropInputModeClass = NodeDropInputMode as new () => {
+            enabled: boolean
+            isGroupNodePredicate: unknown
+            itemCreator: unknown
+          }
+          dropMode = new NodeDropInputModeClass()
+          ;(editorMode as unknown as Record<string, unknown>).nodeDropInputMode = dropMode
+        }
+
         dropMode.enabled = true
         dropMode.isGroupNodePredicate = null
 
@@ -123,8 +122,14 @@ export function useGraphComponent(
           return node
         }
 
-        // Default edge style on creation
-        editorMode.addEdgeMode.enabled = true
+        // Enable edge creation (addEdgeMode may be undefined in some yFiles 3.0 builds)
+        const addEdgeMode = (editorMode as unknown as Record<string, unknown>).addEdgeMode as
+          | { enabled: boolean }
+          | undefined
+        if (addEdgeMode) {
+          addEdgeMode.enabled = true
+        }
+
         ;(gc as unknown as { inputMode: unknown }).inputMode = editorMode
 
         gc.fitGraphBounds()
