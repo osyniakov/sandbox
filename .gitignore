@@ -21,3 +21,14 @@
 
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
+
+# Node.js
+node_modules/
+dist/
+.vite/
+
+# yFiles — place yfiles.tgz inside lib/ (not committed)
+lib/
+
+# yFiles evaluation/commercial license (user-specific, not committed)
+license.json
