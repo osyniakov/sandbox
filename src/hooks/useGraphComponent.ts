@@ -49,12 +49,6 @@ function shapeFor(type: string): string {
 
 /** Map BPMN type to ShapeNodeStyleShape enum value (yFiles 3.0) */
 function shapeEnumFor(ShapeNodeStyleShape: Record<string, unknown>, type: string): unknown {
-  // Log available enum keys once so we can see exact names in the console
-  if (!(shapeEnumFor as { logged?: boolean }).logged) {
-    console.debug('[bpmn] ShapeNodeStyleShape keys:', Object.keys(ShapeNodeStyleShape))
-    ;(shapeEnumFor as { logged?: boolean }).logged = true
-  }
-
   const pick = (...keys: string[]) => {
     for (const k of keys) if (k in ShapeNodeStyleShape) return ShapeNodeStyleShape[k]
     return undefined
@@ -64,7 +58,6 @@ function shapeEnumFor(ShapeNodeStyleShape: Record<string, unknown>, type: string
     return pick('ELLIPSE', 'Ellipse', 'ellipse')
   if (type.includes('Gateway'))
     return pick('DIAMOND', 'Diamond', 'diamond')
-  // Tasks and everything else
   return pick('ROUND_RECTANGLE', 'RoundRectangle', 'roundRectangle', 'RECTANGLE', 'Rectangle', 'rectangle')
 }
 
@@ -131,17 +124,27 @@ export function useGraphComponent(
             height
           )
 
-          // Build ShapeNodeStyle using enum values (yFiles 3.0 requires enum, not strings)
+          // Build ShapeNodeStyle — try multiple construction approaches
           let style: unknown
-          if (ShapeNodeStyle && ShapeNodeStyleShape) {
-            const shapeEnum = shapeEnumFor(ShapeNodeStyleShape, nodeData.type)
-            style = new ShapeNodeStyle({ shape: shapeEnum })
-          } else if (ShapeNodeStyle) {
-            // Fallback: try string shape (older builds)
-            style = new ShapeNodeStyle({ shape: shapeFor(nodeData.type) })
+          if (ShapeNodeStyle) {
+            const instance = new ShapeNodeStyle() as Record<string, unknown>
+            if (ShapeNodeStyleShape) {
+              // yFiles 3.0: assign enum value via property
+              const shapeEnum = shapeEnumFor(ShapeNodeStyleShape, nodeData.type)
+              instance.shape = shapeEnum
+            } else {
+              // Fallback: try string value
+              instance.shape = shapeFor(nodeData.type)
+            }
+            style = instance
           }
 
-          console.debug('[bpmn] itemCreator type=%s shape=%o style=%o', nodeData.type, style && (style as Record<string,unknown>).shape, style)
+          console.log('[bpmn] itemCreator', {
+            type: nodeData.type,
+            ShapeNodeStyle: !!ShapeNodeStyle,
+            ShapeNodeStyleShape: ShapeNodeStyleShape ? Object.keys(ShapeNodeStyleShape).slice(0, 8) : null,
+            styleShape: style ? (style as Record<string,unknown>).shape : null,
+          })
 
           // Use positional overload: createNode(layout, style, tag)
           const node = style

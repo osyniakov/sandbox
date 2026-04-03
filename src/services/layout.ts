@@ -1,8 +1,9 @@
 /**
- * layout.ts
+ * layout.ts — yFiles 3.0
  *
- * Runs the yFiles BpmnLayout algorithm on the current diagram with an
- * animated transition (morphLayout).
+ * Runs a layout algorithm on the current diagram.
+ * BpmnLayout may not be in the core yfiles package; falls back to
+ * HierarchicLayout which gives a clean left-to-right flow diagram.
  */
 
 interface GraphComponent {
@@ -10,11 +11,17 @@ interface GraphComponent {
 }
 
 export async function applyBpmnLayout(graphComponent: unknown): Promise<void> {
-  const { BpmnLayout } = await import('yfiles') as unknown as {
-    BpmnLayout: new () => unknown
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const yf = await import('yfiles') as any
+
+  const LayoutClass = yf.BpmnLayout ?? yf.HierarchicLayout ?? yf.OrganicLayout
+
+  if (!LayoutClass) {
+    console.warn('[layout] No layout algorithm found in yfiles module')
+    return
   }
 
-  const layout = new BpmnLayout()
+  const layout = new LayoutClass()
   const gc = graphComponent as GraphComponent
   await gc.morphLayout(layout, '0.5s')
 }
