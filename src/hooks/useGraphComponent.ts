@@ -68,8 +68,15 @@ export function useGraphComponent(
         graphComponent = gc
         graphComponentRef.current = gc
 
-        // Enable undo
-        ;(gc.graph as { undoEngineEnabled: boolean }).undoEngineEnabled = true
+        // Enable undo — yFiles 2.x used undoEngineEnabled boolean on IGraph;
+        // yFiles 3.0 exposes an undoEngine object that is enabled when present.
+        const graphObj = gc.graph as Record<string, unknown>
+        if ('undoEngineEnabled' in graphObj) {
+          // yFiles 2.x
+          ;(graphObj as { undoEngineEnabled: boolean }).undoEngineEnabled = true
+        }
+        // yFiles 3.0: undoEngine exists by default when the graph is created;
+        // no explicit enabling required.
 
         // Set up editor input mode
         const editorMode = new GraphEditorInputMode()
