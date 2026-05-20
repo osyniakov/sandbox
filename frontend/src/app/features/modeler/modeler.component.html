@@ -1,31 +1,32 @@
-<section class="modeler">
+<section class="modeler" data-testid="modeler">
   <div class="toolbar">
-    <button (click)="back()">&larr; Back</button>
+    <button (click)="back()" data-testid="back-button">&larr; Back</button>
     <input
       type="text"
       [value]="name()"
       (input)="onNameInput($event)"
       placeholder="Diagram name"
+      data-testid="name-input"
     />
     <span class="spacer"></span>
-    <button (click)="triggerImport()">Import .bpmn</button>
-    <button (click)="exportXml()">Export .bpmn</button>
-    <button (click)="exportSvg()">Export .svg</button>
-    <button (click)="saveAs()" [disabled]="saving()">Save as…</button>
-    <button class="primary" (click)="save()" [disabled]="saving()">
+    <button (click)="triggerImport()" data-testid="import-button">Import .bpmn</button>
+    <button (click)="exportXml()" data-testid="export-xml-button">Export .bpmn</button>
+    <button (click)="exportSvg()" data-testid="export-svg-button">Export .svg</button>
+    <button (click)="saveAs()" [disabled]="saving()" data-testid="save-as-button">Save as…</button>
+    <button class="primary" (click)="save()" [disabled]="saving()" data-testid="save-button">
       {{ saving() ? 'Saving…' : 'Save' }}
     </button>
   </div>
 
   @if (error(); as e) {
-    <div class="error">{{ e }}</div>
+    <div class="error" data-testid="modeler-error">{{ e }}</div>
   }
   @if (status()) {
-    <div class="status">{{ status() }}</div>
+    <div class="status" data-testid="modeler-status">{{ status() }}</div>
   }
 
   <div class="canvas-wrap">
-    <div class="canvas" #canvas></div>
+    <div class="canvas" #canvas data-testid="modeler-canvas"></div>
   </div>
 
   <input

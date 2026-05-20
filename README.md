@@ -79,13 +79,34 @@ Visit `http://localhost:8080/` — the SPA loads, deep links like
 
 ## Tests
 
+**Backend integration test** (Spring + H2, CRUD happy path):
 ```bash
 cd backend
 ./mvnw test
 ```
 
-Includes a single integration test (`DiagramControllerTest`) covering the
-full CRUD happy path against the in-memory H2 instance.
+**End-to-end tests** (Playwright drives a real browser against the
+running backend + Angular dev server — `playwright.config.ts` spawns
+both for you):
+```bash
+cd frontend
+npm run e2e          # headless run
+npm run e2e:ui       # interactive UI mode
+npm run e2e:report   # open the last HTML report
+```
+
+The suite (`frontend/e2e/diagrams.spec.ts`) covers:
+- empty state on the diagram list
+- creating a new diagram via the modeler and seeing it in the list
+- opening an existing diagram for editing, renaming, and persisting
+- exporting a diagram as `.bpmn` (validates the browser download)
+- the read-only viewer rendering the BPMN process SVG
+- deleting a diagram from the list
+
+Each test starts from a clean database (the API is used to clear rows in
+`beforeEach`). Playwright in CI is pinned to a chromium revision that
+matches the pre-installed browsers in this environment; locally
+`npm run e2e` will auto-download what's missing.
 
 ## Notes
 

@@ -1,22 +1,22 @@
-<section class="diagram-list">
+<section class="diagram-list" data-testid="diagram-list">
   <div class="toolbar">
     <h2>Diagrams</h2>
     <div class="actions">
-      <button (click)="reload()" [disabled]="loading()">Refresh</button>
-      <a routerLink="/diagrams/new" class="primary-link">New diagram</a>
+      <button (click)="reload()" [disabled]="loading()" data-testid="refresh-button">Refresh</button>
+      <a routerLink="/diagrams/new" class="primary-link" data-testid="new-diagram-link">New diagram</a>
     </div>
   </div>
 
   @if (error(); as e) {
-    <div class="error">{{ e }}</div>
+    <div class="error" data-testid="list-error">{{ e }}</div>
   }
 
   @if (loading()) {
-    <p class="muted">Loading…</p>
+    <p class="muted" data-testid="list-loading">Loading…</p>
   } @else if (diagrams().length === 0) {
-    <p class="muted">No diagrams yet. Click <strong>New diagram</strong> to create one.</p>
+    <p class="muted" data-testid="list-empty">No diagrams yet. Click <strong>New diagram</strong> to create one.</p>
   } @else {
-    <table>
+    <table data-testid="diagram-table">
       <thead>
         <tr>
           <th>Name</th>
@@ -26,13 +26,13 @@
       </thead>
       <tbody>
         @for (d of diagrams(); track d.id) {
-          <tr>
-            <td>{{ d.name }}</td>
+          <tr [attr.data-testid]="'diagram-row-' + d.id">
+            <td data-testid="diagram-name">{{ d.name }}</td>
             <td>{{ d.updatedAt | date:'medium' }}</td>
             <td class="row-actions">
-              <a [routerLink]="['/diagrams', d.id, 'edit']">Open</a>
-              <a [routerLink]="['/diagrams', d.id]">View</a>
-              <button class="danger" (click)="delete(d)">Delete</button>
+              <a [routerLink]="['/diagrams', d.id, 'edit']" data-testid="open-link">Open</a>
+              <a [routerLink]="['/diagrams', d.id]" data-testid="view-link">View</a>
+              <button class="danger" (click)="delete(d)" data-testid="delete-button">Delete</button>
             </td>
           </tr>
         }

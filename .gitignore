@@ -24,6 +24,12 @@ frontend/dist/
 frontend/.angular/
 frontend/.nx/
 
+# Playwright
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
+frontend/.playwright-cache/
+
 # Bundled static assets (built into the jar by Maven)
 backend/src/main/resources/static/*
 !backend/src/main/resources/static/.gitkeep
