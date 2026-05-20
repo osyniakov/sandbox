@@ -1,0 +1,42 @@
+<section class="diagram-list">
+  <div class="toolbar">
+    <h2>Diagrams</h2>
+    <div class="actions">
+      <button (click)="reload()" [disabled]="loading()">Refresh</button>
+      <a routerLink="/diagrams/new" class="primary-link">New diagram</a>
+    </div>
+  </div>
+
+  @if (error(); as e) {
+    <div class="error">{{ e }}</div>
+  }
+
+  @if (loading()) {
+    <p class="muted">Loading…</p>
+  } @else if (diagrams().length === 0) {
+    <p class="muted">No diagrams yet. Click <strong>New diagram</strong> to create one.</p>
+  } @else {
+    <table>
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Updated</th>
+          <th class="actions-col">Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (d of diagrams(); track d.id) {
+          <tr>
+            <td>{{ d.name }}</td>
+            <td>{{ d.updatedAt | date:'medium' }}</td>
+            <td class="row-actions">
+              <a [routerLink]="['/diagrams', d.id, 'edit']">Open</a>
+              <a [routerLink]="['/diagrams', d.id]">View</a>
+              <button class="danger" (click)="delete(d)">Delete</button>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</section>

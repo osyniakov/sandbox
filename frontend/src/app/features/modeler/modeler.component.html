@@ -1,0 +1,38 @@
+<section class="modeler">
+  <div class="toolbar">
+    <button (click)="back()">&larr; Back</button>
+    <input
+      type="text"
+      [value]="name()"
+      (input)="onNameInput($event)"
+      placeholder="Diagram name"
+    />
+    <span class="spacer"></span>
+    <button (click)="triggerImport()">Import .bpmn</button>
+    <button (click)="exportXml()">Export .bpmn</button>
+    <button (click)="exportSvg()">Export .svg</button>
+    <button (click)="saveAs()" [disabled]="saving()">Save as…</button>
+    <button class="primary" (click)="save()" [disabled]="saving()">
+      {{ saving() ? 'Saving…' : 'Save' }}
+    </button>
+  </div>
+
+  @if (error(); as e) {
+    <div class="error">{{ e }}</div>
+  }
+  @if (status()) {
+    <div class="status">{{ status() }}</div>
+  }
+
+  <div class="canvas-wrap">
+    <div class="canvas" #canvas></div>
+  </div>
+
+  <input
+    #fileInput
+    type="file"
+    accept=".bpmn,.xml,application/xml,text/xml"
+    hidden
+    (change)="onFileSelected($event)"
+  />
+</section>

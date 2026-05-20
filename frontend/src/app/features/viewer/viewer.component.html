@@ -1,0 +1,18 @@
+<section class="viewer">
+  <div class="toolbar">
+    <button (click)="back()">&larr; Back</button>
+    <h2>{{ name() || 'Diagram' }}</h2>
+    <span class="spacer"></span>
+    @if (diagramId(); as id) {
+      <a [routerLink]="['/diagrams', id, 'edit']">Open in editor</a>
+    }
+  </div>
+
+  @if (error(); as e) {
+    <div class="error">{{ e }}</div>
+  }
+
+  <div class="canvas-wrap">
+    <div class="canvas" #canvas></div>
+  </div>
+</section>

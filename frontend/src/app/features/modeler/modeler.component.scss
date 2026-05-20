@@ -1,0 +1,58 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+}
+
+.modeler {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: #fff;
+  border-bottom: 1px solid #e5e7eb;
+
+  input[type='text'] {
+    min-width: 240px;
+  }
+
+  .spacer {
+    flex: 1;
+  }
+}
+
+.error {
+  background: #fdecea;
+  color: #b3261e;
+  padding: 8px 16px;
+  border-bottom: 1px solid #f8d7d3;
+}
+
+.status {
+  background: #e8f4ea;
+  color: #1e6b30;
+  padding: 6px 16px;
+  border-bottom: 1px solid #cde6d2;
+  font-size: 13px;
+}
+
+.canvas-wrap {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: #fff;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+}

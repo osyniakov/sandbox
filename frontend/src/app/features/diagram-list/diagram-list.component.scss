@@ -1,0 +1,85 @@
+:host {
+  display: block;
+  width: 100%;
+  padding: 24px;
+  overflow: auto;
+}
+
+.diagram-list {
+  max-width: 960px;
+  margin: 0 auto;
+
+  .toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+
+    h2 {
+      margin: 0;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .primary-link {
+      display: inline-block;
+      padding: 6px 12px;
+      background: #1a73e8;
+      color: #fff;
+      border-radius: 4px;
+    }
+
+    .primary-link:hover {
+      text-decoration: none;
+      background: #155cb0;
+    }
+  }
+
+  .error {
+    background: #fdecea;
+    color: #b3261e;
+    padding: 8px 12px;
+    border-radius: 4px;
+    margin-bottom: 12px;
+  }
+
+  .muted {
+    color: #6b7280;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    background: #fff;
+    border-radius: 6px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+
+    th, td {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid #ececec;
+    }
+
+    th {
+      background: #fafafa;
+      font-size: 13px;
+      color: #4a4e58;
+      font-weight: 600;
+    }
+
+    .actions-col {
+      width: 220px;
+    }
+
+    .row-actions {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+  }
+}
