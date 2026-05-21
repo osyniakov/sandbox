@@ -1,0 +1,11 @@
+<header class="app-header">
+  <h1>BPMN Studio</h1>
+  <nav>
+    <a routerLink="/diagrams" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: false }">Diagrams</a>
+    <a routerLink="/diagrams/new" class="new-link">+ New diagram</a>
+  </nav>
+</header>
+
+<main class="app-main">
+  <router-outlet />
+</main>

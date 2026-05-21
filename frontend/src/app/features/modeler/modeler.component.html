@@ -1,0 +1,54 @@
+<section class="modeler" data-testid="modeler">
+  <div class="toolbar">
+    <button (click)="back()" data-testid="back-button">&larr; Back</button>
+    <input
+      type="text"
+      [value]="name()"
+      (input)="onNameInput($event)"
+      placeholder="Diagram name"
+      data-testid="name-input"
+    />
+    <span class="spacer"></span>
+    <button (click)="triggerImport()" data-testid="import-button">Import .bpmn</button>
+    <button (click)="exportXml()" data-testid="export-xml-button">Export .bpmn</button>
+    <button (click)="exportSvg()" data-testid="export-svg-button">Export .svg</button>
+    <button (click)="saveAs()" [disabled]="saving()" data-testid="save-as-button">Save as…</button>
+    <button class="primary" (click)="save()" [disabled]="saving()" data-testid="save-button">
+      {{ saving() ? 'Saving…' : 'Save' }}
+    </button>
+  </div>
+
+  @if (error(); as e) {
+    <div class="error" data-testid="modeler-error">{{ e }}</div>
+  }
+  @if (status()) {
+    <div class="status" data-testid="modeler-status">{{ status() }}</div>
+  }
+
+  <div class="workspace">
+    <div class="canvas" #canvas data-testid="modeler-canvas"></div>
+    <aside
+      class="properties-panel"
+      [class.collapsed]="panelCollapsed()"
+      data-testid="properties-panel"
+    >
+      <button
+        type="button"
+        class="panel-toggle"
+        (click)="togglePanel()"
+        [attr.aria-label]="panelCollapsed() ? 'Show properties' : 'Hide properties'"
+        [attr.title]="panelCollapsed() ? 'Show properties' : 'Hide properties'"
+        data-testid="panel-toggle"
+      >{{ panelCollapsed() ? '‹' : '›' }}</button>
+      <div class="panel-host" #propertiesPanel data-testid="properties-panel-host"></div>
+    </aside>
+  </div>
+
+  <input
+    #fileInput
+    type="file"
+    accept=".bpmn,.xml,application/xml,text/xml"
+    hidden
+    (change)="onFileSelected($event)"
+  />
+</section>

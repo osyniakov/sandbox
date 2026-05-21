@@ -1,0 +1,50 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 24px;
+  background: #1d1f23;
+  color: #fff;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.15);
+
+  h1 {
+    font-size: 18px;
+    margin: 0;
+    font-weight: 600;
+  }
+
+  nav {
+    display: flex;
+    gap: 16px;
+
+    a {
+      color: #bcc1c8;
+      font-size: 14px;
+
+      &.active,
+      &:hover {
+        color: #fff;
+        text-decoration: none;
+      }
+
+      &.new-link {
+        color: #fff;
+        padding: 4px 10px;
+        border: 1px solid #4a4e58;
+        border-radius: 4px;
+      }
+    }
+  }
+}
+
+.app-main {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+}

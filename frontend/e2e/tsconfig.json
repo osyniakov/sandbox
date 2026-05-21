@@ -1,0 +1,11 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "outDir": "../out-tsc/e2e",
+    "types": ["node"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "noPropertyAccessFromIndexSignature": false
+  },
+  "include": ["**/*.ts"]
+}
