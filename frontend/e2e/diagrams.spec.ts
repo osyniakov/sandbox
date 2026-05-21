@@ -1,4 +1,4 @@
-import { clearAllDiagrams, expect, seedDiagram, test } from './fixtures';
+import { clearAllDiagrams, expect, NAMED_START_BPMN, seedDiagram, test } from './fixtures';
 
 test.beforeEach(async ({ request }) => {
   await clearAllDiagrams(request);
@@ -94,6 +94,39 @@ test.describe('viewer', () => {
 
     // No editor toolbar in the viewer
     await expect(page.getByTestId('save-button')).toHaveCount(0);
+  });
+});
+
+test.describe('properties panel', () => {
+  test('shows the selected element\'s properties and can be collapsed', async ({ page, request }) => {
+    const seeded = await seedDiagram(request, 'With named start', NAMED_START_BPMN);
+
+    await page.goto(`/diagrams/${seeded.id}/edit`);
+    await waitForBpmnCanvas(page);
+
+    const panel = page.getByTestId('properties-panel');
+    await expect(panel).toBeVisible();
+    // Default selection is the Process — header reads "PROCESS"
+    await expect(panel).toContainText('Process', { ignoreCase: true });
+
+    // Click the StartEvent shape -> panel switches to the event's properties
+    await page
+      .locator('[data-testid="modeler-canvas"] [data-element-id="StartEvent_1"]')
+      .first()
+      .click();
+
+    await expect(panel).toContainText('Start event', { ignoreCase: true });
+    await expect(panel).toContainText('Order received');
+
+    // Collapse the panel
+    await page.getByTestId('panel-toggle').click();
+    await expect(panel).toHaveClass(/collapsed/);
+    await expect(page.getByTestId('properties-panel-host')).toBeHidden();
+
+    // Restore
+    await page.getByTestId('panel-toggle').click();
+    await expect(panel).not.toHaveClass(/collapsed/);
+    await expect(page.getByTestId('properties-panel-host')).toBeVisible();
   });
 });
 

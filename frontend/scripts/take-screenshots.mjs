@@ -170,6 +170,15 @@ async function main() {
   await page.waitForTimeout(500);
   await shoot(page, '05-viewer');
 
+  console.log('6) Modeler with element selected (properties panel)');
+  await page.goto(`${FRONTEND}/diagrams/${first.id}/edit`);
+  await page.waitForSelector('[data-testid="modeler-canvas"] svg[data-element-id]');
+  await page.waitForTimeout(500);
+  // Click the start event shape to populate the properties panel
+  await page.locator('[data-testid="modeler-canvas"] [data-element-id="StartEvent_1"]').click();
+  await page.waitForTimeout(300);
+  await shoot(page, '06-modeler-properties');
+
   await browser.close();
   console.log('Done.');
 }

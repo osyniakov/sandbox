@@ -45,14 +45,64 @@
   font-size: 13px;
 }
 
-.canvas-wrap {
+.workspace {
   flex: 1;
   min-height: 0;
-  position: relative;
+  display: flex;
   background: #fff;
 }
 
 .canvas {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+
+.properties-panel {
+  position: relative;
+  flex: 0 0 320px;
+  width: 320px;
+  border-left: 1px solid #e5e7eb;
+  background: #fafafa;
+  overflow: auto;
+  transition: flex-basis 160ms ease, width 160ms ease;
+
+  &.collapsed {
+    flex-basis: 36px;
+    width: 36px;
+    overflow: hidden;
+
+    .panel-host {
+      display: none;
+    }
+  }
+}
+
+.panel-toggle {
   position: absolute;
-  inset: 0;
+  top: 8px;
+  left: 8px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 16px;
+  line-height: 1;
+  color: #4a4e58;
+  background: #fff;
+  border: 1px solid #d4d7dd;
+  border-radius: 3px;
+  cursor: pointer;
+  z-index: 1;
+
+  &:hover {
+    background: #f1f3f5;
+  }
+}
+
+.panel-host {
+  height: 100%;
+  padding-top: 36px;
 }

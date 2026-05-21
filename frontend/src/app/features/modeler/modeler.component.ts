@@ -13,6 +13,10 @@ import { HttpClient } from '@angular/common/http';
 import { firstValueFrom } from 'rxjs';
 import { saveAs } from 'file-saver';
 import BpmnModeler from 'bpmn-js/lib/Modeler';
+import {
+  BpmnPropertiesPanelModule,
+  BpmnPropertiesProviderModule
+} from 'bpmn-js-properties-panel';
 import { DiagramService } from '../../core/diagram.service';
 
 @Component({
@@ -24,6 +28,8 @@ import { DiagramService } from '../../core/diagram.service';
 })
 export class ModelerComponent implements AfterViewInit, OnDestroy {
   @ViewChild('canvas', { static: true }) canvas!: ElementRef<HTMLDivElement>;
+  @ViewChild('propertiesPanel', { static: true })
+  propertiesPanelHost!: ElementRef<HTMLDivElement>;
   @ViewChild('fileInput') fileInput!: ElementRef<HTMLInputElement>;
 
   private readonly service = inject(DiagramService);
@@ -38,10 +44,17 @@ export class ModelerComponent implements AfterViewInit, OnDestroy {
   readonly status = signal<string>('');
   readonly error = signal<string | null>(null);
   readonly saving = signal(false);
+  readonly panelCollapsed = signal(false);
+
+  togglePanel(): void {
+    this.panelCollapsed.update((v) => !v);
+  }
 
   async ngAfterViewInit(): Promise<void> {
     this.modeler = new BpmnModeler({
-      container: this.canvas.nativeElement
+      container: this.canvas.nativeElement,
+      propertiesPanel: { parent: this.propertiesPanelHost.nativeElement },
+      additionalModules: [BpmnPropertiesPanelModule, BpmnPropertiesProviderModule]
     });
 
     const idParam = this.route.snapshot.paramMap.get('id');
