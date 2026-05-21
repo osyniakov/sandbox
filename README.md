@@ -113,6 +113,11 @@ matches the pre-installed browsers in this environment; locally
 - The H2 database is in-memory; restarting the backend resets all diagrams.
   Switch the JDBC URL in `application.yml` to `jdbc:h2:file:./data/bpmn` to
   keep state across restarts, or swap the H2 dependency for PostgreSQL.
+- A `SampleDiagramSeeder` populates the `diagram` table on first boot from
+  `backend/src/main/resources/sample-diagrams/*.bpmn` (eight BPMN files from
+  MIT-licensed bpmn-io repos). It only runs when the table is empty, so user
+  edits aren't overwritten. Disable with `app.seed.enabled=false`
+  (env: `APP_SEED_ENABLED=false`).
 - CORS allows `http://localhost:4200` by default; override with
   `app.cors.allowed-origins` (comma-separated).
 - bpmn-js stylesheets (`diagram-js.css`, `bpmn-embedded.css`) are wired in

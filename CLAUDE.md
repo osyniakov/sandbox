@@ -72,6 +72,10 @@ All under `/api/diagrams`, handled by `DiagramController`. The full contract is 
 
 `DiagramService.findById` throws `DiagramNotFoundException` (mapped to 404 via `@ResponseStatus`). There is no global `@ControllerAdvice` yet — add one if you need richer error bodies.
 
+### Sample-diagram seeding
+
+`SampleDiagramSeeder` (`ApplicationRunner`) loads every `*.bpmn` under `backend/src/main/resources/sample-diagrams/` on startup, **only when the `diagram` table is empty**. The seeder is gated by `app.seed.enabled` (default `true`, `matchIfMissing = true`); set `app.seed.enabled=false` (env: `APP_SEED_ENABLED=false`) to disable it. Filename order controls list position; the leading `^\d+-` prefix is stripped and hyphens become spaces to build the display name. Backend tests that assert an empty list must set `@SpringBootTest(properties = "app.seed.enabled=false")` (see `DiagramControllerTest`). The Playwright suite is unaffected — `clearAllDiagrams` in `beforeEach` wipes the seeded rows.
+
 ## Conventions
 
 - New tests get a `data-testid` on the element they target.
