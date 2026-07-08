@@ -15,11 +15,11 @@ public sealed interface Command {
     }
 
     static Command parse(String[] args) {
-        return switch (args.length) {
-            case 3 when args[0].equals("run") ->
-                    new Run(patternOf(args[1]), generationsOf(args[2]));
-            case 2 when args[0].equals("watch") ->
-                    new Watch(patternOf(args[1]));
+        return switch (args) {
+            case String[] a when a.length == 3 && a[0].equals("run") ->
+                    new Run(patternOf(a[1]), generationsOf(a[2]));
+            case String[] a when a.length == 2 && a[0].equals("watch") ->
+                    new Watch(patternOf(a[1]));
             default -> throw new UsageException("malformed arguments");
         };
     }
