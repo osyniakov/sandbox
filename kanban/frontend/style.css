@@ -1,0 +1,242 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  background: #f0f2f5;
+  color: #24292f;
+  min-height: 100vh;
+}
+
+/* ---------- Header & add form ---------- */
+
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  background: #ffffff;
+  border-bottom: 1px solid #d8dee4;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+.add-form {
+  display: flex;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 260px;
+  max-width: 480px;
+  margin-left: auto;
+}
+
+.add-form input {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.add-form input:focus {
+  outline: none;
+  border-color: #4a7dd6;
+  box-shadow: 0 0 0 3px rgba(74, 125, 214, 0.2);
+}
+
+.add-form button {
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #fff;
+  background: #4a7dd6;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.add-form button:hover {
+  background: #3b6bc0;
+}
+
+/* ---------- Error banner ---------- */
+
+.error-banner[hidden] {
+  display: none;
+}
+
+.error-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.75rem 1.5rem 0;
+  padding: 0.5rem 0.75rem;
+  background: #fdecea;
+  border: 1px solid #f2b8b5;
+  border-radius: 6px;
+  color: #a4282a;
+  font-size: 0.9rem;
+}
+
+.error-dismiss {
+  border: none;
+  background: none;
+  color: #a4282a;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+}
+
+.error-dismiss:hover {
+  background: rgba(164, 40, 42, 0.12);
+}
+
+/* ---------- Board & columns ---------- */
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+  padding: 1.25rem 1.5rem 2rem;
+  align-items: start;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+@media (max-width: 720px) {
+  .board {
+    grid-template-columns: 1fr;
+  }
+}
+
+.column {
+  background: #e7ebf0;
+  border: 1px solid #d8dee4;
+  border-radius: 10px;
+  padding: 0.75rem;
+  min-height: 200px;
+}
+
+.column-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0.25rem 0.6rem;
+}
+
+.column-header h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #57606a;
+}
+
+.count {
+  min-width: 1.5rem;
+  text-align: center;
+  padding: 0.1rem 0.45rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #57606a;
+  background: #d8dee4;
+  border-radius: 999px;
+}
+
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 60px;
+  border-radius: 8px;
+  transition: background-color 0.15s ease;
+}
+
+.task-list.drag-over {
+  background: rgba(74, 125, 214, 0.08);
+}
+
+/* ---------- Cards ---------- */
+
+.card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  background: #ffffff;
+  border: 1px solid #d8dee4;
+  border-radius: 8px;
+  cursor: grab;
+  user-select: none;
+  transition: box-shadow 0.15s ease, transform 0.15s ease;
+}
+
+.card:hover {
+  box-shadow: 0 3px 8px rgba(31, 35, 40, 0.14);
+}
+
+.card:active {
+  cursor: grabbing;
+}
+
+/* Hide the source card while dragging so the placeholder reflects the final
+   layout (the drag image was already captured at dragstart). */
+.card.dragging {
+  display: none;
+}
+
+.card-title {
+  flex: 1;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.card-edit-input {
+  flex: 1;
+  font-size: 0.9rem;
+  font-family: inherit;
+  padding: 0.15rem 0.35rem;
+  border: 1px solid #4a7dd6;
+  border-radius: 4px;
+  outline: none;
+}
+
+.card-delete {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: #8c959f;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0.1rem 0.3rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.card-delete:hover {
+  color: #cf222e;
+  background: #fdecea;
+}
+
+/* ---------- Drop placeholder ---------- */
+
+.drop-placeholder {
+  height: 2.4rem;
+  border: 2px dashed #4a7dd6;
+  border-radius: 8px;
+  background: rgba(74, 125, 214, 0.08);
+}
