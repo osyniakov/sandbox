@@ -31,4 +31,4 @@ Tick each box (`[x]`) only when it is implemented **and covered by a passing tes
 - [x] `DELETE /todos/{id}` — 204 on success; 404 for an unknown id
 - [x] Unsupported methods on known paths return 405; all JSON responses set `Content-Type: application/json`
 - [x] Integration tests using `java.net.http.HttpClient` against a server on an ephemeral port, covering every endpoint including the error cases above
-- [ ] `app/README.md` with build/run instructions, and a `main` method that starts the server on port 8080 (or `$PORT`)
+- [x] `app/README.md` with build/run instructions, and a `main` method that starts the server on port 8080 (or `$PORT`)
