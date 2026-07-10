@@ -21,8 +21,8 @@ A todo has:
 
 Tick each box (`[x]`) only when it is implemented **and covered by a passing test**.
 
-- [ ] Maven project scaffold in `app/` (Java 21, JUnit 5 wired up) — `mvn -q test` runs successfully, even with a trivial placeholder test
-- [ ] `Todo` model and a thread-safe in-memory `TodoStore` with create/get/list/update/delete, unit-tested directly (no HTTP)
+- [x] Maven project scaffold in `app/` (Java 21, JUnit 5 wired up) — `mvn -q test` runs successfully, even with a trivial placeholder test
+- [x] `Todo` model and a thread-safe in-memory `TodoStore` with create/get/list/update/delete, unit-tested directly (no HTTP)
 - [ ] HTTP server class that can start on port 0 (ephemeral) and report its actual port, with clean shutdown; used by tests
 - [ ] `POST /todos` — creates a todo from JSON `{"title": ..., "completed"?: ...}`; returns 201 with the created todo (including `id`); returns 400 for malformed JSON or missing/blank title
 - [ ] `GET /todos` — returns 200 with a JSON array of all todos
