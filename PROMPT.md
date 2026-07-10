@@ -13,6 +13,6 @@ Rules for this iteration:
 5. Update the checkboxes in `SPEC.md` for items that are now genuinely complete (implemented AND tested).
 6. Rewrite the "Current state", "Next step", and "Gotchas" sections of `PROGRESS.md` for the next iteration, and append one line to its "Iteration log" describing what you did.
 7. Do NOT run any git commands (no commit, no push) — the outer loop handles version control.
-8. If and only if EVERY checkbox in `SPEC.md` is checked and `mvn -q test` passes, append a line containing exactly `ALL_SPEC_ITEMS_COMPLETE` to `PROGRESS.md`.
+8. If and only if EVERY checkbox in `SPEC.md` is checked and `mvn -q test` passes, append a line to `PROGRESS.md` containing exactly `ALL_SPEC_ITEMS_COMPLETE` and nothing else (no backticks, no surrounding prose). Until then, never write that token on a line of its own anywhere.
 
 Keep the iteration focused and the diff small. Quality over quantity: one solid, tested increment.

@@ -21,7 +21,10 @@ mkdir -p loop/logs
 # inside a disposable sandbox; this container is one.
 export IS_SANDBOX=1
 
-sentinel_present() { grep -q "ALL_SPEC_ITEMS_COMPLETE" PROGRESS.md 2>/dev/null; }
+# Exact whole-line match: prose in PROGRESS.md that merely *mentions* the
+# sentinel (e.g. "remember to append ALL_SPEC_ITEMS_COMPLETE") must not stop
+# the loop — that false positive actually happened in iteration 2.
+sentinel_present() { grep -qxF "ALL_SPEC_ITEMS_COMPLETE" PROGRESS.md 2>/dev/null; }
 tests_green()      { [ -d app ] && (cd app && mvn -q test >/dev/null 2>&1); }
 
 for ((i = 1; i <= MAX_ITER; i++)); do
