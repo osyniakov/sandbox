@@ -1,5 +1,10 @@
 # Experiment results: autonomous development loop
 
+> **Follow-up:** this run (run 0) prompted a controlled three-way harness
+> comparison — sequential loop vs. single session vs. parallel worktree
+> fan-out — with full token/cost/wall-clock instrumentation. See
+> [`experiments/COMPARISON.md`](experiments/COMPARISON.md).
+
 A Ralph-style loop (`loop/run-loop.sh`) fed `PROMPT.md` to fresh headless
 Claude Code sessions until the `SPEC.md` checklist was complete and
 `mvn -q test` was green. The workload was a plain-Java TODO REST API built
