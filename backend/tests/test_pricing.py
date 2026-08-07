@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from app import config
 from app.models import ComparableListing, Decision, Item, ItemStatus
 from app.pricing import PricingDecisionService
