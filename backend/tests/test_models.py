@@ -7,10 +7,12 @@ app.
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
@@ -170,3 +172,109 @@ def test_comparable_listing_requires_valid_item_fk(session: Session) -> None:
     with pytest.raises(IntegrityError):
         session.commit()
     session.rollback()
+
+
+def test_enum_columns_store_lowercase_value_not_member_name(tmp_path: Path) -> None:
+    """Regression test for sandbox-yqf.14 issue 1.
+
+    ``Item.decision``/``Item.status`` must be persisted as the enum's
+    ``.value`` (e.g. ``"sell"``, ``"pending_identification"``), not its
+    Python member NAME (e.g. ``"SELL"``, ``"PENDING_IDENTIFICATION"``).
+    Verified two ways: via raw ``sqlite3`` against the DB file directly,
+    and via a raw SQL SELECT through the SQLAlchemy engine.
+    """
+    db_path = tmp_path / "enum_raw.db"
+    engine = make_engine(f"sqlite:///{db_path}")
+    init_db(engine)
+    factory = make_session_factory(engine)
+    db = factory()
+    try:
+        item = Item(
+            photo_path="/photos/enum_check.jpg",
+            decision=Decision.SELL,
+            status=ItemStatus.PENDING_IDENTIFICATION,
+        )
+        db.add(item)
+        db.commit()
+        item_id = item.id
+    finally:
+        db.close()
+    engine.dispose()
+
+    # 1. Raw sqlite3, bypassing SQLAlchemy entirely.
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cursor = conn.execute(
+            "SELECT decision, status FROM items WHERE id = ?", (item_id,)
+        )
+        raw_decision, raw_status = cursor.fetchone()
+    finally:
+        conn.close()
+
+    assert raw_decision == "sell"
+    assert raw_decision != "SELL"
+    assert raw_status == "pending_identification"
+    assert raw_status != "PENDING_IDENTIFICATION"
+
+    # 2. Raw SQL through the SQLAlchemy engine, for good measure.
+    engine2 = make_engine(f"sqlite:///{db_path}")
+    with engine2.connect() as conn2:
+        row = conn2.execute(
+            text("SELECT decision, status FROM items WHERE id = :id"),
+            {"id": item_id},
+        ).one()
+    engine2.dispose()
+
+    assert row.decision == "sell"
+    assert row.status == "pending_identification"
+
+
+def test_price_columns_round_trip_as_python_float(session: Session) -> None:
+    """Regression test for sandbox-yqf.14 issue 2.
+
+    ``Item.suggested_price``/``ComparableListing.price`` are mapped as
+    SQLAlchemy ``Float`` (see the "Money/price column type" docstring in
+    ``app/models.py``), so reads must genuinely return Python ``float``,
+    not ``decimal.Decimal``.
+    """
+    item = Item(photo_path="/photos/price_check.jpg", suggested_price=19.99)
+    session.add(item)
+    session.flush()
+
+    listing = ComparableListing(
+        item_id=item.id,
+        title="Comparable listing",
+        price=24.5,
+        url="https://kleinanzeigen.example/price-check",
+    )
+    session.add(listing)
+    session.commit()
+    session.expire_all()
+
+    fetched_item = session.get(Item, item.id)
+    assert fetched_item is not None
+    assert isinstance(fetched_item.suggested_price, float)
+    assert fetched_item.suggested_price == pytest.approx(19.99)
+
+    fetched_listing = session.get(ComparableListing, listing.id)
+    assert fetched_listing is not None
+    assert isinstance(fetched_listing.price, float)
+    assert fetched_listing.price == pytest.approx(24.5)
+
+    # Demonstrates the "no JSON-serialization friction" claim in the
+    # models.py docstring: a bare json.dumps works with no custom
+    # encoder, unlike decimal.Decimal, and round-trips to the same
+    # numeric value.
+    import json
+
+    payload = json.dumps(
+        {
+            "suggested_price": fetched_item.suggested_price,
+            "price": fetched_listing.price,
+        }
+    )
+    parsed = json.loads(payload)
+    assert parsed["suggested_price"] == pytest.approx(19.99)
+    assert parsed["price"] == pytest.approx(24.5)
+    assert isinstance(parsed["suggested_price"], float)
+    assert isinstance(parsed["price"], float)
