@@ -55,7 +55,7 @@ end:
 
    ```sh
    # from backend/
-   ALLOWED_ORIGINS=http://192.168.1.50:5173 uvicorn app.main:app --reload --port 8000
+   ALLOWED_ORIGINS=http://192.168.1.50:5173 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
    ```
 
    If unset, `ALLOWED_ORIGINS` defaults to
@@ -72,7 +72,7 @@ finding your LAN IP is `192.168.1.50`:
 ```sh
 # terminal 1 — backend
 cd backend
-ALLOWED_ORIGINS=http://192.168.1.50:5173 uvicorn app.main:app --reload --port 8000
+ALLOWED_ORIGINS=http://192.168.1.50:5173 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 # terminal 2 — frontend
 cd frontend

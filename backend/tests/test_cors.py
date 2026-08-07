@@ -17,6 +17,17 @@ dir. An autouse fixture reloads ``app.main`` back to its default
 (env-unset) state after every test in this module, since other test
 modules also `import app.main` and expect its default localhost-only
 CORS config.
+
+Safety note (reviewed in sandbox-yqf.18): reload also re-executes
+``from app.db import engine``, resetting ``app.main.engine`` /
+``app.main.UPLOAD_DIR`` to the real dev DB/uploads dir. This is safe
+today because pytest runs this suite with no cross-file interleaving
+(no pytest-randomly/pytest-random-order installed) and every fixture in
+the other test modules is function-scoped. If order-randomizing plugins
+are ever added to this repo, a reload landing mid-test in another file
+could point it at the real dev DB -- revisit this technique (e.g. patch
+os.environ + re-run just ``_parse_allowed_origins`` instead of a full
+module reload) if that happens.
 """
 
 from __future__ import annotations
