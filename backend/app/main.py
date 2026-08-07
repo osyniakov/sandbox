@@ -4,14 +4,19 @@ Endpoints:
 
 * ``GET /health`` -- basic liveness check.
 * ``POST /items`` -- accept a multipart photo upload, store it on disk
-  under ``backend/uploads/``, and create a new ``Item`` row with
-  ``status=pending_identification``.
+  under ``backend/uploads/``, create a new ``Item`` row with
+  ``status=pending_identification``, and schedule the full
+  identify -> search -> decide pipeline (``app/pipeline.py``) to run as a
+  background task.
+* ``GET /items/{id}`` -- fetch a single ``Item`` (including its
+  comparable listings), showing whatever stage the pipeline has reached
+  so far. See ``app/pipeline.py``'s module docstring for the full polling
+  contract (which ``status`` values are terminal vs. still-processing).
 
-Vision-based identification (sandbox-yqf.6), Kleinanzeigen comparable
-search (sandbox-yqf.7), and the sell/give-away/throw-away decision
-(sandbox-yqf.8) are NOT wired in here -- this endpoint only creates the
-``Item`` and stores its photo. Full pipeline orchestration is
-sandbox-yqf.9's job.
+Full pipeline orchestration (identification -> comparable search ->
+pricing decision) lives in ``app/pipeline.py`` (sandbox-yqf.9); this
+module only handles HTTP concerns (upload validation/storage, DB session
+wiring, scheduling the background task, and read serialization).
 """
 
 from __future__ import annotations
@@ -21,11 +26,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from sqlalchemy.orm import Session
 
 from app.db import engine, get_session, init_db
-from app.models import Item, ItemStatus
+from app.models import ComparableListing, Item, ItemStatus
+from app.pipeline import run_pipeline_with_new_session
 
 # Where uploaded photos are stored: a sibling of ``app/`` inside
 # ``backend/``. Not committed to git -- see the repo-root .gitignore.
@@ -85,15 +91,20 @@ def _pick_extension(filename: str | None, content_type: str) -> str:
 @app.post("/items", status_code=201)
 async def create_item(
     request: Request,
+    background_tasks: BackgroundTasks,
     photo: UploadFile | None = File(None),
     session: Session = Depends(get_session),
 ) -> dict[str, object]:
-    """Create a new ``Item`` from an uploaded photo.
+    """Create a new ``Item`` from an uploaded photo and start the pipeline.
 
-    Only handles photo storage + ``Item`` creation with
-    ``status=pending_identification``. Identification, comparable search,
-    and the decision happen in later pipeline stages -- see
-    sandbox-yqf.9.
+    Handles photo storage + ``Item`` creation with
+    ``status=pending_identification`` synchronously (fast: file I/O + one
+    DB insert), then schedules the identify -> search -> decide pipeline
+    (``app/pipeline.py``) to run as a ``BackgroundTask`` *after* this
+    response is sent -- see ``app/pipeline.py``'s module docstring for why
+    this runs in the background rather than inline in this request, and
+    for the ``GET /items/{id}`` polling contract clients should use to
+    observe progress.
     """
     if photo is None or not photo.filename:
         raise HTTPException(status_code=400, detail="No photo file was uploaded.")
@@ -160,4 +171,65 @@ async def create_item(
     session.commit()
     session.refresh(item)
 
+    # ``engine`` is looked up as a module global at call time (not bound
+    # at import time), matching the ``lifespan`` convention above, so
+    # tests that monkeypatch ``app.main.engine`` before hitting this
+    # endpoint have the background task run against the same temp engine
+    # as the rest of the test -- never the real dev DB.
+    background_tasks.add_task(run_pipeline_with_new_session, item.id, engine)
+
     return {"id": item.id, "status": item.status.value, "photo_path": item.photo_path}
+
+
+def _serialize_comparable_listing(listing: ComparableListing) -> dict[str, object]:
+    return {
+        "id": listing.id,
+        "title": listing.title,
+        "price": listing.price,
+        "url": listing.url,
+        "condition": listing.condition,
+        "location": listing.location,
+    }
+
+
+def _serialize_item(item: Item) -> dict[str, object]:
+    return {
+        "id": item.id,
+        "photo_path": item.photo_path,
+        "identified_name": item.identified_name,
+        "category": item.category,
+        "brand": item.brand,
+        "condition": item.condition,
+        "search_keywords": item.search_keywords,
+        "suggested_price": item.suggested_price,
+        "decision": item.decision.value,
+        "status": item.status.value,
+        "created_at": item.created_at.isoformat(),
+        "updated_at": item.updated_at.isoformat(),
+        "comparable_listings": [
+            _serialize_comparable_listing(listing) for listing in item.comparable_listings
+        ],
+    }
+
+
+@app.get("/items/{item_id}")
+def get_item(
+    item_id: int,
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Fetch a single ``Item`` by id, including its comparable listings.
+
+    Always returns a valid 200 response reflecting the ``Item``'s actual
+    current ``status`` -- including when a pipeline stage has failed and
+    the item is stuck at an intermediate ``pending_*`` status -- never a
+    500; the failure is visible through the ``status`` field (and the
+    still-default ``decision``/``suggested_price`` values), not an
+    exception. Returns 404 if no ``Item`` with ``item_id`` exists. See
+    ``app/pipeline.py``'s module docstring for the full polling contract
+    (which ``status`` values are terminal vs. still-processing).
+    """
+    item = session.get(Item, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
+
+    return _serialize_item(item)
