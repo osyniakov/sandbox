@@ -1,0 +1,17 @@
+.placeholder {
+  max-width: 32rem;
+  margin: 4rem auto;
+  padding: 0 1rem;
+  text-align: center;
+  font-family: system-ui, sans-serif;
+}
+
+.placeholder h1 {
+  font-size: 1.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.placeholder .status {
+  color: #666;
+  font-style: italic;
+}

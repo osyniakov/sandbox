@@ -30,3 +30,18 @@ hs_err_pid*
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+.vite/
+npm-debug.log*
+
