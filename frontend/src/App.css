@@ -129,3 +129,76 @@
 .comparables li {
   margin-bottom: 0.5rem;
 }
+
+.inventory-page {
+  max-width: 48rem;
+}
+
+.inventory-filters {
+  display: flex;
+  gap: 1.5rem;
+  justify-content: center;
+  margin: 1rem 0 1.5rem;
+}
+
+.inventory-filters label {
+  display: flex;
+  flex-direction: column;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+.inventory-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  text-align: left;
+}
+
+.inventory-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid #ddd;
+}
+
+.inventory-thumb {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.inventory-thumb-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-size: 0.75rem;
+  border: 1px dashed #999;
+}
+
+.inventory-item-details {
+  flex: 1;
+  min-width: 0;
+}
+
+.inventory-item-details p {
+  margin: 0.1rem 0;
+  font-size: 0.9rem;
+  color: #444;
+}
+
+.inventory-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.inventory-actions button {
+  cursor: pointer;
+  white-space: nowrap;
+}

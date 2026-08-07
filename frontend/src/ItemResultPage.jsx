@@ -215,6 +215,8 @@ function ItemResultPage() {
 
       <p>
         <Link to="/">Upload another photo</Link>
+        {' | '}
+        <Link to="/inventory">View basement inventory</Link>
       </p>
     </div>
   )

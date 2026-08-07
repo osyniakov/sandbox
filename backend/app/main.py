@@ -12,6 +12,14 @@ Endpoints:
   comparable listings), showing whatever stage the pipeline has reached
   so far. See ``app/pipeline.py``'s module docstring for the full polling
   contract (which ``status`` values are terminal vs. still-processing).
+* ``GET /items`` -- list all items (same serialized shape as
+  ``GET /items/{id}``, each without needing a separate fetch),
+  optionally filtered by ``status`` and/or ``decision`` query params.
+* ``PATCH /items/{id}/status`` -- manually advance an ``Item``'s status
+  to ``listed`` / ``given_away`` / ``disposed`` once the user has acted
+  on the app's recommendation (e.g. actually listed it on
+  Kleinanzeigen). See ``MANUAL_STATUS_TRANSITIONS`` below for the full
+  transition table and the reasoning behind it (sandbox-yqf.11).
 
 Full pipeline orchestration (identification -> comparable search ->
 pricing decision) lives in ``app/pipeline.py`` (sandbox-yqf.9); this
@@ -30,10 +38,11 @@ from uuid import uuid4
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db import engine, get_session, init_db
-from app.models import ComparableListing, Item, ItemStatus
+from app.models import ComparableListing, Decision, Item, ItemStatus
 from app.pipeline import run_pipeline_with_new_session
 
 # Where uploaded photos are stored: a sibling of ``app/`` inside
@@ -387,4 +396,152 @@ def get_item(
     if item is None:
         raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
 
+    return _serialize_item(item)
+
+
+@app.get("/items")
+def list_items(
+    status: ItemStatus | None = None,
+    decision: Decision | None = None,
+    session: Session = Depends(get_session),
+) -> list[dict[str, object]]:
+    """List all ``Item``s, optionally filtered by ``status`` and/or
+    ``decision`` query params (e.g. ``GET /items?status=decided&decision=sell``).
+
+    Either, both, or neither filter may be supplied -- an omitted filter
+    param simply isn't applied. FastAPI validates the query values against
+    the ``ItemStatus``/``Decision`` enums automatically (422 on an
+    unrecognized value), since both query params are typed against those
+    enums directly.
+
+    Returns the same per-item serialized shape as ``GET /items/{id}``
+    (via ``_serialize_item``, including ``comparable_listings``), ordered
+    by ``id`` ascending for a stable, deterministic response order.
+    """
+    query = session.query(Item)
+    if status is not None:
+        query = query.filter(Item.status == status)
+    if decision is not None:
+        query = query.filter(Item.decision == decision)
+    items = query.order_by(Item.id).all()
+    return [_serialize_item(item) for item in items]
+
+
+class ItemStatusUpdateRequest(BaseModel):
+    status: ItemStatus
+
+
+# ---------------------------------------------------------------------------
+# Manual status transition state machine (sandbox-yqf.11)
+# ---------------------------------------------------------------------------
+#
+# ``PATCH /items/{id}/status`` lets the user record that they've actually
+# acted on the app's recommendation outside the app itself (listed the
+# item on Kleinanzeigen, given it away, or thrown it out) -- there is no
+# automated posting integration (see the epic's assumption/decision), so
+# this is purely a manual bookkeeping transition on ``Item.status``.
+#
+# This dict is the single source of truth for which transitions are
+# allowed: keys are the item's CURRENT status, values are the set of
+# statuses it may be manually advanced to from there. Every design
+# question the bead deliberately left open is resolved here, explicitly,
+# rather than via scattered if/else checks in the endpoint body:
+#
+# 1. **Which source statuses can reach listed/given_away/disposed?**
+#    Only ``decided``. The pipeline (identify -> search -> decide, see
+#    ``app/pipeline.py``) has to have actually finished and produced a
+#    recommendation (decision + suggested_price + comparable listings)
+#    before the user acts on it -- that's the entire point of this app
+#    (an *informed* sell/give-away/throw-away decision, not a guess).
+#    Allowing e.g. ``pending_identification`` to jump straight to
+#    ``disposed`` would let a user bypass the app's analysis entirely,
+#    which defeats its purpose and is exactly the case the bead's edge
+#    example calls out as something that must be REJECTED with 400.
+#    Concretely, this means the ``pending_*`` statuses each map to an
+#    empty transition set below -- a still-running (or stuck) pipeline
+#    has no valid manual next state; the user's only recourse there is to
+#    wait (or, out of scope for this bead, some future manual-retry/
+#    override feature).
+#
+# 2. **Must the target match ``Item.decision``?** No -- deliberately NOT
+#    enforced here. ``Item.decision`` is the app's *recommendation*
+#    (sell/give_away/throw_away), not a binding constraint on what the
+#    user is allowed to do with their own physical basement item. A
+#    recommended "sell" item that fails to attract a buyer, or that the
+#    user simply changes their mind about, should still be markable as
+#    ``given_away`` or ``disposed`` without the app standing in the way.
+#    This is a single-user personal tool: the user always has final say.
+#
+# 3. **Are listed/given_away/disposed terminal?** No -- they can freely
+#    move to either of the *other two* (e.g. ``listed`` -> ``disposed``
+#    if a listing never sells and the user gives up; ``given_away`` ->
+#    ``disposed`` if the recipient falls through; a straightforward
+#    misclick can also be corrected this way). They can NOT move back to
+#    ``decided`` or any ``pending_*`` status -- once the user has acted
+#    on the item in the real world, "un-deciding" it or re-running the
+#    pipeline doesn't correspond to anything real; the only meaningful
+#    moves from there are to one of the other two post-action statuses.
+#
+# Full transition table:
+#
+#   pending_identification -> (none)
+#   pending_search          -> (none)
+#   pending_decision        -> (none)
+#   decided                 -> listed, given_away, disposed
+#   listed                  -> given_away, disposed
+#   given_away              -> listed, disposed
+#   disposed                -> listed, given_away
+MANUAL_STATUS_TRANSITIONS: dict[ItemStatus, frozenset[ItemStatus]] = {
+    ItemStatus.PENDING_IDENTIFICATION: frozenset(),
+    ItemStatus.PENDING_SEARCH: frozenset(),
+    ItemStatus.PENDING_DECISION: frozenset(),
+    ItemStatus.DECIDED: frozenset(
+        {ItemStatus.LISTED, ItemStatus.GIVEN_AWAY, ItemStatus.DISPOSED}
+    ),
+    ItemStatus.LISTED: frozenset({ItemStatus.GIVEN_AWAY, ItemStatus.DISPOSED}),
+    ItemStatus.GIVEN_AWAY: frozenset({ItemStatus.LISTED, ItemStatus.DISPOSED}),
+    ItemStatus.DISPOSED: frozenset({ItemStatus.LISTED, ItemStatus.GIVEN_AWAY}),
+}
+
+
+@app.patch("/items/{item_id}/status")
+def update_item_status(
+    item_id: int,
+    body: ItemStatusUpdateRequest,
+    session: Session = Depends(get_session),
+) -> dict[str, object]:
+    """Manually advance an ``Item``'s status per ``MANUAL_STATUS_TRANSITIONS``.
+
+    Returns 404 if no ``Item`` with ``item_id`` exists. Returns 400 (not a
+    generic "invalid transition" message, but one naming the item's
+    CURRENT status and the VALID next states from there) if
+    ``body.status`` isn't in the current status's allowed transition set.
+    On success, returns 200 with the updated, freshly-serialized item
+    (same shape as ``GET /items/{id}``).
+    """
+    item = session.get(Item, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
+
+    valid_next_statuses = MANUAL_STATUS_TRANSITIONS.get(item.status, frozenset())
+    if body.status not in valid_next_statuses:
+        valid_desc = (
+            ", ".join(sorted(s.value for s in valid_next_statuses))
+            if valid_next_statuses
+            else "(none -- this item has no valid manual status transitions"
+            " from its current status)"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Cannot transition item {item_id} from status "
+                f"'{item.status.value}' to '{body.status.value}'. "
+                f"Current status: '{item.status.value}'. "
+                f"Valid next states: {valid_desc}."
+            ),
+        )
+
+    item.status = body.status
+    session.commit()
+    session.refresh(item)
     return _serialize_item(item)

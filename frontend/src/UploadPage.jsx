@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { API_BASE_URL } from './api.js'
 
 // Extracts a human-readable message from a failed fetch Response.
@@ -78,6 +78,10 @@ function UploadPage() {
       <p>
         Photograph an item, find comparable listings, and get a sell /
         give-away / throw-away recommendation.
+      </p>
+
+      <p>
+        <Link to="/inventory">View basement inventory</Link>
       </p>
 
       <label htmlFor="photo-input" className="photo-input-label">

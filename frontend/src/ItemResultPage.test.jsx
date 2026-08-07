@@ -157,7 +157,9 @@ describe('ItemResultPage', () => {
     expect(screen.getByText(/throw away/i)).toBeInTheDocument()
     expect(screen.queryByText(/suggested price/i)).not.toBeInTheDocument()
     expect(screen.getByText(/no comparable listings found/i)).toBeInTheDocument()
-    expect(screen.queryAllByRole('link')).toHaveLength(1) // just "Upload another photo"
+    // "Upload another photo" + "View basement inventory" nav links
+    // (sandbox-yqf.11) -- no comparable-listing links since there are none.
+    expect(screen.queryAllByRole('link')).toHaveLength(2)
   })
 
   it('shows a pending indicator (not broken/missing fields) while status is non-terminal', async () => {

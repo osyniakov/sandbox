@@ -1,6 +1,7 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import UploadPage from './UploadPage.jsx'
 import ItemResultPage from './ItemResultPage.jsx'
+import InventoryPage from './InventoryPage.jsx'
 import './App.css'
 
 // Routing decision (sandbox-yqf.10)
@@ -28,6 +29,11 @@ import './App.css'
 // want ("render the results page for item N" is just a navigation to
 // `/items/N`, not a prop threaded through shared page state).
 //
+// `/inventory` (sandbox-yqf.11) -- the basement inventory list
+// (`InventoryPage.jsx`): every item, filterable by status/decision, with
+// controls to manually advance an item's status once the user has acted
+// on it outside the app (listed/given away/disposed).
+//
 // `react-router-dom` (not e.g. a hand-rolled `window.location`/hash
 // router) was chosen because it's the de facto standard for this in the
 // React ecosystem, has first-class support for the `useParams`/
@@ -40,6 +46,7 @@ function App() {
       <Routes>
         <Route path="/" element={<UploadPage />} />
         <Route path="/items/:id" element={<ItemResultPage />} />
+        <Route path="/inventory" element={<InventoryPage />} />
       </Routes>
     </BrowserRouter>
   )
