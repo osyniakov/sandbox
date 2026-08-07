@@ -77,9 +77,66 @@ the two outcomes that matter here are different:
    combination). This is *not* an error: it's useful signal for the
    downstream decision engine (bead ``sandbox-yqf.8``), which can treat
    "zero comparables found" as an input toward e.g. a throw-away/give-away
-   recommendation. The service returns an empty list of
-   ``ComparableListing`` rows and still advances ``Item.status`` to
-   ``pending_decision``.
+   recommendation. See "Query-loosening on zero results" below for what
+   happens *before* we accept a zero-results outcome as final. Once
+   accepted, the service returns an empty list of ``ComparableListing``
+   rows and still advances ``Item.status`` to ``pending_decision``.
+
+Query-loosening on zero results (bead sandbox-yqf.15)
+-------------------------------------------------------
+``app/identification.py``'s vision prompt asks for "2-5 short strings
+suitable as search terms" -- i.e. independent *alternative* queries a
+human might type one at a time, not a set of terms meant to be ANDed
+together. But the most specific, most likely-to-match query is still the
+fully-joined one, so that's tried first: ``_build_query_attempts`` builds
+an ordered list of candidate queries, most specific first:
+
+1. All keywords joined with spaces (``" ".join(keywords)``, same as the
+   pre-sandbox-yqf.15 behavior and same as ``_build_query``).
+2. If (and only if) that returns a **valid, zero-result** response, each
+   keyword *individually*, in the order identification produced them
+   (skipping any keyword identical to the already-tried joined query,
+   e.g. when there's only one keyword). This -- rather than progressively
+   trimming trailing keywords off the joined string -- was chosen because
+   it matches how the keywords were actually generated (independent
+   candidate terms), and because a query like "ikea schreibtischlampe
+   lampe schreibtisch" trimmed to "ikea schreibtischlampe lampe" is still
+   an AND of three terms and not meaningfully looser than the original.
+
+The candidate-query list is capped at ``_MAX_QUERY_ATTEMPTS`` (currently
+4: the joined query plus up to 3 individual keywords) so a long
+``search_keywords`` list can never turn into an unbounded number of live
+search calls. The service stops as soon as any candidate query returns
+one or more results -- it does not keep searching for "better" results
+once it has *some*.
+
+**How this interacts with the existing failure-retry-once mechanism**
+(``_MAX_SEARCH_ATTEMPTS`` / ``_search_with_retry``, below): these are two
+independent, orthogonal retry axes and are not multiplied together.
+``_search_with_retry`` is called once per *candidate query* in the
+loosening sequence, and it alone owns "retry on hard failure" -- exactly
+as before this bead, a single candidate query gets at most one failure
+retry (``_MAX_SEARCH_ATTEMPTS = 2`` live calls total for that query). If
+a candidate query comes back as a **hard failure** even after its own
+retry, ``search_item`` does **not** treat that as "zero results, try a
+looser query" -- it aborts the whole search immediately and returns
+``False`` (``Item.status`` left untouched), exactly like the pre-existing
+single-query failure behavior. Rationale: a definitive failure (e.g. the
+provider/network is actually down) is very likely to fail again on the
+next candidate query too, so treating it as a cue to loosen the query
+would just burn more rate-limited calls without a realistic chance of
+success, and would blur "the API is down" together with "the API is
+fine but this item is genuinely obscure". Only a *successful* call that
+returns zero results advances the loosening sequence; only an
+*unsuccessful* call (exhausted its own retry) aborts the whole item.
+
+This bounds the worst-case number of live provider calls per item at
+``_MAX_QUERY_ATTEMPTS * _MAX_SEARCH_ATTEMPTS`` (4 * 2 = 8: every
+candidate query hits one transient failure before succeeding with zero
+results) -- never unbounded, and the module's existing rate limiting
+(see "Rate limiting" above) is left untouched and still applies to every
+one of those calls, since they all still go through the same
+``ComparableSearchProvider.search`` / ``_search_with_retry`` path.
 
 Manual smoke test against the LIVE Kleinanzeigen site
 -------------------------------------------------------
@@ -155,9 +212,17 @@ DEFAULT_LOCATION = None  # None == search all of Germany (nationwide policy)
 # searches per declutter session, not bulk/scheduled scraping").
 DEFAULT_PAGES = 1
 
-# How many times the service will call the provider for a single item's
-# search before giving up (1 initial attempt + 1 retry == 2 total calls).
+# How many times the service will call the provider for a single *candidate
+# query* before giving up on that query (1 initial attempt + 1 retry == 2
+# total calls). See module docstring "Query-loosening on zero results" for
+# how this interacts with the separate query-loosening retry axis.
 _MAX_SEARCH_ATTEMPTS = 2
+
+# Maximum number of distinct candidate queries tried per item (the
+# fully-joined query plus progressively looser individual-keyword
+# fallbacks), before accepting a zero-results outcome as final. See module
+# docstring "Query-loosening on zero results".
+_MAX_QUERY_ATTEMPTS = 4
 
 # Attribute-dict label markers (case-insensitive substring match) used to
 # find the "condition" attribute in a Listing's `attributes` dict. The
@@ -288,6 +353,34 @@ def _build_query(keywords: list[str] | None) -> str:
     return " ".join(cleaned)
 
 
+def _build_query_attempts(keywords: list[str] | None) -> list[str]:
+    """Return the ordered list of candidate queries to try, most specific first.
+
+    Attempt 1 is the fully-joined query (identical to ``_build_query`` --
+    all keywords ANDed together, the pre-sandbox-yqf.15 behavior). Attempts
+    2+ are each remaining keyword tried *individually*, in order, skipping
+    any keyword that's identical to a query already in the list (e.g. when
+    there's only one keyword, so the joined query and that keyword alone
+    are the same string -- retrying the identical query would be pointless).
+    Capped at ``_MAX_QUERY_ATTEMPTS`` total candidate queries. See module
+    docstring "Query-loosening on zero results" for the full rationale.
+
+    Returns an empty list if there are no usable keywords at all (mirrors
+    ``_build_query`` returning ``""`` in that case).
+    """
+    cleaned = [kw.strip() for kw in (keywords or []) if isinstance(kw, str) and kw.strip()]
+    if not cleaned:
+        return []
+
+    attempts = [" ".join(cleaned)]
+    for kw in cleaned:
+        if len(attempts) >= _MAX_QUERY_ATTEMPTS:
+            break
+        if kw not in attempts:
+            attempts.append(kw)
+    return attempts
+
+
 def _parse_listings(raw_results: list[dict[str, Any]]) -> list[ComparableListing]:
     """Turn raw listing dicts into ``ComparableListing`` ORM objects.
 
@@ -354,19 +447,22 @@ class ComparableListingSearchService:
         Returns ``True`` if the search succeeded (including the valid
         "zero comparables found" outcome), in which case
         ``item.comparable_listings`` is (re)populated and ``item.status``
-        advances to ``pending_decision``. Returns ``False`` if the
-        underlying provider call failed on both the initial attempt and one
-        retry, in which case ``item.status`` is left untouched (still
-        ``pending_search``) so it can be retried later.
+        advances to ``pending_decision``. Returns ``False`` if any
+        candidate query's underlying provider call failed on both its
+        initial attempt and its one retry, in which case ``item.status``
+        is left untouched (still ``pending_search``) so it can be retried
+        later -- see module docstring "Query-loosening on zero results"
+        for exactly how the query-loosening and failure-retry axes
+        interact.
 
         Never raises: provider failures are caught, logged via the
         standard ``logging`` module, and reported through the return value
         rather than propagating.
         """
-        query = _build_query(item.search_keywords)
+        query_attempts = _build_query_attempts(item.search_keywords)
         item_id = getattr(item, "id", None)
 
-        if not query:
+        if not query_attempts:
             # No usable keywords to search with (e.g. identification fell
             # back to nothing usable). Not the provider's fault, and not a
             # reason to halt the pipeline -- treat as "zero comparables
@@ -379,10 +475,28 @@ class ComparableListingSearchService:
             item.status = ItemStatus.PENDING_DECISION
             return True
 
-        raw_results = self._search_with_retry(query, item_id=item_id)
-        if raw_results is None:
-            # Both attempts failed; status is deliberately left untouched.
-            return False
+        raw_results: list[dict[str, Any]] = []
+        for attempt_num, query in enumerate(query_attempts, start=1):
+            raw_results = self._search_with_retry(query, item_id=item_id)
+            if raw_results is None:
+                # This candidate query failed outright (exhausted its own
+                # failure-retry) -- abort the whole search rather than
+                # treating the failure as a cue to try a looser query. See
+                # module docstring "Query-loosening on zero results".
+                return False
+            if raw_results:
+                # Found at least one result -- stop loosening immediately,
+                # don't keep searching for a "better" result set.
+                break
+            logger.info(
+                "Comparable-listing search for item id=%s query=%r (attempt %d/%d) "
+                "returned zero results%s",
+                item_id,
+                query,
+                attempt_num,
+                len(query_attempts),
+                "; trying a looser query" if attempt_num < len(query_attempts) else "; giving up, zero results",
+            )
 
         item.comparable_listings = _parse_listings(raw_results)
         item.status = ItemStatus.PENDING_DECISION
