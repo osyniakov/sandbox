@@ -41,7 +41,7 @@ anticipated ("so a client can poll while the pipeline runs"). The
 tradeoff is a little more plumbing (the background task needs its own DB
 session, since the request-scoped session is closed once the response is
 sent) and no built-in "pipeline finished" push notification -- polling
-``GET /items/{id}`` is the intended mechanx, documented below.
+``GET /items/{id}`` is the intended mechanism, documented below.
 
 Polling contract for ``GET /items/{id}``
 -------------------------------------------
