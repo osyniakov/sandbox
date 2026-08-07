@@ -1,129 +1,47 @@
-import { useRef, useState } from 'react'
+import { BrowserRouter, Route, Routes } from 'react-router-dom'
+import UploadPage from './UploadPage.jsx'
+import ItemResultPage from './ItemResultPage.jsx'
 import './App.css'
 
-// Configurable via a Vite env var so the frontend can be pointed at a
-// different backend (e.g. a docker-compose service name, or a deployed
-// host) without code changes. See `.env.example`.
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
-
-// Extracts a human-readable message from a failed fetch Response.
-// The backend returns FastAPI-style `{"detail": "..."}` bodies for its
-// 4xx/5xx errors; fall back to the status text if the body isn't JSON or
-// doesn't have a `detail`.
-async function extractErrorMessage(response) {
-  try {
-    const body = await response.json()
-    if (body && typeof body.detail === 'string') {
-      return body.detail
-    }
-  } catch {
-    // Response body wasn't JSON -- fall through to the generic message.
-  }
-  return `Upload failed (${response.status} ${response.statusText})`
-}
-
+// Routing decision (sandbox-yqf.10)
+// ----------------------------------
+// This bead's brief flagged that a future bead (sandbox-yqf.11, the
+// basement inventory list) will need to deep-link users to a specific
+// item's results, so this introduces a proper URL-addressable route per
+// item (`/items/:id`) via `react-router-dom` rather than folding the
+// results view into App.jsx's old single-page capture/upload state
+// machine (which only ever had one "screen" and no shareable/refreshable
+// URL per item). Concretely:
+//
+//   `/`           -- the photo capture/upload flow (`UploadPage.jsx`,
+//                    the pre-existing sandbox-yqf.5 flow, split out
+//                    verbatim aside from navigating instead of showing
+//                    an inline "processing" message on success).
+//   `/items/:id`  -- the new results view (`ItemResultPage.jsx`), which
+//                    fetches + polls `GET /items/{id}` and is safe to
+//                    deep-link/refresh directly (e.g. from a future
+//                    inventory list, or a bookmarked/shared URL).
+//
+// `App.jsx` itself is now just the router root (BrowserRouter + Routes),
+// not a page component -- this keeps each page's state/effects scoped to
+// its own component and matches the mental model sandbox-yqf.11 will
+// want ("render the results page for item N" is just a navigation to
+// `/items/N`, not a prop threaded through shared page state).
+//
+// `react-router-dom` (not e.g. a hand-rolled `window.location`/hash
+// router) was chosen because it's the de facto standard for this in the
+// React ecosystem, has first-class support for the `useParams`/
+// `useNavigate` hooks used here, and needs no build/server configuration
+// changes beyond what Vite already does (client-side routing only --
+// there's no SSR here to worry about).
 function App() {
-  // 'idle' | 'uploading' | 'success' | 'error'
-  const [status, setStatus] = useState('idle')
-  const [itemId, setItemId] = useState(null)
-  const [errorMessage, setErrorMessage] = useState('')
-  const fileInputRef = useRef(null)
-
-  async function handleFileChange(event) {
-    const file = event.target.files?.[0]
-    if (!file) {
-      return
-    }
-
-    setStatus('uploading')
-    setErrorMessage('')
-
-    const formData = new FormData()
-    formData.append('photo', file)
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/items`, {
-        method: 'POST',
-        body: formData,
-      })
-
-      if (!response.ok) {
-        const message = await extractErrorMessage(response)
-        setErrorMessage(message)
-        setStatus('error')
-        return
-      }
-
-      const data = await response.json()
-      setItemId(data.id)
-      setStatus('success')
-    } catch {
-      // Network error (backend unreachable, CORS failure, offline, etc.)
-      // -- fetch rejects rather than resolving with a Response.
-      setErrorMessage('Could not reach the server. Check your connection and try again.')
-      setStatus('error')
-    }
-  }
-
-  function handleReset() {
-    setStatus('idle')
-    setItemId(null)
-    setErrorMessage('')
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
-    }
-  }
-
   return (
-    <div className="placeholder">
-      <h1>Basement Declutter</h1>
-      <p>
-        Photograph an item, find comparable listings, and get a sell /
-        give-away / throw-away recommendation.
-      </p>
-
-      {status === 'success' ? (
-        <div className="processing" role="status">
-          <p>
-            Item #{itemId} — processing...
-          </p>
-          <button type="button" onClick={handleReset}>
-            Upload another photo
-          </button>
-        </div>
-      ) : (
-        <>
-          <label htmlFor="photo-input" className="photo-input-label">
-            {status === 'uploading' ? 'Uploading...' : 'Take or choose a photo'}
-          </label>
-          <input
-            id="photo-input"
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handleFileChange}
-            disabled={status === 'uploading'}
-            aria-busy={status === 'uploading'}
-          />
-
-          {status === 'uploading' && (
-            <p className="status" role="status">
-              Uploading photo...
-            </p>
-          )}
-
-          {status === 'error' && (
-            <div className="error" role="alert">
-              <p>{errorMessage}</p>
-              <button type="button" onClick={handleReset}>
-                Try again
-              </button>
-            </div>
-          )}
-        </>
-      )}
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<UploadPage />} />
+        <Route path="/items/:id" element={<ItemResultPage />} />
+      </Routes>
+    </BrowserRouter>
   )
 }
 

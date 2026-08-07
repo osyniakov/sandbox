@@ -49,3 +49,74 @@
   margin-top: 0.5rem;
   cursor: pointer;
 }
+
+.item-result h1 {
+  margin-bottom: 1rem;
+}
+
+.photo-placeholder {
+  margin: 1rem 0;
+  padding: 2rem 1rem;
+  border: 1px dashed #999;
+  border-radius: 4px;
+  color: #666;
+  font-style: italic;
+}
+
+.identification h2 {
+  margin-bottom: 0.25rem;
+}
+
+.identification .category {
+  color: #666;
+  margin-top: 0;
+}
+
+.decision-badge {
+  display: inline-block;
+  margin: 1rem 0;
+  padding: 0.5rem 1rem;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.decision-sell {
+  background: #eafaf1;
+  color: #1b5e20;
+  border: 1px solid #2e7d32;
+}
+
+.decision-give-away {
+  background: #e8f0fe;
+  color: #174ea6;
+  border: 1px solid #1a73e8;
+}
+
+.decision-throw-away {
+  background: #fdecea;
+  color: #922b21;
+  border: 1px solid #c0392b;
+}
+
+.decision-pending {
+  background: #f1f1f1;
+  color: #555;
+  border: 1px solid #999;
+}
+
+.suggested-price {
+  font-weight: 600;
+}
+
+.comparables {
+  text-align: left;
+  margin-top: 1.5rem;
+}
+
+.comparables ul {
+  padding-left: 1.25rem;
+}
+
+.comparables li {
+  margin-bottom: 0.5rem;
+}

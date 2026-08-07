@@ -1,0 +1,115 @@
+import { useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { API_BASE_URL } from './api.js'
+
+// Extracts a human-readable message from a failed fetch Response.
+// The backend returns FastAPI-style `{"detail": "..."}` bodies for its
+// 4xx/5xx errors; fall back to the status text if the body isn't JSON or
+// doesn't have a `detail`.
+async function extractErrorMessage(response) {
+  try {
+    const body = await response.json()
+    if (body && typeof body.detail === 'string') {
+      return body.detail
+    }
+  } catch {
+    // Response body wasn't JSON -- fall through to the generic message.
+  }
+  return `Upload failed (${response.status} ${response.statusText})`
+}
+
+// The photo capture/upload page, rendered at `/`. On a successful upload
+// this navigates to `/items/:id` (see App.jsx's routing-decision comment
+// for why that's a separate route rather than inline state) so the user
+// lands on the results page for the item they just created.
+function UploadPage() {
+  // 'idle' | 'uploading' | 'error'
+  const [status, setStatus] = useState('idle')
+  const [errorMessage, setErrorMessage] = useState('')
+  const fileInputRef = useRef(null)
+  const navigate = useNavigate()
+
+  async function handleFileChange(event) {
+    const file = event.target.files?.[0]
+    if (!file) {
+      return
+    }
+
+    setStatus('uploading')
+    setErrorMessage('')
+
+    const formData = new FormData()
+    formData.append('photo', file)
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/items`, {
+        method: 'POST',
+        body: formData,
+      })
+
+      if (!response.ok) {
+        const message = await extractErrorMessage(response)
+        setErrorMessage(message)
+        setStatus('error')
+        return
+      }
+
+      const data = await response.json()
+      navigate(`/items/${data.id}`)
+    } catch {
+      // Network error (backend unreachable, CORS failure, offline, etc.)
+      // -- fetch rejects rather than resolving with a Response.
+      setErrorMessage('Could not reach the server. Check your connection and try again.')
+      setStatus('error')
+    }
+  }
+
+  function handleReset() {
+    setStatus('idle')
+    setErrorMessage('')
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  return (
+    <div className="placeholder">
+      <h1>Basement Declutter</h1>
+      <p>
+        Photograph an item, find comparable listings, and get a sell /
+        give-away / throw-away recommendation.
+      </p>
+
+      <label htmlFor="photo-input" className="photo-input-label">
+        {status === 'uploading' ? 'Uploading...' : 'Take or choose a photo'}
+      </label>
+      <input
+        id="photo-input"
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handleFileChange}
+        disabled={status === 'uploading'}
+        aria-busy={status === 'uploading'}
+      />
+
+      {status === 'uploading' && (
+        <p className="status" role="status">
+          Uploading photo...
+        </p>
+      )}
+
+      {status === 'error' && (
+        <div className="error" role="alert">
+          <p>{errorMessage}</p>
+          <button type="button" onClick={handleReset}>
+            Try again
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default UploadPage
