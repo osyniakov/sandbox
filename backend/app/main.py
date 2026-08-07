@@ -22,6 +22,7 @@ wiring, scheduling the background task, and read serialization).
 from __future__ import annotations
 
 import mimetypes
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
@@ -62,18 +63,70 @@ async def lifespan(app: FastAPI):
     yield
 
 
+# Default CORS allowlist for the plain "run everything on one machine"
+# dev workflow (see sandbox-yqf.5). Kept as the fallback whenever
+# ALLOWED_ORIGINS is unset/empty/malformed so existing local dev and the
+# test suite keep working unmodified with no env var configured.
+DEFAULT_ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+
+def _parse_allowed_origins(raw: str | None) -> list[str]:
+    """Parse the ``ALLOWED_ORIGINS`` env var into a CORS origin list.
+
+    Expected format: a comma-separated list of scheme+host+port origins,
+    e.g. ``"http://192.168.1.50:5173,http://localhost:5173"`` -- this is
+    how you point the backend's CORS allowlist at a phone/LAN device
+    reaching the Vite dev server over the LAN IP (``vite.config.js`` sets
+    ``server.host=true`` for exactly this reason; see the frontend
+    README's "Test from your phone" section for the full worked
+    example).
+
+    Falls back to ``DEFAULT_ALLOWED_ORIGINS`` if ``raw`` is ``None``,
+    empty, or contains only blank/whitespace entries once split on
+    commas (e.g. ``""``, ``","``, ``"  "``) -- a malformed value here is
+    far more likely to be an operator typo (stray comma, unset-but-
+    exported empty string, trailing whitespace) than a deliberate
+    request to disable CORS entirely, so failing open to the same
+    known-safe localhost pair keeps the app usable and errs toward the
+    tighter, already-reviewed default rather than either crashing
+    startup or silently becoming unreachable from any dev origin.
+    """
+    if not raw:
+        return list(DEFAULT_ALLOWED_ORIGINS)
+    origins = [origin.strip() for origin in raw.split(",") if origin.strip()]
+    if not origins:
+        return list(DEFAULT_ALLOWED_ORIGINS)
+    return origins
+
+
+# The actual allowlist used by the CORS middleware below, resolved once at
+# import time from the ALLOWED_ORIGINS env var (comma-separated). Exposed
+# as a module global (not inlined into add_middleware) so tests can
+# introspect/reload it, matching the module-global convention already
+# used for UPLOAD_DIR/engine above.
+ALLOWED_ORIGINS = _parse_allowed_origins(os.environ.get("ALLOWED_ORIGINS"))
+
 app = FastAPI(title="Basement Declutter API", lifespan=lifespan)
 
-# Allow the local Vite dev server (and its docker-compose-mapped port) to
-# call this API cross-origin during local development. Scoped narrowly to
-# known frontend dev origins -- not a wildcard -- since this is otherwise a
-# credential-less local app with no auth to protect.
+# Allow the Vite dev server -- whether reached via localhost or, for
+# testing from a phone on the same LAN, the dev machine's LAN IP (e.g.
+# http://192.168.1.50:5173) -- to call this API cross-origin. Scoped to
+# an explicit allowlist (ALLOWED_ORIGINS env var, defaulting to the
+# localhost/127.0.0.1 pair) -- deliberately NOT allow_origins=["*"],
+# because this is a POST endpoint that writes files to disk and rows to
+# the DB, and a wildcard origin combined with any future addition of
+# cookies/auth would be a real CSRF-style risk; a scoped env var costs
+# nothing extra to configure (see the frontend README) and keeps that
+# door closed. allow_credentials stays at its implicit default (False,
+# same as before this change) -- flipping it on would be unsafe to pair
+# with a broad/LAN-scoped origin list, so it is intentionally not set
+# here.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
