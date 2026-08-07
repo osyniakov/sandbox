@@ -5,3 +5,5 @@ httpx==0.27.2
 sqlalchemy==2.0.51
 anthropic==0.121.0
 kleinanzeigen-api>=0.4.0,<0.5
+python-multipart==0.0.32
+Pillow==12.3.0

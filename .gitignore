@@ -45,3 +45,7 @@ frontend/dist/
 .vite/
 npm-debug.log*
 
+# Uploaded photos (backend/app/main.py POST /items) -- user data, not
+# committed, same treatment as backend/data/*.db.
+backend/uploads/
+
