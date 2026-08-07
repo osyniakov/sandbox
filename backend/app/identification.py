@@ -74,7 +74,7 @@ FALLBACK_KEYWORDS = ["unidentified item", "household item", "used item"]
 # response dict to signal "I responded, but I'm not sure about this."
 _LOW_CONFIDENCE_MARKERS = {"low", "unsure", "uncertain", "unclear", "none"}
 
-DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-5-20250929"
+DEFAULT_CLAUDE_MODEL = "claude-sonnet-5"
 
 _IDENTIFICATION_PROMPT = """\
 You are helping identify a household item from a photo so it can be \
