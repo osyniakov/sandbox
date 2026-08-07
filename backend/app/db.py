@@ -1,0 +1,73 @@
+"""Database engine/session setup.
+
+Migration strategy: we use SQLAlchemy's ``Base.metadata.create_all()``
+instead of Alembic. Rationale: this is a single-user, local-only app
+running on SQLite with no production deployment yet, and the schema is
+still evolving quickly during early development. ``create_all()`` is
+sufficient to get a fresh DB into the current schema shape with zero
+extra tooling/config, and it's idempotent (skips tables that already
+exist). If/when we need to evolve the schema of a *populated* DB
+without losing data (i.e. real migrations, not just "create what's
+missing"), that's the point to introduce Alembic -- track that as a
+follow-up bead rather than adding the machinery preemptively.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterator
+from pathlib import Path
+
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.models import Base
+
+
+@event.listens_for(Engine, "connect")
+def _enable_sqlite_foreign_keys(dbapi_connection, connection_record) -> None:
+    """Enforce FK constraints on SQLite, which ignores them by default."""
+    if type(dbapi_connection).__module__.startswith("sqlite3"):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
+DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "declutter.db"
+
+
+def make_engine(db_url: str | None = None):
+    """Create a SQLAlchemy engine.
+
+    Defaults to a SQLite file under ``backend/data/declutter.db``. Pass an
+    explicit ``db_url`` (e.g. ``"sqlite:///:memory:"`` or a temp file URL)
+    for tests so the dev DB file is never touched.
+    """
+    if db_url is None:
+        DEFAULT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        db_url = f"sqlite:///{DEFAULT_DB_PATH}"
+
+    connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
+    return create_engine(db_url, connect_args=connect_args)
+
+
+def init_db(engine) -> None:
+    """Create all tables that don't already exist."""
+    Base.metadata.create_all(bind=engine)
+
+
+def make_session_factory(engine) -> sessionmaker[Session]:
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+# Default engine/session for app runtime use (not imported by tests).
+engine = make_engine()
+SessionLocal = make_session_factory(engine)
+
+
+def get_session() -> Iterator[Session]:
+    """FastAPI-style dependency for a request-scoped session."""
+    session = SessionLocal()
+    try:
+        yield session
+    finally:
+        session.close()
