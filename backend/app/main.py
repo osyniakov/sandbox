@@ -27,6 +27,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
 from app.db import engine, get_session, init_db
@@ -62,6 +63,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Basement Declutter API", lifespan=lifespan)
+
+# Allow the local Vite dev server (and its docker-compose-mapped port) to
+# call this API cross-origin during local development. Scoped narrowly to
+# known frontend dev origins -- not a wildcard -- since this is otherwise a
+# credential-less local app with no auth to protect.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/health")

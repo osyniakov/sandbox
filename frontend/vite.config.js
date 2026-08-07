@@ -8,6 +8,11 @@ export default defineConfig({
     host: true,
     port: 5173,
   },
+  test: {
+    environment: 'jsdom',
+    setupFiles: './src/setupTests.js',
+    globals: false,
+  },
   plugins: [
     react(),
     VitePWA({

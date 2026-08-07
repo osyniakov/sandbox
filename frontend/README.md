@@ -2,6 +2,26 @@
 
 See the repo-root `README.md` for how to run this alongside the backend.
 
+## Backend API URL
+
+The photo capture/upload page (`src/App.jsx`) calls the backend's
+`POST /items` endpoint. The base URL is read from the `VITE_API_BASE_URL`
+Vite env var, defaulting to `http://localhost:8000` if unset. Copy
+`.env.example` to `.env` (or `.env.local`) and edit it if your backend
+isn't running at the default local address:
+
+```sh
+cp .env.example .env
+```
+
+## Tests
+
+Component tests use Vitest + React Testing Library:
+
+```sh
+npm test
+```
+
 This is a React + Vite template with `vite-plugin-pwa` added for PWA
 manifest/service-worker generation. Currently two official React plugins
 are available for Vite:
