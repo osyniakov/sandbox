@@ -24,3 +24,9 @@ hs_err_pid*
 
 # Claude Code personal/local overrides (not shared with the team)
 .claude/settings.local.json
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
