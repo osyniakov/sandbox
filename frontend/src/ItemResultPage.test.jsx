@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import ItemResultPage from './ItemResultPage.jsx'
+import { API_BASE_URL } from './api.js'
 
 // Fixture Item records, one per backend `Decision` value plus one
 // still-processing (non-terminal `status`) case -- matching the shape
@@ -9,6 +10,7 @@ import ItemResultPage from './ItemResultPage.jsx'
 const SELL_ITEM = {
   id: 1,
   photo_path: '/x/uploads/a.jpg',
+  photo_url: '/uploads/a.jpg',
   identified_name: 'Cordless Drill',
   category: 'Power Tools',
   brand: 'Bosch',
@@ -72,6 +74,7 @@ const THROW_AWAY_ITEM = {
 const PROCESSING_ITEM = {
   id: 4,
   photo_path: '/x/uploads/d.jpg',
+  photo_url: '/uploads/d.jpg',
   identified_name: null,
   category: null,
   brand: null,
@@ -171,6 +174,34 @@ describe('ItemResultPage', () => {
     expect(screen.queryByText(/comparable listings/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/sell|give away|throw away/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/undefined/i)).not.toBeInTheDocument()
+  })
+
+  it('renders an <img> pointing at photo_url resolved against API_BASE_URL', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM })
+
+    renderAtItem(1)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
+    })
+
+    const img = screen.getByRole('img')
+    expect(img).toHaveAttribute('src', `${API_BASE_URL}${SELL_ITEM.photo_url}`)
+    expect(screen.queryByTestId('photo-placeholder')).not.toBeInTheDocument()
+  })
+
+  it('falls back to a "photo unavailable" message when the image fails to load', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM })
+
+    renderAtItem(1)
+
+    const img = await screen.findByRole('img')
+    fireEvent.error(img)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-placeholder')).toHaveTextContent(/photo unavailable/i)
+    })
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
   })
 
   it('shows an error state when the item does not exist (404)', async () => {

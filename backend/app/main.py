@@ -29,6 +29,7 @@ from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from app.db import engine, get_session, init_db
@@ -40,6 +41,16 @@ from app.pipeline import run_pipeline_with_new_session
 # Referenced as a bare module global (not a local/default-arg copy) so
 # tests can monkeypatch ``app.main.UPLOAD_DIR`` to a temp directory.
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
+
+# URL path prefix uploaded photos are served under (see the StaticFiles
+# mount below and ``_serialize_item``'s ``photo_url`` field). Kept
+# relative (no scheme/host) -- the frontend already resolves every API
+# path relative to ``VITE_API_BASE_URL`` (see frontend/src/api.js's
+# ``fetchItem``), so a relative ``photo_url`` here is consistent with
+# that existing convention and stays correct across dev/LAN/deployed
+# hosts without this backend needing to know its own externally-visible
+# host/port.
+UPLOAD_URL_PREFIX = "/uploads"
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
 _UPLOAD_READ_CHUNK_BYTES = 1024 * 1024  # stream to disk in 1MB chunks
@@ -130,6 +141,68 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class _UploadsStaticFiles(StaticFiles):
+    """Serves ``UPLOAD_DIR``, re-resolved as a module global on every
+    request rather than once at construction time.
+
+    The base ``starlette.staticfiles.StaticFiles`` resolves and caches its
+    serving directory once, in ``__init__`` -- but this app's mount below
+    is created once at *import* time (module level), while
+    ``app.main.UPLOAD_DIR`` is designed to be monkeypatched *after*
+    import, per-test, to a throwaway temp directory (see ``UPLOAD_DIR``'s
+    own docstring above, and the ``client`` fixture in
+    ``tests/test_items_upload.py``). A plain ``StaticFiles(directory=...)``
+    mount would therefore permanently point at whatever ``UPLOAD_DIR`` was
+    at import time -- ignoring any later monkeypatch -- so uploaded-photo
+    tests using the standard temp-dir fixture would silently serve from
+    (or 404 against) the wrong directory.
+
+    Overriding the ``all_directories`` property (which
+    ``StaticFiles.lookup_path`` reads on every request, not just once) to
+    always recompute from the current ``app.main.UPLOAD_DIR`` global fixes
+    that, matching the "module global looked up at call time" convention
+    already used for ``UPLOAD_DIR``/``engine`` elsewhere in this module.
+    """
+
+    def __init__(self) -> None:
+        # ``directory=None`` + ``check_dir=False``: skip the base class's
+        # construction-time "directory must already exist" check
+        # entirely -- at import time UPLOAD_DIR may not exist yet (it's
+        # created lazily in `lifespan`), and under test it gets
+        # monkeypatched to a different directory anyway, so nothing
+        # meaningful could be validated here regardless. ``self.directory
+        # is None`` also short-circuits `check_config` (invoked on the
+        # first request) into a no-op, so a not-yet-existing UPLOAD_DIR
+        # never raises -- unresolvable requests still correctly 404 via
+        # ``lookup_path`` below.
+        super().__init__(directory=None, check_dir=False)
+
+    @property
+    def all_directories(self) -> list[str]:  # type: ignore[override]
+        return [str(UPLOAD_DIR)]
+
+    @all_directories.setter
+    def all_directories(self, value: object) -> None:
+        # The base __init__ assigns ``self.all_directories = ...`` once,
+        # computed from the (possibly nonexistent, possibly stale)
+        # ``directory=None`` passed above. Silently discard that -- the
+        # property getter above always re-derives the current
+        # ``UPLOAD_DIR`` at lookup time instead, which is the entire
+        # point of this subclass (see the class docstring).
+        pass
+
+
+# Serves uploaded photos back over HTTP at ``UPLOAD_URL_PREFIX`` (e.g.
+# ``GET /uploads/<filename>``) so the frontend can render them (see
+# ``_serialize_item``'s ``photo_url`` field below). ``StaticFiles``
+# resolves each request path against its serving directory via
+# ``os.path.realpath`` and rejects any result that escapes that directory
+# (see ``starlette.staticfiles.StaticFiles.lookup_path``) -- this is
+# verified explicitly (not just assumed) by
+# ``tests/test_uploads_static.py``'s path-traversal tests.
+app.mount(UPLOAD_URL_PREFIX, _UploadsStaticFiles(), name="uploads")
 
 
 @app.get("/health")
@@ -260,10 +333,24 @@ def _serialize_comparable_listing(listing: ComparableListing) -> dict[str, objec
     }
 
 
+def _photo_url(photo_path: str) -> str:
+    """Build the fetchable ``/uploads/...`` URL for a stored photo.
+
+    Relative (no scheme/host) -- see ``UPLOAD_URL_PREFIX``'s docstring for
+    why. Derived from just the filename (``Path(photo_path).name``), not
+    the full stored path, since ``photo_path`` is a server-side filesystem
+    path (potentially absolute, potentially OS-specific) that must never
+    leak to/be trusted from the client -- the filename alone is all
+    ``_UploadsStaticFiles``/``UPLOAD_DIR`` needs to look the file back up.
+    """
+    return f"{UPLOAD_URL_PREFIX}/{Path(photo_path).name}"
+
+
 def _serialize_item(item: Item) -> dict[str, object]:
     return {
         "id": item.id,
         "photo_path": item.photo_path,
+        "photo_url": _photo_url(item.photo_path),
         "identified_name": item.identified_name,
         "category": item.category,
         "brand": item.brand,

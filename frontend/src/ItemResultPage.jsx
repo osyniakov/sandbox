@@ -62,6 +62,7 @@ function ItemResultPage() {
   const [item, setItem] = useState(null)
   const [loadError, setLoadError] = useState('')
   const [stuck, setStuck] = useState(false)
+  const [photoUnavailable, setPhotoUnavailable] = useState(false)
   const pollStartRef = useRef(null)
 
   useEffect(() => {
@@ -73,6 +74,7 @@ function ItemResultPage() {
     setItem(null)
     setLoadError('')
     setStuck(false)
+    setPhotoUnavailable(false)
 
     async function poll() {
       try {
@@ -136,19 +138,27 @@ function ItemResultPage() {
     <div className="placeholder item-result">
       <h1>Item #{item.id}</h1>
 
-      {/* Photo display: `Item.photo_path` is a server-side filesystem
-          path (e.g. "/…/backend/uploads/<uuid>.jpg"), not a URL, and the
-          backend does not currently mount any static-file-serving route
-          for the uploads directory (checked backend/app/main.py -- no
-          StaticFiles mount, no /uploads route). Rendering
-          `<img src={item.photo_path}>` would just be a broken image, so
-          this deliberately shows a placeholder instead of a silently-
-          broken <img>. See this task's summary for the flagged backend
-          gap (a real fix -- e.g. mounting StaticFiles at /uploads -- is
-          out of this task's scope). */}
-      <div className="photo-placeholder" data-testid="photo-placeholder">
-        <p>Photo preview isn't available yet (uploaded photos aren't served over HTTP).</p>
-      </div>
+      {/* Photo display: `Item.photo_url` (added in sandbox-yqf.19) is a
+          relative path (e.g. "/uploads/<uuid>.jpg") served by the
+          backend's StaticFiles mount -- resolved against API_BASE_URL
+          the same way `fetchItem` above resolves `/items/{id}`, so this
+          keeps working across dev/LAN/deployed hosts without this page
+          needing to know the backend's origin separately. If the image
+          fails to load (file missing on disk, network hiccup, etc.),
+          `onError` swaps in a "photo unavailable" message instead of
+          leaving a broken-image icon on the page. */}
+      {photoUnavailable || !item.photo_url ? (
+        <div className="photo-placeholder" data-testid="photo-placeholder">
+          <p>Photo unavailable.</p>
+        </div>
+      ) : (
+        <img
+          className="item-photo"
+          src={`${API_BASE_URL}${item.photo_url}`}
+          alt={item.identified_name ? `Photo of ${item.identified_name}` : `Photo of item #${item.id}`}
+          onError={() => setPhotoUnavailable(true)}
+        />
+      )}
 
       {(item.identified_name || item.category) && (
         <div className="identification">
