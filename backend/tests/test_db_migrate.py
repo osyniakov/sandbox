@@ -168,6 +168,87 @@ def test_upgrade_to_head_legacy_db_preserves_data(tmp_path, monkeypatch) -> None
     engine.dispose()
 
 
+def test_upgrade_to_head_legacy_db_already_at_head_schema(tmp_path, monkeypatch) -> None:
+    """A legacy DB whose ``items`` table was created via
+    ``Base.metadata.create_all()`` against the CURRENT ``app.models`` (so it
+    already has ``user_hint``), but was never stamped by Alembic (no
+    ``alembic_version`` table) -- e.g. a local dev DB created by running the
+    app's own ``init_db()`` after ``user_hint`` was added to the model but
+    before this Alembic epic shipped.
+
+    Regression guard: previously ``upgrade_to_head()`` unconditionally
+    stamped this shape at the pre-hint BASELINE revision, and the
+    subsequent ``upgrade head`` then tried to re-run the
+    "add user_hint column" migration's DDL against a table that already
+    had that column, raising ``OperationalError: duplicate column name:
+    user_hint``. It must instead detect that the schema already matches
+    head and stamp at head directly (a no-op), preserving existing data.
+    """
+    database_url = _make_database_url(tmp_path, monkeypatch, "legacy_at_head.db")
+
+    # Build the DB directly via Base.metadata.create_all() against the
+    # CURRENT app.models -- no Alembic involved in setup at all, matching
+    # how a real create_all()-based legacy DB would actually look.
+    from app.models import Base, Decision, Item, ItemStatus
+
+    setup_engine = sqlalchemy.create_engine(database_url)
+    Base.metadata.create_all(bind=setup_engine)
+
+    # Confirm the setup actually produced the shape under test: items has
+    # user_hint, and there is no alembic_version table yet.
+    inspector = sqlalchemy.inspect(setup_engine)
+    assert not inspector.has_table("alembic_version")
+    assert inspector.has_table("items")
+    assert "user_hint" in _table_columns(setup_engine, "items")
+
+    from datetime import datetime, timezone
+
+    now = datetime.now(timezone.utc)
+    from sqlalchemy.orm import Session
+
+    with Session(setup_engine) as session:
+        session.add(
+            Item(
+                photo_path="legacy/photo.jpg",
+                identified_name="Old Lamp",
+                category="furniture",
+                brand="Acme",
+                condition="used",
+                user_hint="found in the attic",
+                search_keywords=["lamp"],
+                suggested_price=12.5,
+                decision=Decision.PENDING,
+                status=ItemStatus.PENDING_IDENTIFICATION,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        session.commit()
+
+    expected_columns = _table_columns(setup_engine, "items")
+    setup_engine.dispose()
+
+    # Must not raise (previously raised OperationalError: duplicate column
+    # name: user_hint).
+    upgrade_to_head(database_url)
+
+    engine = sqlalchemy.create_engine(database_url)
+    assert _table_columns(engine, "items") == expected_columns
+    assert _alembic_version(engine) == _head_revision()
+
+    with engine.connect() as connection:
+        row = connection.execute(
+            sqlalchemy.text(
+                "SELECT photo_path, identified_name, user_hint FROM items"
+            )
+        ).fetchone()
+    assert row is not None
+    assert row[0] == "legacy/photo.jpg"
+    assert row[1] == "Old Lamp"
+    assert row[2] == "found in the attic"
+    engine.dispose()
+
+
 def test_upgrade_to_head_is_idempotent(tmp_path, monkeypatch) -> None:
     """Calling upgrade_to_head() twice against the same DB is a true no-op
     the second time: no exception, same schema, same alembic_version."""
