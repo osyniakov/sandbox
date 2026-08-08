@@ -64,6 +64,45 @@ const DECISION_INFO = {
   },
 }
 
+// How long the "Copied!" feedback stays visible on a CopyButton after a
+// successful copy before reverting to its normal label.
+const COPY_FEEDBACK_MS = 2000
+
+// A small button that copies `text` to the clipboard via the browser's
+// `navigator.clipboard.writeText` API and shows brief "Copied!" feedback
+// (reverting after COPY_FEEDBACK_MS) on success. Used for both the
+// suggested title and suggested description below, independently -- each
+// instance tracks its own `copied` state.
+function CopyButton({ text, label }) {
+  const [copied, setCopied] = useState(false)
+  const timeoutIdRef = useRef(null)
+
+  useEffect(() => {
+    // Clears any pending revert timer on unmount so it doesn't try to
+    // setState on an unmounted component.
+    return () => {
+      if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current)
+    }
+  }, [])
+
+  async function handleClick() {
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current)
+    timeoutIdRef.current = setTimeout(() => setCopied(false), COPY_FEEDBACK_MS)
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={handleClick}
+      className="ml-2 shrink-0 rounded border border-border px-2 py-1 text-sm"
+    >
+      {copied ? 'Copied!' : `Copy ${label}`}
+    </button>
+  )
+}
+
 async function fetchItem(id, signal) {
   const response = await apiFetch(`/items/${id}`, { signal })
   if (!response.ok) {
@@ -254,6 +293,31 @@ function ItemResultPage() {
               Suggested price: {item.suggested_price.toFixed(2)} EUR
             </p>
           )}
+
+          {/* Suggested Kleinanzeigen title/description (sandbox-dwl.5) --
+              only generated for sell/give_away decisions (see
+              backend/app/pipeline.py), and only rendered here once both
+              fields are non-empty strings, following the same
+              conditionally-rendered-optional-field convention as
+              `item.hint` above. Plain JSX text interpolation only (never
+              dangerouslySetInnerHTML) since this is LLM-generated text. */}
+          {(item.decision === 'sell' || item.decision === 'give_away') &&
+            item.suggested_title &&
+            item.suggested_description && (
+              <div className="mt-6 text-left">
+                <h3 className="mb-2">Suggested Kleinanzeigen listing</h3>
+
+                <div className="mb-3 flex items-start justify-between gap-2">
+                  <p className="font-semibold">{item.suggested_title}</p>
+                  <CopyButton text={item.suggested_title} label="title" />
+                </div>
+
+                <div className="flex items-start justify-between gap-2">
+                  <p className="flex-1 whitespace-pre-wrap">{item.suggested_description}</p>
+                  <CopyButton text={item.suggested_description} label="description" />
+                </div>
+              </div>
+            )}
 
           <div className="mt-6 text-left">
             <h3 className="mb-2">Comparable listings</h3>

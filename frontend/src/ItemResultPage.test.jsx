@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import ItemResultPage from './ItemResultPage.jsx'
 import { AuthProvider } from './AuthContext.jsx'
@@ -27,6 +27,8 @@ const SELL_ITEM = {
   hint: null,
   search_keywords: ['bosch', 'drill'],
   suggested_price: 45.5,
+  suggested_title: null,
+  suggested_description: null,
   decision: 'sell',
   status: 'decided',
   created_at: '2026-08-01T00:00:00+00:00',
@@ -68,6 +70,25 @@ const GIVE_AWAY_ITEM = {
       location: 'Hamburg',
     },
   ],
+}
+
+// Suggested-title/description variants (sandbox-dwl.5) -- one per decision
+// that actually generates them (sell, give_away). `_serialize_item` always
+// includes these two keys (string or null), and the pipeline only ever
+// populates them for these two decisions (throw_away/pending stay null;
+// see backend/app/pipeline.py), so PROCESSING_ITEM/THROW_AWAY_ITEM below
+// deliberately keep them null via the SELL_ITEM spread rather than getting
+// their own overrides.
+const SELL_ITEM_WITH_SUGGESTION = {
+  ...SELL_ITEM,
+  suggested_title: 'Bosch Cordless Drill – Good Condition',
+  suggested_description: 'Well-maintained Bosch cordless drill.\nComes with charger and case.',
+}
+
+const GIVE_AWAY_ITEM_WITH_SUGGESTION = {
+  ...GIVE_AWAY_ITEM,
+  suggested_title: 'Old Board Game – Free to a Good Home',
+  suggested_description: 'Complete board game, all pieces included.\nFree, just come pick it up.',
 }
 
 const THROW_AWAY_ITEM = {
@@ -249,6 +270,93 @@ describe('ItemResultPage', () => {
       'href',
       'https://kleinanzeigen.example/3',
     )
+  })
+
+  // jsdom does not implement `navigator.clipboard` by default -- stubbed
+  // per-test (rather than globally in setupTests.js) since only the copy
+  // tests below need it, keeping every other test's `navigator` untouched.
+  function stubClipboard() {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    })
+    return writeText
+  }
+
+  it('shows the suggested title/description with copy-to-clipboard for a sell decision', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM_WITH_SUGGESTION })
+    const writeText = stubClipboard()
+
+    renderAtItem(1)
+
+    await waitFor(() => {
+      expect(screen.getByText(SELL_ITEM_WITH_SUGGESTION.suggested_title)).toBeInTheDocument()
+    })
+    expect(
+      screen.getByText(/well-maintained bosch cordless drill/i),
+    ).toBeInTheDocument()
+
+    const copyTitleButton = screen.getByRole('button', { name: /copy title/i })
+    fireEvent.click(copyTitleButton)
+    expect(writeText).toHaveBeenCalledWith(SELL_ITEM_WITH_SUGGESTION.suggested_title)
+    await waitFor(() => {
+      expect(copyTitleButton).toHaveTextContent('Copied!')
+    })
+
+    const copyDescriptionButton = screen.getByRole('button', { name: /copy description/i })
+    fireEvent.click(copyDescriptionButton)
+    expect(writeText).toHaveBeenCalledWith(SELL_ITEM_WITH_SUGGESTION.suggested_description)
+    await waitFor(() => {
+      expect(copyDescriptionButton).toHaveTextContent('Copied!')
+    })
+  })
+
+  it('shows the suggested title/description with copy-to-clipboard for a give_away decision', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => GIVE_AWAY_ITEM_WITH_SUGGESTION,
+    })
+    const writeText = stubClipboard()
+
+    renderAtItem(2)
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(GIVE_AWAY_ITEM_WITH_SUGGESTION.suggested_title),
+      ).toBeInTheDocument()
+    })
+    expect(screen.getByText(/complete board game, all pieces included/i)).toBeInTheDocument()
+
+    const copyTitleButton = screen.getByRole('button', { name: /copy title/i })
+    fireEvent.click(copyTitleButton)
+    expect(writeText).toHaveBeenCalledWith(GIVE_AWAY_ITEM_WITH_SUGGESTION.suggested_title)
+    await waitFor(() => {
+      expect(copyTitleButton).toHaveTextContent('Copied!')
+    })
+
+    const copyDescriptionButton = screen.getByRole('button', { name: /copy description/i })
+    fireEvent.click(copyDescriptionButton)
+    expect(writeText).toHaveBeenCalledWith(GIVE_AWAY_ITEM_WITH_SUGGESTION.suggested_description)
+    await waitFor(() => {
+      expect(copyDescriptionButton).toHaveTextContent('Copied!')
+    })
+  })
+
+  it('does not render the suggested listing section when suggested_title/suggested_description are null', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM })
+
+    renderAtItem(1)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText(/suggested kleinanzeigen listing/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /copy title/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /copy description/i })).not.toBeInTheDocument()
   })
 
   it('renders the throw_away decision with no comparable listings and no suggested price', async () => {
