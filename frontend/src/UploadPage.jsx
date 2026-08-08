@@ -73,18 +73,23 @@ function UploadPage() {
   }
 
   return (
-    <div className="placeholder">
-      <h1>Basement Declutter</h1>
-      <p>
+    <div className="max-w-lg mx-auto my-16 px-4 text-center">
+      <h1 className="text-4xl md:text-5xl">Basement Declutter</h1>
+      <p className="text-base text-text">
         Photograph an item, find comparable listings, and get a sell /
         give-away / throw-away recommendation.
       </p>
 
-      <p>
-        <Link to="/inventory">View basement inventory</Link>
+      <p className="mt-4">
+        <Link to="/inventory" className="link">
+          View basement inventory
+        </Link>
       </p>
 
-      <label htmlFor="photo-input" className="photo-input-label">
+      <label
+        htmlFor="photo-input"
+        className="block mt-6 mb-2 font-semibold text-heading"
+      >
         {status === 'uploading' ? 'Uploading...' : 'Take or choose a photo'}
       </label>
       <input
@@ -96,18 +101,26 @@ function UploadPage() {
         onChange={handleFileChange}
         disabled={status === 'uploading'}
         aria-busy={status === 'uploading'}
+        className="form-file mx-auto disabled:opacity-60 disabled:cursor-not-allowed"
       />
 
       {status === 'uploading' && (
-        <p className="status" role="status">
+        <p className="mt-6 text-sm italic text-text" role="status">
           Uploading photo...
         </p>
       )}
 
       {status === 'error' && (
-        <div className="error" role="alert">
+        <div
+          className="mt-4 px-4 py-3 rounded border border-throw-away-border bg-throw-away-bg text-throw-away-text"
+          role="alert"
+        >
           <p>{errorMessage}</p>
-          <button type="button" onClick={handleReset}>
+          <button
+            type="button"
+            onClick={handleReset}
+            className="mt-2 rounded border border-border bg-bg px-3 py-1.5 text-sm font-medium text-text cursor-pointer hover:bg-primary-hover/10 hover:border-primary"
+          >
             Try again
           </button>
         </div>
