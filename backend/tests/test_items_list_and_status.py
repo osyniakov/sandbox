@@ -61,6 +61,8 @@ def _make_item(
     decision: Decision = Decision.PENDING,
     identified_name: str | None = None,
     user_hint: str | None = None,
+    suggested_title: str | None = None,
+    suggested_description: str | None = None,
 ) -> int:
     session = db_session_factory()
     try:
@@ -70,6 +72,8 @@ def _make_item(
             decision=decision,
             identified_name=identified_name,
             user_hint=user_hint,
+            suggested_title=suggested_title,
+            suggested_description=suggested_description,
         )
         session.add(item)
         session.commit()
@@ -156,6 +160,8 @@ def test_list_items_returns_all_items_with_full_serialized_shape(
         assert "decision" in item
         assert "status" in item
         assert "hint" in item
+        assert "suggested_title" in item
+        assert "suggested_description" in item
 
     by_id = {item["id"]: item for item in body}
     assert by_id[id1]["hint"] == "Bosch drill, orange casing"
@@ -278,6 +284,74 @@ def test_get_item_hint_is_none_when_not_set(
 
     assert response.status_code == 200
     assert response.json()["hint"] is None
+
+
+# ---------------------------------------------------------------------------
+# ``suggested_title``/``suggested_description`` -- serialized from
+# ``Item.suggested_title``/``Item.suggested_description`` (sandbox-dwl.4)
+# ---------------------------------------------------------------------------
+
+
+def test_get_item_includes_suggested_title_and_description_when_set(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    item_id = _make_item(
+        db_session_factory,
+        status=ItemStatus.DECIDED,
+        decision=Decision.SELL,
+        suggested_title="Bosch Cordless Drill, Orange",
+        suggested_description="Lightly used cordless drill, works great.",
+    )
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["suggested_title"] == "Bosch Cordless Drill, Orange"
+    assert body["suggested_description"] == "Lightly used cordless drill, works great."
+
+
+def test_get_item_suggested_title_and_description_are_none_when_not_set(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    item_id = _make_item(
+        db_session_factory,
+        status=ItemStatus.DECIDED,
+        decision=Decision.THROW_AWAY,
+    )
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["suggested_title"] is None
+    assert body["suggested_description"] is None
+
+
+def test_list_items_includes_suggested_title_and_description(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    id1 = _make_item(
+        db_session_factory,
+        status=ItemStatus.DECIDED,
+        decision=Decision.SELL,
+        suggested_title="Bosch Cordless Drill, Orange",
+        suggested_description="Lightly used cordless drill, works great.",
+    )
+    id2 = _make_item(
+        db_session_factory,
+        status=ItemStatus.DECIDED,
+        decision=Decision.THROW_AWAY,
+    )
+
+    response = client.get("/items", headers=auth_headers)
+
+    assert response.status_code == 200
+    by_id = {item["id"]: item for item in response.json()}
+    assert by_id[id1]["suggested_title"] == "Bosch Cordless Drill, Orange"
+    assert by_id[id1]["suggested_description"] == "Lightly used cordless drill, works great."
+    assert by_id[id2]["suggested_title"] is None
+    assert by_id[id2]["suggested_description"] is None
 
 
 # ---------------------------------------------------------------------------

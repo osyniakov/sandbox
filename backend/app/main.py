@@ -695,6 +695,8 @@ def _serialize_item(item: Item) -> dict[str, object]:
         "search_keywords": item.search_keywords,
         "hint": item.user_hint,
         "suggested_price": item.suggested_price,
+        "suggested_title": item.suggested_title,
+        "suggested_description": item.suggested_description,
         "decision": item.decision.value,
         "status": item.status.value,
         "valid_next_statuses": sorted(
