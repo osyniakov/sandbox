@@ -147,8 +147,11 @@ camera capture, so a desktop-only test misses the main use case).
 ## Using the app
 
 1. Open the frontend (`http://localhost:5173` or your phone's LAN
-   address, see `frontend/README.md`) and take/choose a photo. It
-   uploads immediately and takes you to that item's results page.
+   address, see `frontend/README.md`). There's an optional "Hint"
+   text field for giving the vision model context it can't get from
+   the photo alone (e.g. a brand or model number) — type it *before*
+   choosing a photo, since taking/choosing the photo uploads
+   immediately and takes you straight to that item's results page.
 2. The results page polls `GET /items/{id}` every ~2.5s while the
    pipeline runs, showing the photo, identified name/category, the
    recommended decision (sell/give-away/throw-away), a suggested price
@@ -159,9 +162,12 @@ camera capture, so a desktop-only test misses the main use case).
 
 ### API surface, if you want to script against it
 
-- `POST /items` — multipart photo upload, starts the pipeline.
+- `POST /items` — multipart photo upload, starts the pipeline. Accepts
+  an optional `hint` form field (string, trimmed, max 500 chars after
+  trimming — whitespace-only or empty is treated as absent, longer
+  values get a 400) with extra context for the vision model.
 - `GET /items/{id}` — full item detail (identification, decision,
-  comparable listings, status).
+  comparable listings, status, hint).
 - `GET /items?status=&decision=` — list items, optionally filtered.
 - `PATCH /items/{id}/status` — manually transition status (e.g.
   `{"status": "listed"}`); rejects invalid transitions with a 400
