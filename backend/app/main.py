@@ -480,6 +480,9 @@ def _serialize_item(item: Item) -> dict[str, object]:
         "suggested_price": item.suggested_price,
         "decision": item.decision.value,
         "status": item.status.value,
+        "valid_next_statuses": sorted(
+            s.value for s in MANUAL_STATUS_TRANSITIONS.get(item.status, frozenset())
+        ),
         "created_at": item.created_at.isoformat(),
         "updated_at": item.updated_at.isoformat(),
         "comparable_listings": [
