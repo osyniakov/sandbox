@@ -2,7 +2,6 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import UploadPage from './UploadPage.jsx'
 import ItemResultPage from './ItemResultPage.jsx'
 import InventoryPage from './InventoryPage.jsx'
-import './App.css'
 
 // Routing decision (sandbox-yqf.10)
 // ----------------------------------
@@ -53,9 +52,10 @@ import './App.css'
 // each page independently adopts, especially since sandbox-zlt.3/.4/.5
 // are restyling those three pages in parallel and may not agree yet on
 // their own root element's classes. If a later task retires the
-// plain-CSS `#root` rule (sandbox-zlt.7, once App.css is fully replaced),
-// that's the point to introduce a real Tailwind-based `<Layout>` wrapper
-// here instead of resurrecting it prematurely now.
+// plain-CSS `#root` rule (sandbox-zlt.9, App.css itself was removed by
+// sandbox-zlt.7 since it had gone fully dead), that's the point to
+// introduce a real Tailwind-based `<Layout>` wrapper here instead of
+// resurrecting it prematurely now.
 function App() {
   return (
     <BrowserRouter>
