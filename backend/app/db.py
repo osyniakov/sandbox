@@ -57,6 +57,17 @@ def _default_db_path() -> Path:
 DEFAULT_DB_PATH = _default_db_path()
 
 
+def get_database_url() -> str:
+    """Compute the default SQLite database URL, ensuring the parent dir exists.
+
+    Shared by ``make_engine()`` (runtime default) and Alembic's ``env.py`` so
+    both resolve the DB location identically, including ``DATA_DIR`` env var
+    handling (see ``_default_db_path()``).
+    """
+    DEFAULT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return f"sqlite:///{DEFAULT_DB_PATH}"
+
+
 def make_engine(db_url: str | None = None):
     """Create a SQLAlchemy engine.
 
@@ -65,8 +76,7 @@ def make_engine(db_url: str | None = None):
     for tests so the dev DB file is never touched.
     """
     if db_url is None:
-        DEFAULT_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-        db_url = f"sqlite:///{DEFAULT_DB_PATH}"
+        db_url = get_database_url()
 
     connect_args = {"check_same_thread": False} if db_url.startswith("sqlite") else {}
     return create_engine(db_url, connect_args=connect_args)
