@@ -1,18 +1,57 @@
-import { describe, expect, it } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import App from './App.jsx'
+import { SESSION_TOKEN_STORAGE_KEY } from './api.js'
 
-// App.jsx is now just the router root (see its module docstring for the
-// full routing decision write-up). The upload-flow assertions that used
-// to live here (sandbox-yqf.5) now live in UploadPage.test.jsx, since
-// that's the component that actually owns that behavior; the results-page
-// assertions (sandbox-yqf.10) live in ItemResultPage.test.jsx. This is a
-// thin smoke test confirming the router wiring itself still works: `App`
-// (which renders its own `BrowserRouter`, defaulting to `/`) renders the
-// upload page at the root route.
-describe('App routing', () => {
-  it('renders the upload flow at the root route', () => {
+// App.jsx is now an auth gate (sandbox-dfr.4) wrapping the router root
+// (see App.jsx's routing-decision comment for the pre-existing routing
+// write-up): unauthenticated visitors see `SignInPage` instead of the
+// routed app; authenticated visitors see the app exactly as before. The
+// upload-flow/results-page assertions themselves still live in
+// UploadPage.test.jsx/ItemResultPage.test.jsx -- this stays a thin smoke
+// test confirming the gate + router wiring.
+describe('App auth gate', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+    localStorage.clear()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    localStorage.clear()
+    cleanup()
+  })
+
+  it('renders the sign-in page, not the routed app, when unauthenticated', async () => {
     render(<App />)
-    expect(screen.getByLabelText(/take or choose a photo/i)).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    })
+
+    expect(screen.getByRole('heading', { name: /basement declutter/i })).toBeInTheDocument()
+    expect(screen.getByText(/sign in with your google account/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/take or choose a photo/i)).not.toBeInTheDocument()
+    // No token stored -- /auth/me must not have been called.
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('renders the routed app (upload flow at "/"), not the sign-in page, when authenticated', async () => {
+    localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'valid-token')
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({ email: 'user@example.com' }),
+    })
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/take or choose a photo/i)).toBeInTheDocument()
+    })
+
+    expect(
+      screen.queryByText(/sign in with your google account/i),
+    ).not.toBeInTheDocument()
   })
 })

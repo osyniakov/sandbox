@@ -2,6 +2,8 @@ import { BrowserRouter, Route, Routes } from 'react-router-dom'
 import UploadPage from './UploadPage.jsx'
 import ItemResultPage from './ItemResultPage.jsx'
 import InventoryPage from './InventoryPage.jsx'
+import { AuthProvider, useAuth } from './AuthContext.jsx'
+import SignInPage from './SignInPage.jsx'
 
 // Routing decision (sandbox-yqf.10)
 // ----------------------------------
@@ -56,14 +58,48 @@ import InventoryPage from './InventoryPage.jsx'
 // sandbox-zlt.7 since it had gone fully dead), that's the point to
 // introduce a real Tailwind-based `<Layout>` wrapper here instead of
 // resurrecting it prematurely now.
+// Auth gate (sandbox-dfr.4): wraps the routed app in `AuthProvider` and
+// decides what to render based on its state --
+//   - `isLoading` (the initial `GET /auth/me` validation of any stored
+//     token, see AuthContext.jsx): a minimal loading state, so an
+//     already-signed-in visitor doesn't see the sign-in page flash
+//     before immediately flipping to the app.
+//   - not `isAuthenticated`: `SignInPage` instead of the routed app --
+//     unauthenticated visitors see the sign-in gate and nothing else.
+//   - `isAuthenticated`: the routed app exactly as before this bead (the
+//     three `<Route>` entries below are unchanged).
+function AuthGate() {
+  const { isLoading, isAuthenticated } = useAuth()
+
+  if (isLoading) {
+    return (
+      <div className="max-w-lg mx-auto my-16 px-4 text-center">
+        <p className="text-base text-text" role="status">
+          Loading...
+        </p>
+      </div>
+    )
+  }
+
+  if (!isAuthenticated) {
+    return <SignInPage />
+  }
+
+  return (
+    <Routes>
+      <Route path="/" element={<UploadPage />} />
+      <Route path="/items/:id" element={<ItemResultPage />} />
+      <Route path="/inventory" element={<InventoryPage />} />
+    </Routes>
+  )
+}
+
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<UploadPage />} />
-        <Route path="/items/:id" element={<ItemResultPage />} />
-        <Route path="/inventory" element={<InventoryPage />} />
-      </Routes>
+      <AuthProvider>
+        <AuthGate />
+      </AuthProvider>
     </BrowserRouter>
   )
 }
