@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import ItemResultPage from './ItemResultPage.jsx'
+import { AuthProvider } from './AuthContext.jsx'
 import { API_BASE_URL } from './api.js'
 
 // Mirrors the module-private constants in ItemResultPage.jsx (not exported,
@@ -98,13 +99,22 @@ const PROCESSING_ITEM = {
   comparable_listings: [],
 }
 
+// Wrapped in AuthProvider (sandbox-dfr.5) since ItemResultPage now renders
+// SignOutControl (reads useAuth()) and fetches its photo via
+// useAuthedImageUrl (reads apiFetch, which reads localStorage directly, not
+// AuthContext). No token is ever stored in these tests, so AuthProvider's
+// mount check settles synchronously to unauthenticated/no-email WITHOUT
+// calling `fetch` itself (see AuthContext.jsx) -- this keeps every existing
+// `fetch`-call-count assertion below accurate.
 function renderAtItem(id) {
   return render(
-    <MemoryRouter initialEntries={[`/items/${id}`]}>
-      <Routes>
-        <Route path="/items/:id" element={<ItemResultPage />} />
-      </Routes>
-    </MemoryRouter>,
+    <AuthProvider>
+      <MemoryRouter initialEntries={[`/items/${id}`]}>
+        <Routes>
+          <Route path="/items/:id" element={<ItemResultPage />} />
+        </Routes>
+      </MemoryRouter>
+    </AuthProvider>,
   )
 }
 
@@ -122,9 +132,63 @@ async function advanceAndFlush(ms) {
   })
 }
 
+// Mocks `fetch` to route `GET /items/:id` (or any poll thereof) to
+// `itemResponse`/`item` and `GET /uploads/...` (the authenticated photo
+// fetch `useAuthedImageUrl` makes via apiFetch, sandbox-dfr.5) to a
+// separate, distinguishable response -- a single blanket
+// `fetch.mockResolvedValue` can't tell those two request kinds apart, and
+// the item-shaped response has no `.blob()` method the photo hook needs.
+function mockItemAndPhotoFetch(item, { photoOk = true } = {}) {
+  fetch.mockImplementation((url) => {
+    if (typeof url === 'string' && url.includes('/uploads/')) {
+      if (!photoOk) {
+        return Promise.resolve({ ok: false, status: 404, statusText: 'Not Found' })
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        blob: async () => new Blob(['fake-image-bytes'], { type: 'image/jpeg' }),
+      })
+    }
+    return Promise.resolve({ ok: true, status: 200, json: async () => item })
+  })
+}
+
+// Like mockItemAndPhotoFetch, but for the polling tests below: each
+// successive `GET /items/:id` call returns the next entry in
+// `itemSequence` (clamped to the last entry once exhausted), while `GET
+// /uploads/...` calls (the photo fetch every poll re-triggers whenever
+// `photo_url` changes, sandbox-dfr.5) are routed separately -- keeps the
+// two request kinds from consuming a single shared call queue out of
+// order, since ItemResultPage now fires both per poll.
+function mockPollingItemAndPhoto(itemSequence) {
+  let itemCallIndex = 0
+  fetch.mockImplementation((url) => {
+    if (typeof url === 'string' && url.includes('/uploads/')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        blob: async () => new Blob(['fake-image-bytes'], { type: 'image/jpeg' }),
+      })
+    }
+    const item = itemSequence[Math.min(itemCallIndex, itemSequence.length - 1)]
+    itemCallIndex += 1
+    return Promise.resolve({ ok: true, status: 200, json: async () => item })
+  })
+}
+
+// Counts only the `GET /items/:id` polling calls, excluding the separate
+// `GET /uploads/...` authenticated photo fetches (sandbox-dfr.5) that now
+// also flow through the same mocked `fetch`.
+function itemFetchCallCount() {
+  return fetch.mock.calls.filter(([url]) => typeof url === 'string' && !url.includes('/uploads/'))
+    .length
+}
+
 describe('ItemResultPage', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
+    localStorage.clear()
   })
 
   afterEach(() => {
@@ -133,6 +197,7 @@ describe('ItemResultPage', () => {
     // subsequent test rather than letting the leak cascade.
     vi.useRealTimers()
     vi.unstubAllGlobals()
+    localStorage.clear()
     cleanup()
   })
 
@@ -219,8 +284,8 @@ describe('ItemResultPage', () => {
     expect(screen.queryByText(/undefined/i)).not.toBeInTheDocument()
   })
 
-  it('renders an <img> pointing at photo_url resolved against API_BASE_URL', async () => {
-    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM })
+  it('renders the photo via an authenticated blob-URL fetch, not a raw unauthenticated <img src>', async () => {
+    mockItemAndPhotoFetch(SELL_ITEM)
 
     renderAtItem(1)
 
@@ -228,23 +293,97 @@ describe('ItemResultPage', () => {
       expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
     })
 
-    const img = screen.getByRole('img')
-    expect(img).toHaveAttribute('src', `${API_BASE_URL}${SELL_ITEM.photo_url}`)
+    // The photo bytes are fetched via apiFetch against the relative
+    // photo_url (sandbox-dfr.5) -- GET /uploads/{filename} now requires an
+    // Authorization header a plain <img src> can't send.
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        `${API_BASE_URL}${SELL_ITEM.photo_url}`,
+        expect.anything(),
+      )
+    })
+
+    const img = await screen.findByRole('img')
+    await waitFor(() => {
+      expect(img).toHaveAttribute('src', expect.stringMatching(/^blob:/))
+    })
     expect(screen.queryByTestId('photo-placeholder')).not.toBeInTheDocument()
   })
 
-  it('falls back to a "photo unavailable" message when the image fails to load', async () => {
-    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM })
+  it('shows a placeholder (never a broken-image icon) while the authenticated photo fetch is still in flight', async () => {
+    let resolvePhotoFetch
+    const photoPromise = new Promise((resolve) => {
+      resolvePhotoFetch = resolve
+    })
+    fetch.mockImplementation((url) => {
+      if (typeof url === 'string' && url.includes('/uploads/')) {
+        return photoPromise
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => SELL_ITEM })
+    })
 
     renderAtItem(1)
 
-    const img = await screen.findByRole('img')
-    fireEvent.error(img)
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
+    })
+
+    // The photo fetch is still pending -- no <img> yet, just a placeholder.
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+    expect(screen.getByTestId('photo-placeholder')).toBeInTheDocument()
+
+    resolvePhotoFetch({
+      ok: true,
+      status: 200,
+      blob: async () => new Blob(['fake-image-bytes'], { type: 'image/jpeg' }),
+    })
 
     await waitFor(() => {
-      expect(screen.getByTestId('photo-placeholder')).toHaveTextContent(/photo unavailable/i)
+      expect(screen.getByRole('img')).toHaveAttribute('src', expect.stringMatching(/^blob:/))
+    })
+  })
+
+  it('keeps showing a placeholder (not a broken-image icon) when the authenticated photo fetch fails', async () => {
+    mockItemAndPhotoFetch(SELL_ITEM, { photoOk: false })
+
+    renderAtItem(1)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-placeholder')).toBeInTheDocument()
     })
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  it('shows a session-expired message (not a raw error) when the item fetch itself gets a 401', async () => {
+    fetch.mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ detail: 'Not authenticated' }),
+    })
+
+    renderAtItem(1)
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/session has expired/i)
+    })
+    expect(screen.queryByText(/not authenticated/i)).not.toBeInTheDocument()
+  })
+
+  it('renders a reachable sign-out control once the item has loaded', async () => {
+    mockItemAndPhotoFetch(SELL_ITEM)
+
+    renderAtItem(1)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
+    })
+
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
   })
 
   it('shows the user-provided hint when present', async () => {
@@ -293,31 +432,28 @@ describe('ItemResultPage', () => {
   it('polls repeatedly while status is non-terminal, and stops immediately once status becomes terminal', async () => {
     vi.useFakeTimers()
 
-    fetch
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => PROCESSING_ITEM })
-      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => PROCESSING_ITEM })
-      .mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM })
+    mockPollingItemAndPhoto([PROCESSING_ITEM, PROCESSING_ITEM, SELL_ITEM])
 
     renderAtItem(4)
 
     // The first fetch fires synchronously on mount, before any timer tick.
     await advanceAndFlush(0)
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(itemFetchCallCount()).toBe(1)
 
     // Still non-terminal (PROCESSING_ITEM) after one poll interval --
     // polling must continue.
     await advanceAndFlush(POLL_INTERVAL_MS)
-    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(itemFetchCallCount()).toBe(2)
 
     // The third response flips to a terminal status (SELL_ITEM/"decided").
     await advanceAndFlush(POLL_INTERVAL_MS)
-    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(itemFetchCallCount()).toBe(3)
     expect(screen.getByText(/sell/i)).toBeInTheDocument()
 
     // Advancing well past several more poll intervals must NOT trigger any
     // further fetches now that the item is terminal.
     await advanceAndFlush(POLL_INTERVAL_MS * 5)
-    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(itemFetchCallCount()).toBe(3)
 
     vi.useRealTimers()
   })
@@ -325,21 +461,21 @@ describe('ItemResultPage', () => {
   it('stops fetching once the component unmounts', async () => {
     vi.useFakeTimers()
 
-    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => PROCESSING_ITEM })
+    mockPollingItemAndPhoto([PROCESSING_ITEM])
 
     const { unmount } = renderAtItem(4)
 
     await advanceAndFlush(0)
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(itemFetchCallCount()).toBe(1)
 
     await advanceAndFlush(POLL_INTERVAL_MS)
-    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(itemFetchCallCount()).toBe(2)
 
     unmount()
 
     // No further fetches after unmount, no matter how long we wait.
     await advanceAndFlush(POLL_INTERVAL_MS * 10)
-    expect(fetch).toHaveBeenCalledTimes(2)
+    expect(itemFetchCallCount()).toBe(2)
 
     vi.useRealTimers()
   })
@@ -347,7 +483,7 @@ describe('ItemResultPage', () => {
   it('shows a "taking longer than expected" message once MAX_POLL_MS elapses while still non-terminal', async () => {
     vi.useFakeTimers()
 
-    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => PROCESSING_ITEM })
+    mockPollingItemAndPhoto([PROCESSING_ITEM])
 
     renderAtItem(4)
 

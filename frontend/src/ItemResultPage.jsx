@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
-import { API_BASE_URL } from './api.js'
+import { apiFetch } from './api.js'
+import { useAuthedImageUrl } from './useAuthedImageUrl.js'
+import SignOutControl from './SignOutControl.jsx'
 
 // `Item.status` values that mean "the pipeline is done with this item"
 // (see backend/app/pipeline.py's "Polling contract for GET /items/{id}"
@@ -63,8 +65,19 @@ const DECISION_INFO = {
 }
 
 async function fetchItem(id, signal) {
-  const response = await fetch(`${API_BASE_URL}/items/${id}`, { signal })
+  const response = await apiFetch(`/items/${id}`, { signal })
   if (!response.ok) {
+    // A 401 means the session expired while this page was open (e.g. in a
+    // background tab) -- apiFetch (api.js) has already cleared the stale
+    // token and dispatched SESSION_EXPIRED_EVENT, which AuthContext listens
+    // for to flip the app back to the sign-in gate on its next render. This
+    // still surfaces through the same `loadError` state as any other
+    // fetch failure below (via poll()'s catch block), just with a message
+    // that actually explains what happened rather than a generic
+    // status-code string.
+    if (response.status === 401) {
+      throw new Error('Your session has expired. Please sign in again.')
+    }
     if (response.status === 404) {
       throw new Error(`No item with id ${id}.`)
     }
@@ -83,8 +96,14 @@ function ItemResultPage() {
   const [item, setItem] = useState(null)
   const [loadError, setLoadError] = useState('')
   const [stuck, setStuck] = useState(false)
-  const [photoUnavailable, setPhotoUnavailable] = useState(false)
   const pollStartRef = useRef(null)
+
+  // Called unconditionally (before this component's early `loadError`/
+  // `!item` returns below, per the rules of hooks) -- `item?.photo_url` is
+  // `undefined` until the first successful poll response arrives, which
+  // the hook already treats as "no photo yet, don't fetch" (see
+  // useAuthedImageUrl.js).
+  const photoObjectUrl = useAuthedImageUrl(item?.photo_url)
 
   useEffect(() => {
     let cancelled = false
@@ -95,7 +114,6 @@ function ItemResultPage() {
     setItem(null)
     setLoadError('')
     setStuck(false)
-    setPhotoUnavailable(false)
 
     async function poll() {
       try {
@@ -164,29 +182,38 @@ function ItemResultPage() {
     <div className="max-w-md mx-auto my-16 px-4 text-center">
       <h1 className="mb-4">Item #{item.id}</h1>
 
+      <SignOutControl />
+
       {/* Photo display: `Item.photo_url` (added in sandbox-yqf.19) is a
           relative path (e.g. "/uploads/<uuid>.jpg") served by the
-          backend's StaticFiles mount -- resolved against API_BASE_URL
-          the same way `fetchItem` above resolves `/items/{id}`, so this
-          keeps working across dev/LAN/deployed hosts without this page
-          needing to know the backend's origin separately. If the image
-          fails to load (file missing on disk, network hiccup, etc.),
-          `onError` swaps in a "photo unavailable" message instead of
-          leaving a broken-image icon on the page. */}
-      {photoUnavailable || !item.photo_url ? (
+          backend's StaticFiles mount, which now requires an Authorization
+          header (sandbox-dfr.3) -- a plain `<img src>` can't attach one, so
+          `useAuthedImageUrl` (sandbox-dfr.5) fetches the photo bytes
+          authenticated via `apiFetch` and exposes them as a `blob:` object
+          URL instead. While there's no `photo_url` yet, or the
+          authenticated fetch hasn't resolved (or failed) yet,
+          `photoObjectUrl` is `null` and a placeholder renders instead of a
+          broken-image icon. */}
+      {!item.photo_url ? (
         <div
           className="my-4 rounded border border-dashed border-border px-4 py-8 italic text-text"
           data-testid="photo-placeholder"
         >
           <p>Photo unavailable.</p>
         </div>
-      ) : (
+      ) : photoObjectUrl ? (
         <img
           className="my-4 block max-h-80 max-w-full rounded object-contain mx-auto"
-          src={`${API_BASE_URL}${item.photo_url}`}
+          src={photoObjectUrl}
           alt={item.identified_name ? `Photo of ${item.identified_name}` : `Photo of item #${item.id}`}
-          onError={() => setPhotoUnavailable(true)}
         />
+      ) : (
+        <div
+          className="my-4 rounded border border-dashed border-border px-4 py-8 italic text-text"
+          data-testid="photo-placeholder"
+        >
+          <p>Loading photo...</p>
+        </div>
       )}
 
       {(item.identified_name || item.category) && (

@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
 import UploadPage from './UploadPage.jsx'
+import { AuthProvider } from './AuthContext.jsx'
 
 // A minimal in-memory "fixture" image file, standing in for a real photo
 // selected via the camera-capture/file-picker input.
@@ -21,24 +22,35 @@ function ItemIdProbe() {
   return <p>Item #{id}</p>
 }
 
+// Wrapped in AuthProvider (sandbox-dfr.5) since UploadPage now renders
+// SignOutControl, which reads useAuth(). No token is ever stored in these
+// tests, so AuthProvider's mount check settles synchronously to
+// unauthenticated/no-email WITHOUT calling `fetch` itself (see
+// AuthContext.jsx) -- this keeps every existing `fetch`-call-count
+// assertion below accurate (only UploadPage's own apiFetch call, never an
+// extra `/auth/me` call).
 function renderUploadPage() {
   return render(
-    <MemoryRouter initialEntries={['/']}>
-      <Routes>
-        <Route path="/" element={<UploadPage />} />
-        <Route path="/items/:id" element={<ItemIdProbe />} />
-      </Routes>
-    </MemoryRouter>,
+    <AuthProvider>
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route path="/" element={<UploadPage />} />
+          <Route path="/items/:id" element={<ItemIdProbe />} />
+        </Routes>
+      </MemoryRouter>
+    </AuthProvider>,
   )
 }
 
 describe('UploadPage photo capture/upload flow', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
+    localStorage.clear()
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    localStorage.clear()
     cleanup()
   })
 
@@ -304,5 +316,31 @@ describe('UploadPage photo capture/upload flow', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/uploaded file is empty/i)
     })
+  })
+
+  it('shows a session-expired message (not a generic/raw error) when the upload gets a 401', async () => {
+    const user = userEvent.setup()
+    fetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ detail: 'Not authenticated' }),
+    })
+
+    renderUploadPage()
+
+    const input = screen.getByLabelText(/take or choose a photo/i)
+    await user.upload(input, makeFixtureImageFile())
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/session has expired/i)
+    })
+    // Not the raw backend-authored 401 detail string.
+    expect(screen.queryByText(/not authenticated/i)).not.toBeInTheDocument()
+  })
+
+  it('renders a reachable sign-out control', () => {
+    renderUploadPage()
+    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
   })
 })

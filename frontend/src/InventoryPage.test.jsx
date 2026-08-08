@@ -3,6 +3,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import InventoryPage from './InventoryPage.jsx'
+import { AuthProvider } from './AuthContext.jsx'
 import { API_BASE_URL } from './api.js'
 
 // Fixture Item records matching the shape `_serialize_item` in
@@ -55,31 +56,67 @@ const PENDING_ITEM = {
   comparable_listings: [],
 }
 
+// Wrapped in AuthProvider (sandbox-dfr.5) since InventoryPage now renders
+// SignOutControl (reads useAuth()) and fetches each photo thumbnail via
+// useAuthedImageUrl. No token is ever stored in these tests, so
+// AuthProvider's mount check settles synchronously to
+// unauthenticated/no-email WITHOUT calling `fetch` itself (see
+// AuthContext.jsx) -- this keeps every existing `fetch`-call assertion
+// below accurate.
 function renderInventoryPage() {
   return render(
-    <MemoryRouter initialEntries={['/inventory']}>
-      <Routes>
-        <Route path="/inventory" element={<InventoryPage />} />
-      </Routes>
-    </MemoryRouter>,
+    <AuthProvider>
+      <MemoryRouter initialEntries={['/inventory']}>
+        <Routes>
+          <Route path="/inventory" element={<InventoryPage />} />
+        </Routes>
+      </MemoryRouter>
+    </AuthProvider>,
   )
+}
+
+// Mocks `fetch` so `GET /items...` (list) and `PATCH /items/:id/status`
+// resolve via `itemsHandler`/`patchHandler`, while `GET /uploads/...` (each
+// item's authenticated photo thumbnail fetch, sandbox-dfr.5) resolves to a
+// fake Blob response -- a blanket mock can't tell these apart, and the
+// items-shaped response has no `.blob()` method the photo hook needs.
+function mockInventoryFetch({ itemsHandler, patchHandler }) {
+  fetch.mockImplementation((url, options = {}) => {
+    if (typeof url === 'string' && url.includes('/uploads/')) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        blob: async () => new Blob(['fake-image-bytes'], { type: 'image/jpeg' }),
+      })
+    }
+    if (options.method === 'PATCH') {
+      return patchHandler(url, options)
+    }
+    return itemsHandler(url, options)
+  })
 }
 
 describe('InventoryPage', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
+    localStorage.clear()
   })
 
   afterEach(() => {
     vi.unstubAllGlobals()
+    localStorage.clear()
     cleanup()
   })
 
   it('fetches and renders all items with photo, decision, and status', async () => {
-    fetch.mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: async () => [DECIDED_SELL_ITEM, LISTED_ITEM, PENDING_ITEM],
+    mockInventoryFetch({
+      itemsHandler: () =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [DECIDED_SELL_ITEM, LISTED_ITEM, PENDING_ITEM],
+        }),
+      patchHandler: () => Promise.reject(new Error('unexpected PATCH call')),
     })
 
     renderInventoryPage()
@@ -92,10 +129,50 @@ describe('InventoryPage', () => {
     expect(screen.getByText(/old bookshelf/i)).toBeInTheDocument()
     expect(screen.getByText(/item #3/i)).toBeInTheDocument()
 
-    const images = screen.getAllByRole('img')
-    expect(images.some((img) => img.getAttribute('src') === `${API_BASE_URL}/uploads/a.jpg`)).toBe(
-      true,
-    )
+    // Each photo thumbnail is fetched authenticated (sandbox-dfr.5) and
+    // rendered as a `blob:` object URL, not a raw unauthenticated
+    // `${API_BASE_URL}${photo_url}` <img src> -- GET /uploads/{filename}
+    // now requires an Authorization header a plain <img src> can't send.
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(`${API_BASE_URL}/uploads/a.jpg`, expect.anything())
+    })
+
+    await waitFor(() => {
+      const images = screen.getAllByRole('img')
+      expect(images.some((img) => (img.getAttribute('src') || '').startsWith('blob:'))).toBe(true)
+    })
+  })
+
+  it('shows a per-item placeholder (not a broken-image icon) while an authenticated photo fetch is pending, then renders it', async () => {
+    let resolvePhotoFetch
+    const photoPromise = new Promise((resolve) => {
+      resolvePhotoFetch = resolve
+    })
+    fetch.mockImplementation((url) => {
+      if (typeof url === 'string' && url.includes('/uploads/')) {
+        return photoPromise
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => [DECIDED_SELL_ITEM] })
+    })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
+    })
+
+    expect(screen.getByTestId('photo-placeholder')).toBeInTheDocument()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+
+    resolvePhotoFetch({
+      ok: true,
+      status: 200,
+      blob: async () => new Blob(['fake-image-bytes'], { type: 'image/jpeg' }),
+    })
+
+    await waitFor(() => {
+      expect(screen.getByRole('img')).toHaveAttribute('src', expect.stringMatching(/^blob:/))
+    })
   })
 
   it('calls GET /items with status and decision query params when filters change', async () => {
@@ -278,6 +355,60 @@ describe('InventoryPage', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toBeInTheDocument()
+    })
+  })
+
+  it('shows a session-expired message (not a raw error) when the list fetch gets a 401', async () => {
+    fetch.mockResolvedValue({
+      ok: false,
+      status: 401,
+      statusText: 'Unauthorized',
+      json: async () => ({ detail: 'Not authenticated' }),
+    })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/session has expired/i)
+    })
+    expect(screen.queryByText(/not authenticated/i)).not.toBeInTheDocument()
+  })
+
+  it('shows a session-expired message (not a raw error) when a PATCH status-advance gets a 401', async () => {
+    const user = userEvent.setup()
+    mockInventoryFetch({
+      itemsHandler: () =>
+        Promise.resolve({ ok: true, status: 200, json: async () => [DECIDED_SELL_ITEM] }),
+      patchHandler: () =>
+        Promise.resolve({
+          ok: false,
+          status: 401,
+          statusText: 'Unauthorized',
+          json: async () => ({ detail: 'Not authenticated' }),
+        }),
+    })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /mark as listed on kleinanzeigen/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/session has expired/i)
+    })
+    expect(screen.queryByText(/not authenticated/i)).not.toBeInTheDocument()
+  })
+
+  it('renders a reachable sign-out control', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => [] })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
     })
   })
 })

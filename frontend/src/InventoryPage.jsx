@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { API_BASE_URL } from './api.js'
+import { apiFetch } from './api.js'
+import { useAuthedImageUrl } from './useAuthedImageUrl.js'
+import SignOutControl from './SignOutControl.jsx'
 
 const STATUS_ACTION_LABELS = {
   listed: 'Mark as listed on Kleinanzeigen',
@@ -44,23 +46,36 @@ async function fetchItems(statusFilter, decisionFilter, signal) {
   if (statusFilter) params.set('status', statusFilter)
   if (decisionFilter) params.set('decision', decisionFilter)
   const query = params.toString()
-  const response = await fetch(`${API_BASE_URL}/items${query ? `?${query}` : ''}`, {
+  const response = await apiFetch(`/items${query ? `?${query}` : ''}`, {
     signal,
   })
   if (!response.ok) {
+    // A 401 means the session expired while this page was open -- apiFetch
+    // (api.js) has already cleared the stale token and dispatched
+    // SESSION_EXPIRED_EVENT, which AuthContext listens for to flip the app
+    // back to the sign-in gate on its next render. This still surfaces
+    // through the same `loadError` state as any other load failure below,
+    // just with a message that actually explains what happened.
+    if (response.status === 401) {
+      throw new Error('Your session has expired. Please sign in again.')
+    }
     throw new Error(`Failed to load items (${response.status} ${response.statusText})`)
   }
   return response.json()
 }
 
 async function patchItemStatus(id, status, signal) {
-  const response = await fetch(`${API_BASE_URL}/items/${id}/status`, {
+  const response = await apiFetch(`/items/${id}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
     signal,
   })
   if (!response.ok) {
+    // Same session-expired handling as fetchItems above.
+    if (response.status === 401) {
+      throw new Error('Your session has expired. Please sign in again.')
+    }
     let detail = `Failed to update status (${response.status} ${response.statusText})`
     try {
       const body = await response.json()
@@ -73,6 +88,43 @@ async function patchItemStatus(id, status, signal) {
     throw new Error(detail)
   }
   return response.json()
+}
+
+// Renders a single inventory item's photo thumbnail (or a "no photo"/
+// loading placeholder), extracted into its own component because
+// `useAuthedImageUrl` is a hook and hooks can't be called inside the
+// `.map()` below (one call per rendered `<li>`, sandbox-dfr.5). Handles the
+// same "no photo yet" / "still loading" / "ready" states ItemResultPage.jsx
+// handles for its single photo -- see useAuthedImageUrl.js for the full
+// authenticated-blob-URL rationale.
+function InventoryItemPhoto({ item }) {
+  const photoObjectUrl = useAuthedImageUrl(item.photo_url)
+  const alt = item.identified_name
+    ? `Photo of ${item.identified_name}`
+    : `Photo of item #${item.id}`
+
+  if (!item.photo_url) {
+    return (
+      <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded border border-dashed border-border text-center text-xs text-text">
+        No photo
+      </div>
+    )
+  }
+
+  if (!photoObjectUrl) {
+    return (
+      <div
+        className="flex h-16 w-16 shrink-0 items-center justify-center rounded border border-dashed border-border text-center text-xs text-text"
+        data-testid="photo-placeholder"
+      >
+        Loading...
+      </div>
+    )
+  }
+
+  return (
+    <img className="h-16 w-16 shrink-0 rounded object-cover" src={photoObjectUrl} alt={alt} />
+  )
 }
 
 // The basement inventory list, rendered at `/inventory` (sandbox-yqf.11).
@@ -132,6 +184,8 @@ function InventoryPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 text-center">
       <h1>Basement Inventory</h1>
+
+      <SignOutControl />
 
       <p className="mt-2">
         <Link to="/" className="link">
@@ -219,21 +273,7 @@ function InventoryPage() {
                 className="flex flex-wrap items-start gap-4 border-b border-border py-4 last:border-b-0 sm:items-center"
               >
                 <div className="flex min-w-[200px] flex-1 items-center gap-4">
-                  {item.photo_url ? (
-                    <img
-                      className="h-16 w-16 shrink-0 rounded object-cover"
-                      src={`${API_BASE_URL}${item.photo_url}`}
-                      alt={
-                        item.identified_name
-                          ? `Photo of ${item.identified_name}`
-                          : `Photo of item #${item.id}`
-                      }
-                    />
-                  ) : (
-                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded border border-dashed border-border text-center text-xs text-text">
-                      No photo
-                    </div>
-                  )}
+                  <InventoryItemPhoto item={item} />
 
                   <div className="min-w-0 flex-1">
                     <Link

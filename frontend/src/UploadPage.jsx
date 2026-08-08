@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { API_BASE_URL } from './api.js'
+import { apiFetch } from './api.js'
+import SignOutControl from './SignOutControl.jsx'
 
 // Extracts a human-readable message from a failed fetch Response.
 // The backend returns FastAPI-style `{"detail": "..."}` bodies for its
@@ -44,12 +45,26 @@ function UploadPage() {
     formData.append('hint', hint)
 
     try {
-      const response = await fetch(`${API_BASE_URL}/items`, {
+      const response = await apiFetch('/items', {
         method: 'POST',
         body: formData,
       })
 
       if (!response.ok) {
+        // A 401 here means the session expired while the user had this
+        // page open (e.g. in a background tab) -- apiFetch (api.js) has
+        // already cleared the stale token and dispatched
+        // SESSION_EXPIRED_EVENT, which AuthContext listens for to flip the
+        // app back to the sign-in gate on its next render. Show a message
+        // that actually explains that, rather than treating it like an
+        // unrelated upload failure (extractErrorMessage would otherwise
+        // surface a generic/backend-authored "not authenticated"-style
+        // string here).
+        if (response.status === 401) {
+          setErrorMessage('Your session has expired. Please sign in again.')
+          setStatus('error')
+          return
+        }
         const message = await extractErrorMessage(response)
         setErrorMessage(message)
         setStatus('error')
@@ -82,6 +97,8 @@ function UploadPage() {
         Photograph an item, find comparable listings, and get a sell /
         give-away / throw-away recommendation.
       </p>
+
+      <SignOutControl />
 
       <p className="mt-4">
         <Link to="/inventory" className="link">
