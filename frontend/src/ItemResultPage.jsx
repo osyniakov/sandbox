@@ -196,6 +196,8 @@ function ItemResultPage() {
         </div>
       )}
 
+      {item.hint && <p className="mt-0 text-sm text-text">Your hint: {item.hint}</p>}
+
       {!isTerminal && (
         <div
           className="mt-6 rounded border border-sell-border bg-sell-bg px-4 py-3 text-sell-text"

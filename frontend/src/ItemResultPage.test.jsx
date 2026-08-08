@@ -23,6 +23,7 @@ const SELL_ITEM = {
   category: 'Power Tools',
   brand: 'Bosch',
   condition: 'good',
+  hint: null,
   search_keywords: ['bosch', 'drill'],
   suggested_price: 45.5,
   decision: 'sell',
@@ -87,6 +88,7 @@ const PROCESSING_ITEM = {
   category: null,
   brand: null,
   condition: null,
+  hint: null,
   search_keywords: null,
   suggested_price: null,
   decision: 'pending',
@@ -243,6 +245,34 @@ describe('ItemResultPage', () => {
       expect(screen.getByTestId('photo-placeholder')).toHaveTextContent(/photo unavailable/i)
     })
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
+  })
+
+  it('shows the user-provided hint when present', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ...SELL_ITEM, hint: 'some brand, I think' }),
+    })
+
+    renderAtItem(1)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/your hint: some brand, i think/i)).toBeInTheDocument()
+  })
+
+  it('does not render a hint line when hint is null', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM })
+
+    renderAtItem(1)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText(/your hint/i)).not.toBeInTheDocument()
   })
 
   it('shows an error state when the item does not exist (404)', async () => {
