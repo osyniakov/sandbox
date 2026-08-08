@@ -121,6 +121,32 @@ def test_valid_png_upload_returns_201(client: TestClient) -> None:
     assert body["photo_path"].endswith(".png")
 
 
+def test_stored_extension_derived_from_sniffed_format_not_content_type_or_filename(
+    client: TestClient,
+) -> None:
+    """The stored file's extension must come from the SNIFFED format (the
+    magic-byte check), never from the client-supplied Content-Type header
+    or filename (sandbox-yqf.23). Real JPEG bytes, sent with an unusual
+    Content-Type and a client filename claiming a different extension,
+    must still be stored (and served back) as ``.jpg``."""
+    jpeg_bytes = _make_jpeg_bytes()
+
+    response = client.post(
+        "/items",
+        files={"photo": ("totally-a-lamp.svg", jpeg_bytes, "image/x-weird")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["photo_path"].endswith(".jpg")
+    assert not body["photo_path"].endswith(".svg")
+
+    stored_path = Path(body["photo_path"])
+    assert stored_path.exists()
+    assert stored_path.suffix == ".jpg"
+    assert stored_path.read_bytes() == jpeg_bytes
+
+
 def test_uppercase_content_type_with_real_jpeg_bytes_accepted(
     client: TestClient,
 ) -> None:

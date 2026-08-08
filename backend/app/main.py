@@ -29,7 +29,6 @@ wiring, scheduling the background task, and read serialization).
 
 from __future__ import annotations
 
-import mimetypes
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -280,6 +279,27 @@ _HEIC_BRANDS = {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"hevm", b
 _SNIFF_HEADER_BYTES = 12
 
 
+def _sniff_raster_format(header: bytes) -> str | None:
+    """Identify which supported raster format (if any) ``header`` (the
+    first ``_SNIFF_HEADER_BYTES`` bytes of an uploaded file) matches, by
+    the exact same magic-number checks ``_looks_like_supported_raster_image``
+    uses -- but returning the matched format name ("jpeg"/"png"/"webp"/
+    "heic") instead of a bool, so the caller can derive the STORED file's
+    extension from the sniffed format itself (sandbox-yqf.23) rather than
+    from the client-supplied ``Content-Type`` header or filename, which are
+    not trustworthy (see the module-level comment above).
+    """
+    if header.startswith(_RASTER_IMAGE_SIGNATURES["jpeg"][0]):
+        return "jpeg"
+    if header.startswith(_RASTER_IMAGE_SIGNATURES["png"][0]):
+        return "png"
+    if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+        return "webp"
+    if header[4:8] == b"ftyp" and header[8:12] in _HEIC_BRANDS:
+        return "heic"
+    return None
+
+
 def _looks_like_supported_raster_image(header: bytes) -> bool:
     """True iff ``header`` (the first ``_SNIFF_HEADER_BYTES`` bytes of an
     uploaded file) matches a known magic number for JPEG, PNG, WEBP, or
@@ -287,33 +307,23 @@ def _looks_like_supported_raster_image(header: bytes) -> bool:
     camera. See the module-level comment above for why this check exists
     and is independent of the client-supplied ``Content-Type`` header.
     """
-    if header.startswith(_RASTER_IMAGE_SIGNATURES["jpeg"][0]):
-        return True
-    if header.startswith(_RASTER_IMAGE_SIGNATURES["png"][0]):
-        return True
-    if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
-        return True
-    if header[4:8] == b"ftyp" and header[8:12] in _HEIC_BRANDS:
-        return True
-    return False
+    return _sniff_raster_format(header) is not None
 
 
-def _pick_extension(filename: str | None, content_type: str) -> str:
-    """Best-effort file extension for the stored filename.
-
-    Prefers the extension implied by the already-validated content type;
-    falls back to the client-supplied filename's suffix (sanitized -- we
-    don't trust the client filename for content validation, but it's fine
-    as a cosmetic fallback for the extension); finally falls back to "".
-    """
-    guessed = mimetypes.guess_extension(content_type)
-    if guessed:
-        return guessed
-    if filename:
-        suffix = Path(filename).suffix
-        if suffix and len(suffix) <= 10 and "/" not in suffix and "\\" not in suffix:
-            return suffix
-    return ""
+# Maps a sniffed raster format name (``_sniff_raster_format``'s return
+# value) to the extension the file is stored under. Deliberately keyed off
+# the SNIFFED format -- never the client-supplied ``Content-Type`` header
+# or filename -- so the stored extension always matches the file's actual
+# bytes (sandbox-yqf.23; see the module-level comment above for the
+# extension-mismatch class of issue this closes structurally). ".jpg"
+# (not ".jpeg") is used for the jpeg format to match this app's existing
+# convention (uploads/tests elsewhere already assume ".jpg").
+_EXTENSION_BY_SNIFFED_FORMAT: dict[str, str] = {
+    "jpeg": ".jpg",
+    "png": ".png",
+    "webp": ".webp",
+    "heic": ".heic",
+}
 
 
 @app.post("/items", status_code=201)
@@ -372,8 +382,12 @@ async def create_item(
                 detail="Uploaded file exceeds the 10MB size limit.",
             )
 
-    extension = _pick_extension(photo.filename, content_type)
-    dest_path = UPLOAD_DIR / f"{uuid4().hex}{extension}"
+    # The stored filename's extension is decided AFTER sniffing below, from
+    # the sniffed format -- never from the client-supplied Content-Type
+    # header or filename (sandbox-yqf.23). Until then, stream to disk under
+    # a bare uuid with no extension; ``dest_path`` is renamed in place once
+    # the sniffed format (and therefore the correct extension) is known.
+    dest_path = UPLOAD_DIR / uuid4().hex
 
     total_bytes = 0
     oversized = False
@@ -415,8 +429,15 @@ async def create_item(
     # bytes don't match a known raster-image magic number, regardless of
     # what Content-Type header the client claimed -- this is what catches
     # e.g. real SVG bytes mislabeled as "image/jpeg", which the
-    # Content-Type check above alone would not.
-    if not _looks_like_supported_raster_image(header_bytes):
+    # Content-Type check above alone would not. ``sniffed_format`` is the
+    # SAME check as ``_looks_like_supported_raster_image`` (both are
+    # defined off ``_sniff_raster_format``); calling it directly here (
+    # instead of the bool-returning wrapper) also gives us the matched
+    # format name, which is what decides the stored extension below --
+    # never the client-supplied Content-Type header or filename
+    # (sandbox-yqf.23).
+    sniffed_format = _sniff_raster_format(header_bytes)
+    if sniffed_format is None:
         dest_path.unlink(missing_ok=True)
         raise HTTPException(
             status_code=400,
@@ -427,6 +448,16 @@ async def create_item(
                 "Content-Type header."
             ),
         )
+
+    # Rename the temp (extensionless) file in place to carry the extension
+    # implied by the SNIFFED format -- e.g. real JPEG bytes are always
+    # stored as ``.jpg``, regardless of what Content-Type header or
+    # client-supplied filename extension were sent (sandbox-yqf.23). Same
+    # directory, so this is a cheap rename, not a copy.
+    extension = _EXTENSION_BY_SNIFFED_FORMAT[sniffed_format]
+    final_path = dest_path.with_name(dest_path.name + extension)
+    dest_path.rename(final_path)
+    dest_path = final_path
 
     item = Item(photo_path=str(dest_path), status=ItemStatus.PENDING_IDENTIFICATION)
     session.add(item)
