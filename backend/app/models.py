@@ -97,6 +97,7 @@ class Item(Base):
     category: Mapped[str | None] = mapped_column(String, nullable=True)
     brand: Mapped[str | None] = mapped_column(String, nullable=True)
     condition: Mapped[str | None] = mapped_column(String, nullable=True)
+    user_hint: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Stored as a JSON array of strings.
     search_keywords: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)

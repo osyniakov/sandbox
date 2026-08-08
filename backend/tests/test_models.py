@@ -159,6 +159,25 @@ def test_nullable_fields_default_to_none(session: Session) -> None:
     assert fetched.condition is None
     assert fetched.search_keywords is None
     assert fetched.suggested_price is None
+    assert fetched.user_hint is None
+
+
+def test_user_hint_round_trips_exact_string(session: Session) -> None:
+    """sandbox-iec.1: ``user_hint`` is a free-text, nullable column.
+
+    Verifies both the default-None case (covered above too) and that a
+    supplied value round-trips byte-for-byte through a fresh
+    ``session.get()`` after commit + expire.
+    """
+    hint = "some brand, I think"
+    item = Item(photo_path="/photos/hint.jpg", user_hint=hint)
+    session.add(item)
+    session.commit()
+    session.expire_all()
+
+    fetched = session.get(Item, item.id)
+    assert fetched is not None
+    assert fetched.user_hint == hint
 
 
 def test_comparable_listing_requires_valid_item_fk(session: Session) -> None:
