@@ -15,7 +15,7 @@ an already-loaded ``Item`` ORM instance, call
 Provider abstraction
 ---------------------
 The actual LLM call is isolated behind the ``IdentificationProvider``
-protocol (``identify(photo_path) -> dict``). ``ClaudeVisionProvider`` is
+protocol (``identify(photo_path, hint=None) -> dict``). ``ClaudeVisionProvider`` is
 the default concrete implementation, using Anthropic's Messages API
 (image content blocks). Swapping to a different vision provider later
 only requires implementing a new ``IdentificationProvider`` -- the
@@ -110,8 +110,14 @@ class IdentificationProvider(Protocol):
     an exception was raised (see module docstring).
     """
 
-    def identify(self, photo_path: str) -> dict[str, Any]:
+    def identify(self, photo_path: str, hint: str | None = None) -> dict[str, Any]:
         """Return a dict describing the item in ``photo_path``.
+
+        ``hint`` is an optional user-provided free-text hint about the
+        item (e.g. "this is a broken toaster") that implementations may
+        take into account, but the photo remains the primary source of
+        truth. Pass ``None`` (or an empty string) when no hint is
+        available.
 
         Expected (but not strictly required) keys: ``name``, ``category``,
         ``brand``, ``condition``, ``search_keywords``, and optionally
@@ -157,7 +163,7 @@ class ClaudeVisionProvider:
         self._client = anthropic.Anthropic(api_key=api_key)
         return self._client
 
-    def identify(self, photo_path: str) -> dict[str, Any]:
+    def identify(self, photo_path: str, hint: str | None = None) -> dict[str, Any]:
         try:
             image_bytes = Path(photo_path).read_bytes()
         except OSError as exc:
@@ -167,6 +173,21 @@ class ClaudeVisionProvider:
         image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
 
         client = self._get_client()
+
+        # Build the per-call prompt text without mutating the module-level
+        # constant. When no hint is present, this is byte-identical to
+        # `_IDENTIFICATION_PROMPT` (regression requirement). When a hint is
+        # present, it is appended *after* the existing JSON-schema
+        # instructions, in its own clearly-labeled/quoted section -- this
+        # keeps the response-format instructions intact and makes the hint
+        # unable to masquerade as a new instruction.
+        prompt_text = _IDENTIFICATION_PROMPT
+        if hint:
+            prompt_text += (
+                "\n\nThe user has provided the following hint about this item -- "
+                "take it into account if it's helpful, but rely primarily on the "
+                f"photo:\nUser-provided hint: \"{hint}\"\n"
+            )
 
         try:
             response = client.messages.create(
@@ -184,7 +205,7 @@ class ClaudeVisionProvider:
                                     "data": image_b64,
                                 },
                             },
-                            {"type": "text", "text": _IDENTIFICATION_PROMPT},
+                            {"type": "text", "text": prompt_text},
                         ],
                     }
                 ],
@@ -247,7 +268,7 @@ class ItemIdentificationService:
         value rather than propagating.
         """
         try:
-            raw = self._provider.identify(item.photo_path)
+            raw = self._provider.identify(item.photo_path, hint=item.user_hint)
         except Exception:
             logger.exception(
                 "Identification failed for item id=%s photo_path=%r",

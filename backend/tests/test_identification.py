@@ -26,22 +26,24 @@ class _StubProvider:
         self._result = result
         self._error = error
         self.calls: list[str] = []
+        self.hint_calls: list[str | None] = []
 
-    def identify(self, photo_path: str) -> dict[str, Any]:
+    def identify(self, photo_path: str, hint: str | None = None) -> dict[str, Any]:
         self.calls.append(photo_path)
+        self.hint_calls.append(hint)
         if self._error is not None:
             raise self._error
         assert self._result is not None
         return self._result
 
 
-def _make_item(photo_path: str = "/photos/item.jpg") -> Item:
+def _make_item(photo_path: str = "/photos/item.jpg", user_hint: str | None = None) -> Item:
     # In production this item is loaded from the DB, where the `status`
     # column default (pending_identification) has already been applied at
     # INSERT time. SQLAlchemy column defaults only apply on flush/insert,
     # not on bare Python construction, so we set it explicitly here to
     # mirror a realistic already-persisted Item.
-    return Item(photo_path=photo_path, status=ItemStatus.PENDING_IDENTIFICATION)
+    return Item(photo_path=photo_path, status=ItemStatus.PENDING_IDENTIFICATION, user_hint=user_hint)
 
 
 # ---------------------------------------------------------------------------
@@ -92,6 +94,47 @@ def test_well_formed_response_with_null_brand() -> None:
     assert service.identify_item(item) is True
     assert item.brand is None
     assert item.status == ItemStatus.PENDING_SEARCH
+
+
+# ---------------------------------------------------------------------------
+# user_hint forwarding
+# ---------------------------------------------------------------------------
+
+
+def test_identify_item_forwards_user_hint_to_provider() -> None:
+    item = _make_item(user_hint="it's a broken toaster")
+    provider = _StubProvider(
+        result={
+            "name": "Toaster",
+            "category": "appliances",
+            "brand": None,
+            "condition": "broken",
+            "search_keywords": ["toaster"],
+            "confidence": "high",
+        }
+    )
+    service = ItemIdentificationService(provider=provider)
+
+    assert service.identify_item(item) is True
+    assert provider.hint_calls == ["it's a broken toaster"]
+
+
+def test_identify_item_passes_none_hint_when_item_has_no_hint() -> None:
+    item = _make_item(user_hint=None)
+    provider = _StubProvider(
+        result={
+            "name": "Desk Lamp",
+            "category": "lighting",
+            "brand": None,
+            "condition": "good",
+            "search_keywords": ["desk lamp"],
+            "confidence": "high",
+        }
+    )
+    service = ItemIdentificationService(provider=provider)
+
+    assert service.identify_item(item) is True
+    assert provider.hint_calls == [None]
 
 
 # ---------------------------------------------------------------------------
@@ -256,6 +299,98 @@ def test_claude_vision_provider_parses_well_formed_json_response(tmp_path) -> No
     assert kwargs is not None
     content_blocks = kwargs["messages"][0]["content"]
     assert any(block["type"] == "image" for block in content_blocks)
+
+
+def test_claude_vision_provider_no_hint_sends_byte_identical_prompt(tmp_path) -> None:
+    """Regression check: omitting the hint must not change the prompt at all."""
+    from app.identification import _IDENTIFICATION_PROMPT
+
+    photo = tmp_path / "lamp.jpg"
+    photo.write_bytes(b"fake-jpeg-bytes")
+
+    response_json = json.dumps(
+        {
+            "name": "Desk Lamp",
+            "category": "lighting",
+            "brand": "IKEA",
+            "condition": "good",
+            "search_keywords": ["desk lamp"],
+            "confidence": "high",
+        }
+    )
+    fake_client = _FakeAnthropicClient(response_text=response_json)
+    provider = ClaudeVisionProvider(client=fake_client)
+
+    provider.identify(str(photo))
+
+    kwargs = fake_client.messages.last_kwargs
+    assert kwargs is not None
+    content_blocks = kwargs["messages"][0]["content"]
+    text_block = next(block for block in content_blocks if block["type"] == "text")
+    assert text_block["text"] == _IDENTIFICATION_PROMPT
+
+
+def test_claude_vision_provider_empty_string_hint_sends_byte_identical_prompt(tmp_path) -> None:
+    from app.identification import _IDENTIFICATION_PROMPT
+
+    photo = tmp_path / "lamp.jpg"
+    photo.write_bytes(b"fake-jpeg-bytes")
+
+    response_json = json.dumps(
+        {
+            "name": "Desk Lamp",
+            "category": "lighting",
+            "brand": "IKEA",
+            "condition": "good",
+            "search_keywords": ["desk lamp"],
+            "confidence": "high",
+        }
+    )
+    fake_client = _FakeAnthropicClient(response_text=response_json)
+    provider = ClaudeVisionProvider(client=fake_client)
+
+    provider.identify(str(photo), hint="")
+
+    kwargs = fake_client.messages.last_kwargs
+    assert kwargs is not None
+    content_blocks = kwargs["messages"][0]["content"]
+    text_block = next(block for block in content_blocks if block["type"] == "text")
+    assert text_block["text"] == _IDENTIFICATION_PROMPT
+
+
+def test_claude_vision_provider_with_hint_appends_hint_after_prompt(tmp_path) -> None:
+    from app.identification import _IDENTIFICATION_PROMPT
+
+    photo = tmp_path / "lamp.jpg"
+    photo.write_bytes(b"fake-jpeg-bytes")
+
+    response_json = json.dumps(
+        {
+            "name": "Desk Lamp",
+            "category": "lighting",
+            "brand": "IKEA",
+            "condition": "good",
+            "search_keywords": ["desk lamp"],
+            "confidence": "high",
+        }
+    )
+    fake_client = _FakeAnthropicClient(response_text=response_json)
+    provider = ClaudeVisionProvider(client=fake_client)
+
+    provider.identify(str(photo), hint="this is my grandmother's antique lamp")
+
+    kwargs = fake_client.messages.last_kwargs
+    assert kwargs is not None
+    content_blocks = kwargs["messages"][0]["content"]
+    text_block = next(block for block in content_blocks if block["type"] == "text")
+    sent_text = text_block["text"]
+
+    # The hint must appear in the outgoing text...
+    assert "this is my grandmother's antique lamp" in sent_text
+    # ...appended after the existing JSON-schema instructions, not
+    # interleaved into them.
+    assert sent_text.startswith(_IDENTIFICATION_PROMPT)
+    assert sent_text != _IDENTIFICATION_PROMPT
 
 
 def test_claude_vision_provider_raises_identification_error_on_client_failure(tmp_path) -> None:
