@@ -40,6 +40,22 @@ import './App.css'
 // `useNavigate` hooks used here, and needs no build/server configuration
 // changes beyond what Vite already does (client-side routing only --
 // there's no SSR here to worry about).
+// Shared layout wrapper: deliberately NOT introduced here (sandbox-zlt.6).
+// index.css's plain-CSS `#root` rule (see sandbox-zlt.2) already gives
+// every routed page a single, consistent page container -- fixed
+// max-width, centered, border-inline, min-height: 100svh -- applied by
+// selector, not by JSX nesting, so it doesn't matter that each page
+// component (UploadPage/ItemResultPage/InventoryPage) renders its own
+// top-level element directly rather than being wrapped in a shared
+// `<Layout>` here. Adding a second JSX-level wrapper (e.g. a
+// `max-w-*`/`px-*` div around `<Routes>`) would duplicate that container
+// and risk double padding or a conflicting box model against whatever
+// each page independently adopts, especially since sandbox-zlt.3/.4/.5
+// are restyling those three pages in parallel and may not agree yet on
+// their own root element's classes. If a later task retires the
+// plain-CSS `#root` rule (sandbox-zlt.7, once App.css is fully replaced),
+// that's the point to introduce a real Tailwind-based `<Layout>` wrapper
+// here instead of resurrecting it prematurely now.
 function App() {
   return (
     <BrowserRouter>
