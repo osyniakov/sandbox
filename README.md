@@ -30,6 +30,12 @@ This builds and starts:
 
 Stop with `Ctrl+C`, or `docker compose down` to remove the containers.
 
+Run the backend test suite inside the container with:
+
+```bash
+docker compose run --rm backend pytest
+```
+
 > **Note:** in this sandboxed development environment, `docker compose
 > build` could not be fully verified — the sandbox's outbound network
 > policy blocks `production.cloudfront.docker.com` (the CDN Docker Hub
