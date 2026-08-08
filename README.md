@@ -101,6 +101,25 @@ equivalent build-arg setting), not just a runtime/service env var — Vite
 inlines `VITE_*` variables into the compiled JS bundle at build time, so
 setting it only as a runtime env var has no effect on the built image.
 
+## Database migrations
+
+Fresh tables are still created automatically by `create_all()` on app
+startup, but evolving the schema of an already-populated DB (e.g.
+adding a column) needs an Alembic migration:
+
+1. Change the SQLAlchemy model in `backend/app/models.py`.
+2. `cd backend && alembic revision --autogenerate -m "description"`.
+3. Review the generated file under `backend/alembic/versions/`, then
+   commit it.
+
+Migrations are applied automatically on Docker/Railway deploy — the
+`CMD` chain runs `python -m app.db_migrate` before starting the server.
+For a native/non-Docker run, apply them manually with
+`cd backend && python -m app.db_migrate` (or `alembic upgrade head`
+directly). A pre-existing DB from before Alembic was introduced is
+automatically detected and reconciled the first time the migration step
+runs against it — no manual intervention needed.
+
 ## Running natively (fallback / local development)
 
 ### Backend

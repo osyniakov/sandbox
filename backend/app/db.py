@@ -1,15 +1,21 @@
 """Database engine/session setup.
 
-Migration strategy: we use SQLAlchemy's ``Base.metadata.create_all()``
-instead of Alembic. Rationale: this is a single-user, local-only app
-running on SQLite with no production deployment yet, and the schema is
-still evolving quickly during early development. ``create_all()`` is
-sufficient to get a fresh DB into the current schema shape with zero
-extra tooling/config, and it's idempotent (skips tables that already
-exist). If/when we need to evolve the schema of a *populated* DB
-without losing data (i.e. real migrations, not just "create what's
-missing"), that's the point to introduce Alembic -- track that as a
-follow-up bead rather than adding the machinery preemptively.
+Migration strategy is split in two:
+
+- ``Base.metadata.create_all()`` (via ``init_db()``, called from
+  ``app.main``'s ``lifespan()``) creates any tables that don't already
+  exist. It runs on every app startup and is idempotent, but it's
+  structurally unable to evolve an already-populated DB's schema (e.g.
+  adding a column to an existing table).
+- Alembic (``backend/alembic/``, ``backend/app/db_migrate.py``) handles
+  that: evolving a populated DB's schema without losing data. It's
+  invoked as an explicit pre-start deploy step
+  (``python -m app.db_migrate``, see ``backend/Dockerfile`` /
+  ``backend/Dockerfile.railway``'s ``CMD``), not from app import time or
+  ``lifespan()`` -- so the app's own startup path (and therefore the
+  API/fixture test suite, which drives that same path) never triggers
+  Alembic. ``backend/tests/test_db_migrate.py`` exercises Alembic
+  directly, against its own throwaway DBs, as a deliberate exception.
 """
 
 from __future__ import annotations

@@ -20,9 +20,11 @@ three states it currently starts in:
 3. DB already tracked by Alembic and at (or behind) head -- Alembic upgrades
    it to head, which is a no-op if it's already there.
 
-Intended to run as a pre-start deploy step (see follow-up bead) and,
+Runs as a pre-start deploy step (see ``backend/Dockerfile`` /
+``backend/Dockerfile.railway``'s ``CMD``, which chain
+``python -m app.db_migrate`` before starting the server) and,
 eventually, against the live Railway DB to reconcile it now that Alembic
-exists.
+exists (pending Railway access -- see the sandbox-64f epic notes).
 """
 
 from __future__ import annotations
