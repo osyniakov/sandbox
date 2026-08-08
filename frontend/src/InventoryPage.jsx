@@ -28,6 +28,17 @@ const DECISION_LABELS = {
 const STATUS_FILTER_OPTIONS = Object.keys(STATUS_LABELS)
 const DECISION_FILTER_OPTIONS = Object.keys(DECISION_LABELS)
 
+// Maps each `Item.decision` value to the shared semantic decision-color
+// tokens defined in index.css (sandbox-zlt.2's @theme block), so the
+// badge below reuses the same sell=green / give_away=blue /
+// throw_away=red / pending=neutral meaning as the rest of the app.
+const DECISION_BADGE_CLASSES = {
+  pending: 'bg-pending-bg text-pending-text border-pending-border',
+  sell: 'bg-sell-bg text-sell-text border-sell-border',
+  give_away: 'bg-give-away-bg text-give-away-text border-give-away-border',
+  throw_away: 'bg-throw-away-bg text-throw-away-text border-throw-away-border',
+}
+
 async function fetchItems(statusFilter, decisionFilter, signal) {
   const params = new URLSearchParams()
   if (statusFilter) params.set('status', statusFilter)
@@ -119,18 +130,24 @@ function InventoryPage() {
   }
 
   return (
-    <div className="placeholder inventory-page">
+    <div className="mx-auto max-w-3xl px-4 py-8 text-center">
       <h1>Basement Inventory</h1>
 
-      <p>
-        <Link to="/">Upload another photo</Link>
+      <p className="mt-2">
+        <Link to="/" className="link">
+          Upload another photo
+        </Link>
       </p>
 
-      <div className="inventory-filters">
-        <label htmlFor="status-filter">
+      <div className="mt-6 mb-6 flex flex-wrap justify-center gap-6">
+        <label
+          htmlFor="status-filter"
+          className="flex flex-col items-start gap-1 text-sm font-semibold text-heading"
+        >
           Status
           <select
             id="status-filter"
+            className="form-select"
             value={statusFilter}
             onChange={(event) => setStatusFilter(event.target.value)}
           >
@@ -143,10 +160,14 @@ function InventoryPage() {
           </select>
         </label>
 
-        <label htmlFor="decision-filter">
+        <label
+          htmlFor="decision-filter"
+          className="flex flex-col items-start gap-1 text-sm font-semibold text-heading"
+        >
           Decision
           <select
             id="decision-filter"
+            className="form-select"
             value={decisionFilter}
             onChange={(event) => setDecisionFilter(event.target.value)}
           >
@@ -161,61 +182,85 @@ function InventoryPage() {
       </div>
 
       {updateError && (
-        <div className="error" role="alert">
+        <div
+          className="mb-4 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
+          role="alert"
+        >
           <p>{updateError}</p>
         </div>
       )}
 
       {loadError && (
-        <div className="error" role="alert">
+        <div
+          className="mb-4 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
+          role="alert"
+        >
           <p>{loadError}</p>
         </div>
       )}
 
-      {loading && <p className="status" role="status">Loading inventory...</p>}
+      {loading && (
+        <p className="italic text-text" role="status">
+          Loading inventory...
+        </p>
+      )}
 
       {!loading && !loadError && items.length === 0 && <p>No items match these filters.</p>}
 
       {!loading && !loadError && items.length > 0 && (
-        <ul className="inventory-list">
+        <ul className="m-0 list-none p-0 text-left">
           {items.map((item) => {
             const nextStatuses = item.valid_next_statuses || []
+            const decisionBadgeClasses =
+              DECISION_BADGE_CLASSES[item.decision] || DECISION_BADGE_CLASSES.pending
             return (
-              <li key={item.id} className="inventory-item">
-                {item.photo_url ? (
-                  <img
-                    className="inventory-thumb"
-                    src={`${API_BASE_URL}${item.photo_url}`}
-                    alt={
-                      item.identified_name
-                        ? `Photo of ${item.identified_name}`
-                        : `Photo of item #${item.id}`
-                    }
-                  />
-                ) : (
-                  <div className="inventory-thumb inventory-thumb-placeholder">No photo</div>
-                )}
+              <li
+                key={item.id}
+                className="flex flex-wrap items-start gap-4 border-b border-border py-4 last:border-b-0 sm:items-center"
+              >
+                <div className="flex min-w-[200px] flex-1 items-center gap-4">
+                  {item.photo_url ? (
+                    <img
+                      className="h-16 w-16 shrink-0 rounded object-cover"
+                      src={`${API_BASE_URL}${item.photo_url}`}
+                      alt={
+                        item.identified_name
+                          ? `Photo of ${item.identified_name}`
+                          : `Photo of item #${item.id}`
+                      }
+                    />
+                  ) : (
+                    <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded border border-dashed border-border text-center text-xs text-text">
+                      No photo
+                    </div>
+                  )}
 
-                <div className="inventory-item-details">
-                  <Link to={`/items/${item.id}`}>
-                    {item.identified_name || `Item #${item.id}`}
-                  </Link>
-                  <p className="inventory-decision">
-                    Decision: {DECISION_LABELS[item.decision] || item.decision}
-                  </p>
-                  <p className="inventory-status">
-                    Status: {STATUS_LABELS[item.status] || item.status}
-                  </p>
+                  <div className="min-w-0 flex-1">
+                    <Link to={`/items/${item.id}`} className="link block truncate font-medium">
+                      {item.identified_name || `Item #${item.id}`}
+                    </Link>
+                    <p className="mt-1">
+                      <span
+                        className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold ${decisionBadgeClasses}`}
+                      >
+                        {DECISION_LABELS[item.decision] || item.decision}
+                      </span>
+                    </p>
+                    <p className="mt-1 text-sm text-text">
+                      Status: {STATUS_LABELS[item.status] || item.status}
+                    </p>
+                  </div>
                 </div>
 
                 {nextStatuses.length > 0 && (
-                  <div className="inventory-actions">
+                  <div className="flex w-full flex-col gap-1.5 sm:w-48">
                     {nextStatuses.map((targetStatus) => (
                       <button
                         key={targetStatus}
                         type="button"
                         disabled={updatingId === item.id}
                         onClick={() => handleAdvance(item, targetStatus)}
+                        className="cursor-pointer rounded border border-primary bg-primary px-3 py-1.5 text-sm font-medium whitespace-nowrap text-white hover:border-primary-hover hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         {STATUS_ACTION_LABELS[targetStatus]}
                       </button>
