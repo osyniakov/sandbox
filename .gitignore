@@ -49,3 +49,8 @@ npm-debug.log*
 # committed, same treatment as backend/data/*.db.
 backend/uploads/
 
+# Claude Code isolated-agent worktrees (harness-managed scratch state,
+# not repo content -- created under the repo root when subagents run
+# with isolation:"worktree").
+.claude/worktrees/
+
