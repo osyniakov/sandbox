@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import ItemResultPage from './ItemResultPage.jsx'
 import { API_BASE_URL } from './api.js'
+
+// Mirrors the module-private constants in ItemResultPage.jsx (not exported,
+// so duplicated here deliberately -- see that file's comments for why these
+// specific values were chosen). If those constants ever change, these must
+// be updated to match or the fake-timer tests below will drift out of sync
+// with the real polling behavior.
+const POLL_INTERVAL_MS = 2500
+const MAX_POLL_MS = 2 * 60 * 1000
 
 // Fixture Item records, one per backend `Decision` value plus one
 // still-processing (non-terminal `status`) case -- matching the shape
@@ -98,12 +106,30 @@ function renderAtItem(id) {
   )
 }
 
+// Advances Vitest's fake clock by `ms` and, within an `act`, lets any
+// promises that settle along the way (e.g. the mocked `fetch` -> `.json()`
+// chain triggered by a poll tick) resolve and their resulting state
+// updates flush. `waitFor` is deliberately NOT used for this: its
+// fake-timer detection (@testing-library/dom's `jestFakeTimersAreEnabled`)
+// only recognizes Jest's fake timers, not Vitest's, so under
+// `vi.useFakeTimers()` it would poll via the (now-fake, non-advancing)
+// global `setTimeout` and hang instead of ever seeing the update.
+async function advanceAndFlush(ms) {
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(ms)
+  })
+}
+
 describe('ItemResultPage', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn())
   })
 
   afterEach(() => {
+    // Defensive: if a fake-timer test throws before reaching its own
+    // `vi.useRealTimers()`, this still restores real timers for every
+    // subsequent test rather than letting the leak cascade.
+    vi.useRealTimers()
     vi.unstubAllGlobals()
     cleanup()
   })
@@ -125,6 +151,19 @@ describe('ItemResultPage', () => {
     expect(links[0]).toHaveAttribute('href', 'https://kleinanzeigen.example/1')
     expect(links[0]).toHaveAttribute('target', '_blank')
     expect(links[0]).toHaveAttribute('rel', 'noopener noreferrer')
+
+    // Each comparable listing renders its own price/condition/location as
+    // text, not just a link -- assert against each <li>'s full text content
+    // (rather than a page-wide screen.getByText, which would be ambiguous
+    // once more than one listing is present) so a regression that dropped
+    // or mismatched a listing's price/condition/location would be caught
+    // even though the link/href assertions above would still pass.
+    const listItems = screen.getAllByRole('listitem')
+    expect(listItems).toHaveLength(2)
+    expect(listItems[0]).toHaveTextContent(
+      'Bosch cordless drill, good condition — 45.00 EUR, good, Berlin',
+    )
+    expect(listItems[1]).toHaveTextContent('Bosch drill set — 46.00 EUR, good, Munich')
   })
 
   it('renders the give_away decision with comparable listings but no suggested price', async () => {
@@ -219,5 +258,80 @@ describe('ItemResultPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/no item with id 999/i)
     })
+  })
+
+  it('polls repeatedly while status is non-terminal, and stops immediately once status becomes terminal', async () => {
+    vi.useFakeTimers()
+
+    fetch
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => PROCESSING_ITEM })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => PROCESSING_ITEM })
+      .mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM })
+
+    renderAtItem(4)
+
+    // The first fetch fires synchronously on mount, before any timer tick.
+    await advanceAndFlush(0)
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    // Still non-terminal (PROCESSING_ITEM) after one poll interval --
+    // polling must continue.
+    await advanceAndFlush(POLL_INTERVAL_MS)
+    expect(fetch).toHaveBeenCalledTimes(2)
+
+    // The third response flips to a terminal status (SELL_ITEM/"decided").
+    await advanceAndFlush(POLL_INTERVAL_MS)
+    expect(fetch).toHaveBeenCalledTimes(3)
+    expect(screen.getByText(/sell/i)).toBeInTheDocument()
+
+    // Advancing well past several more poll intervals must NOT trigger any
+    // further fetches now that the item is terminal.
+    await advanceAndFlush(POLL_INTERVAL_MS * 5)
+    expect(fetch).toHaveBeenCalledTimes(3)
+
+    vi.useRealTimers()
+  })
+
+  it('stops fetching once the component unmounts', async () => {
+    vi.useFakeTimers()
+
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => PROCESSING_ITEM })
+
+    const { unmount } = renderAtItem(4)
+
+    await advanceAndFlush(0)
+    expect(fetch).toHaveBeenCalledTimes(1)
+
+    await advanceAndFlush(POLL_INTERVAL_MS)
+    expect(fetch).toHaveBeenCalledTimes(2)
+
+    unmount()
+
+    // No further fetches after unmount, no matter how long we wait.
+    await advanceAndFlush(POLL_INTERVAL_MS * 10)
+    expect(fetch).toHaveBeenCalledTimes(2)
+
+    vi.useRealTimers()
+  })
+
+  it('shows a "taking longer than expected" message once MAX_POLL_MS elapses while still non-terminal', async () => {
+    vi.useFakeTimers()
+
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => PROCESSING_ITEM })
+
+    renderAtItem(4)
+
+    await advanceAndFlush(0)
+    expect(screen.queryByText(/taking longer than expected/i)).not.toBeInTheDocument()
+
+    // Just before the MAX_POLL_MS cutoff: not stuck yet.
+    await advanceAndFlush(MAX_POLL_MS - POLL_INTERVAL_MS)
+    expect(screen.queryByText(/taking longer than expected/i)).not.toBeInTheDocument()
+
+    // One more poll interval crosses the MAX_POLL_MS threshold.
+    await advanceAndFlush(POLL_INTERVAL_MS)
+    expect(screen.getByText(/taking longer than expected/i)).toBeInTheDocument()
+
+    vi.useRealTimers()
   })
 })
