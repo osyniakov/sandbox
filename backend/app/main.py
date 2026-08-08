@@ -44,11 +44,27 @@ from app.db import engine, get_session, init_db
 from app.models import ComparableListing, Decision, Item, ItemStatus
 from app.pipeline import run_pipeline_with_new_session
 
-# Where uploaded photos are stored: a sibling of ``app/`` inside
-# ``backend/``. Not committed to git -- see the repo-root .gitignore.
-# Referenced as a bare module global (not a local/default-arg copy) so
-# tests can monkeypatch ``app.main.UPLOAD_DIR`` to a temp directory.
-UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
+def _default_upload_dir() -> Path:
+    """Compute the default uploads directory.
+
+    If the ``DATA_DIR`` env var is set (non-empty), uploads live at
+    ``$DATA_DIR/uploads`` -- this lets a deployment (e.g. Railway) point
+    uploads at a dedicated persistent-volume mount without that volume
+    needing to be mounted directly over the app's code directory (which
+    would risk masking future code deploys). If unset, falls back to the
+    original default: a sibling of ``app/`` inside ``backend/``.
+    """
+    data_dir = os.environ.get("DATA_DIR")
+    if data_dir:
+        return Path(data_dir) / "uploads"
+    return Path(__file__).resolve().parent.parent / "uploads"
+
+
+# Where uploaded photos are stored. Not committed to git -- see the
+# repo-root .gitignore. Referenced as a bare module global (not a
+# local/default-arg copy) so tests can monkeypatch ``app.main.UPLOAD_DIR``
+# to a temp directory.
+UPLOAD_DIR = _default_upload_dir()
 
 # URL path prefix uploaded photos are served under (see the StaticFiles
 # mount below and ``_serialize_item``'s ``photo_url`` field). Kept

@@ -14,6 +14,7 @@ follow-up bead rather than adding the machinery preemptively.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -32,7 +33,28 @@ def _enable_sqlite_foreign_keys(dbapi_connection, connection_record) -> None:
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()
 
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent / "data" / "declutter.db"
+def _default_db_path() -> Path:
+    """Compute the default SQLite DB path.
+
+    If the ``DATA_DIR`` env var is set (non-empty), the DB file lives at
+    ``$DATA_DIR/declutter.db`` -- this lets a deployment (e.g. Railway)
+    point the DB at a dedicated persistent-volume mount without that
+    volume needing to be mounted directly over the app's code directory
+    (which would risk masking future code deploys). If unset, falls back
+    to the original ``backend/data/declutter.db`` default so local/dev
+    behavior is unchanged.
+    """
+    data_dir = os.environ.get("DATA_DIR")
+    if data_dir:
+        return Path(data_dir) / "declutter.db"
+    return Path(__file__).resolve().parent.parent / "data" / "declutter.db"
+
+
+# Computed once at import time (matches the existing pattern of
+# ``engine = make_engine()`` also running at import time below). Kept as a
+# module-level ``Path`` constant -- other code (and tests) imports/monkeypatches
+# ``DEFAULT_DB_PATH`` directly, so its name/type must stay stable.
+DEFAULT_DB_PATH = _default_db_path()
 
 
 def make_engine(db_url: str | None = None):
