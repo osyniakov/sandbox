@@ -330,3 +330,129 @@ def test_empty_file_does_not_create_item_row(
         assert session.query(Item).count() == 0
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# Optional "hint" form field (sandbox-iec.2)
+# ---------------------------------------------------------------------------
+
+
+def test_upload_without_hint_field_leaves_user_hint_none(
+    client: TestClient, db_session_factory
+) -> None:
+    """Existing behavior, unchanged: no ``hint`` form field at all -> the
+    persisted item's ``user_hint`` stays ``None``."""
+    jpeg_bytes = _make_jpeg_bytes()
+
+    response = client.post(
+        "/items",
+        files={"photo": ("lamp.jpg", jpeg_bytes, "image/jpeg")},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+
+    session = db_session_factory()
+    try:
+        fetched = session.get(Item, body["id"])
+        assert fetched is not None
+        assert fetched.user_hint is None
+    finally:
+        session.close()
+
+
+def test_upload_with_hint_persists_stripped_text(
+    client: TestClient, db_session_factory
+) -> None:
+    jpeg_bytes = _make_jpeg_bytes()
+
+    response = client.post(
+        "/items",
+        files={"photo": ("drill.jpg", jpeg_bytes, "image/jpeg")},
+        data={"hint": "Bosch drill, orange casing"},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+
+    session = db_session_factory()
+    try:
+        fetched = session.get(Item, body["id"])
+        assert fetched is not None
+        assert fetched.user_hint == "Bosch drill, orange casing"
+    finally:
+        session.close()
+
+
+def test_upload_with_whitespace_only_hint_normalized_to_none(
+    client: TestClient, db_session_factory
+) -> None:
+    jpeg_bytes = _make_jpeg_bytes()
+
+    response = client.post(
+        "/items",
+        files={"photo": ("lamp.jpg", jpeg_bytes, "image/jpeg")},
+        data={"hint": "   "},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+
+    session = db_session_factory()
+    try:
+        fetched = session.get(Item, body["id"])
+        assert fetched is not None
+        assert fetched.user_hint is None
+    finally:
+        session.close()
+
+
+def test_upload_with_hint_leading_trailing_whitespace_trimmed(
+    client: TestClient, db_session_factory
+) -> None:
+    jpeg_bytes = _make_jpeg_bytes()
+
+    response = client.post(
+        "/items",
+        files={"photo": ("lamp.jpg", jpeg_bytes, "image/jpeg")},
+        data={"hint": "   some brand   "},
+    )
+
+    assert response.status_code == 201
+    body = response.json()
+
+    session = db_session_factory()
+    try:
+        fetched = session.get(Item, body["id"])
+        assert fetched is not None
+        assert fetched.user_hint == "some brand"
+    finally:
+        session.close()
+
+
+def test_upload_with_overlong_hint_rejected_with_400_and_no_side_effects(
+    client: TestClient, db_session_factory
+) -> None:
+    """A hint over 500 characters is rejected before any photo bytes are
+    written to disk or any ``Item`` row is created."""
+    jpeg_bytes = _make_jpeg_bytes()
+    overlong_hint = "x" * 501
+
+    response = client.post(
+        "/items",
+        files={"photo": ("lamp.jpg", jpeg_bytes, "image/jpeg")},
+        data={"hint": overlong_hint},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Hint text exceeds the 500 character limit."
+
+    session = db_session_factory()
+    try:
+        assert session.query(Item).count() == 0
+    finally:
+        session.close()
+
+    uploads_dir = main_module.UPLOAD_DIR
+    if uploads_dir.exists():
+        assert list(uploads_dir.iterdir()) == []

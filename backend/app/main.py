@@ -34,7 +34,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import (
+    BackgroundTasks,
+    Depends,
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -347,6 +356,7 @@ async def create_item(
     request: Request,
     background_tasks: BackgroundTasks,
     photo: UploadFile | None = File(None),
+    hint: str | None = Form(None),
     session: Session = Depends(get_session),
 ) -> dict[str, object]:
     """Create a new ``Item`` from an uploaded photo and start the pipeline.
@@ -362,6 +372,21 @@ async def create_item(
     """
     if photo is None or not photo.filename:
         raise HTTPException(status_code=400, detail="No photo file was uploaded.")
+
+    # Validate/normalize the optional hint text as early as possible -- before
+    # any of the photo-streaming-to-disk work below -- so a request that's
+    # going to be rejected for a too-long hint doesn't pay for unnecessary
+    # disk I/O first.
+    user_hint: str | None = None
+    if hint is not None:
+        stripped_hint = hint.strip()
+        if stripped_hint:
+            if len(stripped_hint) > 500:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Hint text exceeds the 500 character limit.",
+                )
+            user_hint = stripped_hint
 
     content_type = photo.content_type or ""
     # Case-insensitive: HTTP media types are case-insensitive per RFC 9110,
@@ -475,7 +500,11 @@ async def create_item(
     dest_path.rename(final_path)
     dest_path = final_path
 
-    item = Item(photo_path=str(dest_path), status=ItemStatus.PENDING_IDENTIFICATION)
+    item = Item(
+        photo_path=str(dest_path),
+        status=ItemStatus.PENDING_IDENTIFICATION,
+        user_hint=user_hint,
+    )
     session.add(item)
     session.commit()
     session.refresh(item)
