@@ -14,6 +14,10 @@ isn't running at the default local address:
 cp .env.example .env
 ```
 
+Sign-in also needs `VITE_GOOGLE_CLIENT_ID` set (build-time, same as
+`VITE_API_BASE_URL` above) — see "Access control" in the repo-root
+`README.md` for the full Google OAuth Client ID setup.
+
 ## Test from your phone
 
 The whole point of this app is taking photos with a phone camera, so

@@ -42,6 +42,10 @@ Other environment variables, all optional with sensible defaults:
 | `ANTHROPIC_VISION_MODEL` | backend | `claude-sonnet-5` | override the vision model |
 | `ALLOWED_ORIGINS` | backend | `http://localhost:5173,http://127.0.0.1:5173` | comma-separated CORS allowlist |
 | `VITE_API_BASE_URL` | frontend | `http://localhost:8000` | where the frontend calls the backend |
+| `GOOGLE_CLIENT_ID` | backend | — (required for sign-in) | OAuth 2.0 client ID that Google ID tokens must be issued for; see [Access control](#access-control) |
+| `VITE_GOOGLE_CLIENT_ID` | frontend | — (required for sign-in) | same Google OAuth client ID, exposed to the frontend build so it can render the Sign-In button; see [Access control](#access-control) |
+| `ALLOWED_EMAILS` | backend | — (empty = nobody can sign in) | comma-separated whitelist of emails allowed to sign in; see [Access control](#access-control) |
+| `SESSION_SECRET` | backend | — (required) | secret key used to sign/verify this app's own session tokens issued after Google sign-in. Must be set to a real random secret in any real deployment — e.g. generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Leaving it unset is not silently insecure: token issuance raises rather than operating without a secret. |
 
 `backend/app/config.py` also has a `SELL_THRESHOLD` constant (currently
 a placeholder €10 cutoff between "sell" and "give away") if you want to
@@ -95,11 +99,51 @@ for platforms like Railway that build a service directly from a
 Dockerfile — point the service's `dockerfilePath` explicitly at the
 `.railway` file (auto-detection picks up the dev Dockerfile instead).
 
-For the frontend image, `VITE_API_BASE_URL` must be passed as a Docker
-**build arg** (`--build-arg VITE_API_BASE_URL=<url>`, or the platform's
-equivalent build-arg setting), not just a runtime/service env var — Vite
-inlines `VITE_*` variables into the compiled JS bundle at build time, so
+For the frontend image, `VITE_API_BASE_URL` and `VITE_GOOGLE_CLIENT_ID`
+must both be passed as Docker **build args** (`--build-arg
+VITE_API_BASE_URL=<url> --build-arg VITE_GOOGLE_CLIENT_ID=<id>`, or the
+platform's equivalent build-arg setting), not just a runtime/service env
+var — Vite inlines `VITE_*` variables into the compiled JS bundle at build time, so
 setting it only as a runtime env var has no effect on the built image.
+
+## Access control
+
+The app requires Google Sign-In to use — there is no anonymous or
+password-based access. After a user signs in with Google, the backend
+only accepts them if their email is on the `ALLOWED_EMAILS` whitelist;
+everyone else is rejected even though they successfully authenticated
+with Google.
+
+**Adding/removing a whitelisted user:** edit the `ALLOWED_EMAILS` env
+var (comma-separated list of emails) and redeploy/restart the backend.
+No code change or database migration is needed.
+
+**Setting up the Google OAuth Client ID** (one-time, per Google Cloud
+project):
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/)
+   and create or pick a project.
+2. Under **APIs & Services → OAuth consent screen**, configure it with
+   user type **External**. While the app is in **Testing** status, add
+   the Google accounts that need to sign in as test users (in addition
+   to being on `ALLOWED_EMAILS`).
+3. Under **APIs & Services → Credentials**, click **Create
+   Credentials → OAuth client ID**, and choose application type **Web
+   application**.
+4. Under **Authorized JavaScript origins**, add both the deployed
+   frontend URL and `http://localhost:5173` (for local dev). No
+   **Authorized redirect URI** is needed — this app uses Google
+   Identity Services' token sign-in flow (a JS-rendered button that
+   returns an ID token directly), not a redirect-based OAuth flow.
+5. Click **Create**. Google shows you both a **Client ID** and a
+   **Client secret** — this app only uses the Client ID; the secret
+   isn't needed anywhere (there's no server-side redirect exchange to
+   protect it for), so you can ignore/discard it. Copy the Client ID.
+
+`GOOGLE_CLIENT_ID` (backend) and `VITE_GOOGLE_CLIENT_ID` (frontend)
+must both be set to that *same* Client ID — they're just two
+differently-scoped env vars (backend runtime vs. frontend build-time),
+the same pattern already used for `VITE_API_BASE_URL` above.
 
 ## Database migrations
 

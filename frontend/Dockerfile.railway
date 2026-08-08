@@ -28,11 +28,16 @@ COPY . .
 # import.meta.env -- Railway does NOT automatically forward service
 # environment variables into a Dockerfile build unless they're explicitly
 # declared as ARG and promoted to ENV before the build step runs. Without
-# these two lines, VITE_API_BASE_URL would be undefined in the built
-# bundle regardless of what's configured on the Railway service. Invoke
-# the build with `--build-arg VITE_API_BASE_URL=<url>` to set it.
+# these lines, VITE_API_BASE_URL/VITE_GOOGLE_CLIENT_ID would be undefined
+# in the built bundle regardless of what's configured on the Railway
+# service (VITE_GOOGLE_CLIENT_ID undefined would silently break Google
+# Sign-In in production, not just misroute API calls). Invoke the build
+# with `--build-arg VITE_API_BASE_URL=<url> --build-arg VITE_GOOGLE_CLIENT_ID=<id>`
+# to set both.
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ARG VITE_GOOGLE_CLIENT_ID
+ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
 
 RUN npm run build
 
