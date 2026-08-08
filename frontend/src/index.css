@@ -4,6 +4,141 @@
    existing rules below. */
 @import 'tailwindcss';
 
+/* =========================================================================
+   Shared design tokens (sandbox-zlt.2)
+   -------------------------------------------------------------------------
+   Tailwind v4 replaced tailwind.config.js's theme.extend with a CSS-first
+   `@theme` block: any `--color-*`/`--font-*`/`--radius-*` custom property
+   declared here is automatically turned into matching utility classes
+   (e.g. `--color-primary` -> `bg-primary`, `text-primary`,
+   `border-primary`, ...). Confirmed this is still how sandbox-zlt.1 wired
+   Tailwind up (see @tailwindcss/vite in vite.config.js, no
+   tailwind.config.js in this repo), so this is the correct mechanism for
+   defining the shared palette rather than a JS config file.
+
+   This task (sandbox-zlt.2) only *defines* these tokens -- it does not
+   restyle any component. sandbox-zlt.3-.6 apply them page by page.
+   ========================================================================= */
+@theme {
+  /* --- Semantic decision colors (sell / give_away / throw_away) ---------
+     Carried forward *deliberately* from the pre-Tailwind decision-badge
+     colors already in App.css (.decision-sell / .decision-give-away /
+     .decision-throw-away below), so the green=sell, blue=give-away,
+     red=throw-away meaning survives the restyle instead of being
+     reinvented. Each decision gets a soft background + readable text +
+     border color, matching the existing 3-part badge look. A 4th
+     "pending" neutral is included because .decision-pending exists too
+     (item not yet priced) even though it isn't one of the three
+     disposal decisions. */
+  --color-sell-bg: #eafaf1;
+  --color-sell-text: #1b5e20;
+  --color-sell-border: #2e7d32;
+
+  --color-give-away-bg: #e8f0fe;
+  --color-give-away-text: #174ea6;
+  --color-give-away-border: #1a73e8;
+
+  --color-throw-away-bg: #fdecea;
+  --color-throw-away-text: #922b21;
+  --color-throw-away-border: #c0392b;
+
+  --color-pending-bg: #f1f1f1;
+  --color-pending-text: #555555;
+  --color-pending-border: #999999;
+
+  /* --- General UI: primary accent + neutrals -----------------------------
+     Reuses the purple brand accent already established in the :root
+     custom properties below (--accent) and in the PWA manifest
+     theme_color in vite.config.js (#aa3bff), instead of inventing a
+     second "primary" brand color. --primary-hover is a darker shade for
+     hover/active states. Background/text/heading/border neutrals mirror
+     the existing --bg/--text/--text-h/--border custom properties (light
+     mode values) so restyle tasks can move from those custom properties
+     to Tailwind's bg-, text-, and border- utilities with no visual change. */
+  --color-primary: #aa3bff;
+  --color-primary-hover: #9022e6;
+  --color-bg: #ffffff;
+  --color-text: #6b6375;
+  --color-heading: #08060d;
+  --color-border: #e5e4e7;
+
+  /* --- Type scale -----------------------------------------------------
+     No overrides needed: Tailwind's default text-* scale already covers
+     what this app needs. Documented here so sandbox-zlt.3-.6 pick from
+     this fixed list instead of arbitrary per-page sizes. Matches the
+     existing plain-CSS scale in this file (h1: 56px desktop / 36px
+     narrow, h2: 24px desktop / 20px narrow):
+       text-4xl  (2.25rem / 36px)  -> h1, narrow viewport / mobile
+       text-5xl  (3rem / 48px)     -> h1, desktop (nearest default step
+                                       to the existing 56px h1)
+       text-xl   (1.25rem / 20px)  -> h2, narrow viewport / mobile
+       text-2xl  (1.5rem / 24px)   -> h2, desktop
+       text-base (1rem / 16px)     -> body copy, buttons, form controls
+       text-sm   (0.875rem / 14px) -> secondary/meta text (category,
+                                       filenames, inventory item details)
+       text-xs   (0.75rem / 12px)  -> thumbnail placeholders, tiny labels
+
+   --- Spacing scale -----------------------------------------------------
+     No overrides needed: Tailwind's default spacing scale (0.25rem
+     steps) already covers this app's gaps/padding. Documented subset
+     that restyle tasks should stick to for visual consistency, based on
+     what App.css already uses:
+       spacing-2 (0.5rem / 8px)   -> tight gaps (badge padding-y, small
+                                      stacks like inventory-actions)
+       spacing-3 (0.75rem / 12px) -> compact padding (error/processing
+                                      banners, inventory-item padding-y)
+       spacing-4 (1rem / 16px)    -> standard gap/padding unit (banner
+                                      padding-x, inventory-item gap)
+       spacing-6 (1.5rem / 24px)  -> section spacing (inventory-filters
+                                      gap, comparables margin-top)
+       spacing-8 (2rem / 32px)    -> large section spacing (photo
+                                      placeholder padding) */
+}
+
+/* =========================================================================
+   Shared base component styles (sandbox-zlt.2)
+   -------------------------------------------------------------------------
+   Tailwind's preflight reset (part of `@import 'tailwindcss'` above)
+   strips native browser chrome app-wide: links lose their underline and
+   color, <select> loses its border/background/dropdown arrow, and file
+   <input> loses its button styling. These reusable classes restore clear
+   affordances using the tokens defined above, so sandbox-zlt.3-.6 apply
+   `.link` / `.form-select` / `.form-file` consistently instead of
+   reinventing link/form-control styling on every page. */
+@layer components {
+  /* Apply to any <a> that needs to look clickable again post-preflight. */
+  .link {
+    @apply text-primary underline decoration-1 underline-offset-2 hover:text-primary-hover;
+  }
+
+  /* Apply to <select> elements. Restores a visible bordered box plus a
+     CSS-only dropdown-arrow affordance (inline SVG chevron, no separate
+     image asset) in place of the native arrow preflight removed. */
+  .form-select {
+    @apply appearance-none rounded border border-border bg-bg text-text text-base px-3 py-2 pr-8 cursor-pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%236b6375'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.25a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z' clip-rule='evenodd'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.5rem center;
+    background-size: 1.1em;
+  }
+
+  /* Apply to file <input type="file">. Restores a visible bordered box
+     and styles the file-selector-button pseudo-element (supported in
+     Chromium/Firefox/Safari) so the "choose file" affordance reads as a
+     real button again. */
+  .form-file {
+    @apply block rounded border border-border bg-bg text-text text-sm;
+
+    &::file-selector-button {
+      @apply mr-3 cursor-pointer rounded border border-border bg-bg px-3 py-1.5 text-sm font-medium text-text;
+    }
+
+    &::file-selector-button:hover {
+      @apply bg-primary-hover/10 border-primary;
+    }
+  }
+}
+
 :root {
   --text: #6b6375;
   --text-h: #08060d;
