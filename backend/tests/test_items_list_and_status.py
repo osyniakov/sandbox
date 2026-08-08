@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 import app.main as main_module
 from app.db import get_session, make_engine, make_session_factory
-from app.main import app
+from app.main import MANUAL_STATUS_TRANSITIONS, app
 from app.models import Decision, Item, ItemStatus
 
 
@@ -187,6 +187,89 @@ def test_list_items_no_filters_returns_everything(
 def test_list_items_invalid_status_filter_returns_422(client: TestClient) -> None:
     response = client.get("/items", params={"status": "not_a_real_status"})
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# ``valid_next_statuses`` -- server-derived from MANUAL_STATUS_TRANSITIONS
+# (sandbox-yqf.21: this is the single source of truth the frontend must
+# read instead of maintaining its own duplicate copy of the transition
+# table).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        ItemStatus.PENDING_IDENTIFICATION,
+        ItemStatus.PENDING_SEARCH,
+        ItemStatus.PENDING_DECISION,
+        ItemStatus.DECIDED,
+        ItemStatus.LISTED,
+        ItemStatus.GIVEN_AWAY,
+        ItemStatus.DISPOSED,
+    ],
+)
+def test_get_item_valid_next_statuses_matches_transition_table(
+    client: TestClient, db_session_factory, status: ItemStatus
+) -> None:
+    item_id = _make_item(db_session_factory, status=status)
+    expected = sorted(s.value for s in MANUAL_STATUS_TRANSITIONS[status])
+
+    response = client.get(f"/items/{item_id}")
+
+    assert response.status_code == 200
+    assert response.json()["valid_next_statuses"] == expected
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        ItemStatus.PENDING_IDENTIFICATION,
+        ItemStatus.PENDING_SEARCH,
+        ItemStatus.PENDING_DECISION,
+        ItemStatus.DECIDED,
+        ItemStatus.LISTED,
+        ItemStatus.GIVEN_AWAY,
+        ItemStatus.DISPOSED,
+    ],
+)
+def test_list_items_valid_next_statuses_matches_transition_table(
+    client: TestClient, db_session_factory, status: ItemStatus
+) -> None:
+    item_id = _make_item(db_session_factory, status=status)
+    expected = sorted(s.value for s in MANUAL_STATUS_TRANSITIONS[status])
+
+    response = client.get("/items")
+
+    assert response.status_code == 200
+    body = response.json()
+    (item,) = [i for i in body if i["id"] == item_id]
+    assert item["valid_next_statuses"] == expected
+
+
+def test_pending_statuses_have_empty_valid_next_statuses(
+    client: TestClient, db_session_factory
+) -> None:
+    for status in (
+        ItemStatus.PENDING_IDENTIFICATION,
+        ItemStatus.PENDING_SEARCH,
+        ItemStatus.PENDING_DECISION,
+    ):
+        item_id = _make_item(db_session_factory, status=status)
+        response = client.get(f"/items/{item_id}")
+        assert response.json()["valid_next_statuses"] == []
+
+
+def test_decided_valid_next_statuses_is_listed_given_away_disposed(
+    client: TestClient, db_session_factory
+) -> None:
+    item_id = _make_item(db_session_factory, status=ItemStatus.DECIDED)
+    response = client.get(f"/items/{item_id}")
+    assert response.json()["valid_next_statuses"] == [
+        "disposed",
+        "given_away",
+        "listed",
+    ]
 
 
 # ---------------------------------------------------------------------------

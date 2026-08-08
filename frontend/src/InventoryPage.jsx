@@ -2,22 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { API_BASE_URL } from './api.js'
 
-// Mirrors the backend's `MANUAL_STATUS_TRANSITIONS` table exactly (see
-// backend/app/main.py's docstring above that constant for the full
-// design-decision writeup / reasoning -- this frontend copy exists only
-// so status-advance buttons can be disabled/hidden for transitions that
-// would just 400, not to re-derive or second-guess the backend's rules).
-// Keep these two tables in sync if the backend's ever changes.
-const MANUAL_STATUS_TRANSITIONS = {
-  pending_identification: [],
-  pending_search: [],
-  pending_decision: [],
-  decided: ['listed', 'given_away', 'disposed'],
-  listed: ['given_away', 'disposed'],
-  given_away: ['listed', 'disposed'],
-  disposed: ['listed', 'given_away'],
-}
-
 const STATUS_ACTION_LABELS = {
   listed: 'Mark as listed on Kleinanzeigen',
   given_away: 'Mark as given away',
@@ -84,7 +68,11 @@ async function patchItemStatus(id, status, signal) {
 // Lists every `Item` (photo thumbnail, decision, status), filterable by
 // `status`/`decision` via `GET /items` query params, with per-item
 // buttons to manually advance status to any currently-valid next state
-// (per `MANUAL_STATUS_TRANSITIONS` above) via `PATCH /items/{id}/status`.
+// via `PATCH /items/{id}/status`. Which statuses are valid next states is
+// NOT duplicated here -- it's read directly from each item's
+// `valid_next_statuses` field, which the backend derives server-side from
+// `MANUAL_STATUS_TRANSITIONS` (see backend/app/main.py) and includes in
+// every `GET /items`/`GET /items/{id}` response (sandbox-yqf.21).
 function InventoryPage() {
   const [items, setItems] = useState([])
   const [statusFilter, setStatusFilter] = useState('')
@@ -191,7 +179,7 @@ function InventoryPage() {
       {!loading && !loadError && items.length > 0 && (
         <ul className="inventory-list">
           {items.map((item) => {
-            const nextStatuses = MANUAL_STATUS_TRANSITIONS[item.status] || []
+            const nextStatuses = item.valid_next_statuses || []
             return (
               <li key={item.id} className="inventory-item">
                 {item.photo_url ? (

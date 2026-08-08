@@ -19,6 +19,9 @@ const DECIDED_SELL_ITEM = {
   suggested_price: 45.5,
   decision: 'sell',
   status: 'decided',
+  // Matches MANUAL_STATUS_TRANSITIONS['decided'] in backend/app/main.py,
+  // sorted the same way `_serialize_item` sorts it server-side.
+  valid_next_statuses: ['disposed', 'given_away', 'listed'],
   created_at: '2026-08-01T00:00:00+00:00',
   updated_at: '2026-08-01T00:05:00+00:00',
   comparable_listings: [],
@@ -29,6 +32,8 @@ const LISTED_ITEM = {
   id: 2,
   identified_name: 'Old Bookshelf',
   status: 'listed',
+  // Matches MANUAL_STATUS_TRANSITIONS['listed'] in backend/app/main.py.
+  valid_next_statuses: ['disposed', 'given_away'],
 }
 
 const PENDING_ITEM = {
@@ -43,6 +48,8 @@ const PENDING_ITEM = {
   suggested_price: null,
   decision: 'pending',
   status: 'pending_identification',
+  // Matches MANUAL_STATUS_TRANSITIONS['pending_identification'] (empty).
+  valid_next_statuses: [],
   created_at: '2026-08-01T00:00:00+00:00',
   updated_at: '2026-08-01T00:00:00+00:00',
   comparable_listings: [],
@@ -129,7 +136,11 @@ describe('InventoryPage', () => {
         return Promise.resolve({
           ok: true,
           status: 200,
-          json: async () => ({ ...DECIDED_SELL_ITEM, status: 'listed' }),
+          json: async () => ({
+            ...DECIDED_SELL_ITEM,
+            status: 'listed',
+            valid_next_statuses: ['disposed', 'given_away'],
+          }),
         })
       }
       return Promise.resolve({
@@ -191,6 +202,34 @@ describe('InventoryPage', () => {
     expect(
       screen.queryByRole('button', { name: /mark as listed on kleinanzeigen/i }),
     ).not.toBeInTheDocument()
+  })
+
+  it('renders buttons driven solely by the API-provided valid_next_statuses field, not any client-side rule derived from status', async () => {
+    // A 'listed' item wouldn't normally have 'listed' as one of its own
+    // valid next statuses per the backend's real MANUAL_STATUS_TRANSITIONS
+    // table -- but this test's whole point is to prove the frontend has
+    // NO independent opinion about that and just renders whatever
+    // `valid_next_statuses` the API response says, so we pick a
+    // deliberately atypical value here.
+    const oddItem = {
+      ...LISTED_ITEM,
+      id: 4,
+      identified_name: 'Odd Item',
+      valid_next_statuses: ['listed'],
+    }
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => [oddItem] })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByText(/odd item/i)).toBeInTheDocument()
+    })
+
+    expect(
+      screen.getByRole('button', { name: /mark as listed on kleinanzeigen/i }),
+    ).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /mark as given away/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /mark as disposed/i })).not.toBeInTheDocument()
   })
 
   it('shows an error message when the PATCH request fails', async () => {
