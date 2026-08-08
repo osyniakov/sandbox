@@ -180,6 +180,40 @@ def test_user_hint_round_trips_exact_string(session: Session) -> None:
     assert fetched.user_hint == hint
 
 
+def test_suggested_title_and_description_round_trip(session: Session) -> None:
+    """sandbox-dwl.1: ``suggested_title``/``suggested_description`` are
+    free-text, nullable columns.
+
+    Verifies both the default-None case and that supplied values round-trip
+    byte-for-byte through a fresh ``session.get()`` after commit + expire.
+    """
+    item = Item(photo_path="/photos/no_suggestion.jpg")
+    session.add(item)
+    session.commit()
+    session.expire_all()
+
+    fetched = session.get(Item, item.id)
+    assert fetched is not None
+    assert fetched.suggested_title is None
+    assert fetched.suggested_description is None
+
+    title = "IKEA Desk Lamp - Silver, Works Great"
+    description = "Barely used desk lamp, no scratches, comes with original bulb."
+    item_with_suggestion = Item(
+        photo_path="/photos/with_suggestion.jpg",
+        suggested_title=title,
+        suggested_description=description,
+    )
+    session.add(item_with_suggestion)
+    session.commit()
+    session.expire_all()
+
+    fetched_with_suggestion = session.get(Item, item_with_suggestion.id)
+    assert fetched_with_suggestion is not None
+    assert fetched_with_suggestion.suggested_title == title
+    assert fetched_with_suggestion.suggested_description == description
+
+
 def test_comparable_listing_requires_valid_item_fk(session: Session) -> None:
     orphan = ComparableListing(
         item_id=999999,

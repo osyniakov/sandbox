@@ -103,6 +103,8 @@ class Item(Base):
     search_keywords: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     suggested_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    suggested_title: Mapped[str | None] = mapped_column(String, nullable=True)
+    suggested_description: Mapped[str | None] = mapped_column(String, nullable=True)
 
     decision: Mapped[Decision] = mapped_column(
         SAEnum(
