@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -15,6 +16,13 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    // Tailwind CSS v4 (current as of 2026-08): config-file-based setup was
+    // replaced in v4 by this official Vite plugin + CSS-first configuration
+    // (see src/index.css `@import "tailwindcss"`). No tailwind.config.js or
+    // postcss.config.js is needed for this setup. Chosen because it's the
+    // officially recommended install path per Tailwind's current docs, not
+    // an assumption carried over from v3-era tooling.
+    tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {

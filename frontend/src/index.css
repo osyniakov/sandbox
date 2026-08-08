@@ -1,3 +1,9 @@
+/* Tailwind CSS v4 CSS-first entry point (see vite.config.js for the
+   rationale on the v4 + @tailwindcss/vite install approach). This makes
+   Tailwind's utility classes available app-wide without altering any
+   existing rules below. */
+@import 'tailwindcss';
+
 :root {
   --text: #6b6375;
   --text-h: #08060d;
