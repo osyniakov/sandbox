@@ -84,6 +84,23 @@ without an image rebuild.
 > described above. The native fallback commands below were fully verified
 > as a substitute in this environment.
 
+## Deployment
+
+`backend/Dockerfile.railway` and `frontend/Dockerfile.railway` are
+production-oriented Dockerfiles kept separate from the dev-oriented
+`backend/Dockerfile` / `frontend/Dockerfile` used above by Docker Compose
+(which have no production build step and use a JSON-array `CMD` that
+doesn't support runtime `$PORT` substitution). They exist specifically
+for platforms like Railway that build a service directly from a
+Dockerfile — point the service's `dockerfilePath` explicitly at the
+`.railway` file (auto-detection picks up the dev Dockerfile instead).
+
+For the frontend image, `VITE_API_BASE_URL` must be passed as a Docker
+**build arg** (`--build-arg VITE_API_BASE_URL=<url>`, or the platform's
+equivalent build-arg setting), not just a runtime/service env var — Vite
+inlines `VITE_*` variables into the compiled JS bundle at build time, so
+setting it only as a runtime env var has no effect on the built image.
+
 ## Running natively (fallback / local development)
 
 ### Backend
