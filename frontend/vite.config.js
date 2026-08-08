@@ -32,6 +32,13 @@ export default defineConfig({
           'Photograph an item, find comparable listings, and get a sell / give-away / throw-away recommendation.',
         start_url: '/',
         display: 'standalone',
+        // Kept in sync with src/index.css's `@theme` design tokens
+        // (sandbox-zlt.2/.6) so the installed-PWA chrome (splash screen
+        // background, browser/OS theme color) matches the in-app palette
+        // exactly rather than just approximately:
+        //   background_color -> --color-bg   (#ffffff)
+        //   theme_color       -> --color-primary (#aa3bff)
+        // If those tokens ever change, update these two values to match.
         background_color: '#ffffff',
         theme_color: '#aa3bff',
         icons: [
