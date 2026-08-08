@@ -220,6 +220,84 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+# ---------------------------------------------------------------------------
+# Upload content validation (sandbox-yqf.16)
+# ---------------------------------------------------------------------------
+#
+# Two independent gaps existed in the original content-type-only check
+# (sandbox-yqf.4):
+#
+# 1. The ``Content-Type`` comparison was case-sensitive, so a technically
+#    valid ``"IMAGE/JPEG"`` header (HTTP media types are case-insensitive
+#    per RFC 9110) was wrongly rejected. Fixed below by comparing against
+#    a lowercased copy of the header.
+#
+# 2. Only the client-supplied ``Content-Type`` header was ever checked --
+#    never the actual bytes. This app now (as of sandbox-yqf.10/.19)
+#    mounts ``/uploads`` as a static file server and the frontend renders
+#    ``<img src="{API_BASE_URL}{item.photo_url}">`` pointing straight at
+#    whatever was stored. An uploaded SVG can contain an embedded
+#    ``<script>``, so a stored malicious SVG is a *live* stored-XSS vector
+#    against whoever views that item's results page today -- not a
+#    hypothetical future risk.
+#
+#    Threat model accepted here: this is a personal, single-user tool with
+#    no auth, but the "attacker" doesn't need to compromise anything --
+#    they just need the ONE upload (a photo of the item itself) to be a
+#    malicious file, e.g. because someone hands the uploader a booby-
+#    trapped image, or the uploader deliberately links to this instance
+#    and social-engineers the user into uploading something. Given the
+#    stored file is later actively served back into a browser context
+#    (the results page's <img> tag) and reflects who did the uploading
+#    with no access control in between, checking bytes rather than trusting
+#    a client-supplied header is worth the (small) added complexity here.
+#
+#    Chosen approach: (b), magic-byte sniffing -- rejecting anything whose
+#    first bytes don't match one of the raster formats this app actually
+#    needs from a phone camera (JPEG/PNG/WEBP/HEIC), REGARDLESS of what
+#    Content-Type header the client sent. This is strictly stronger than
+#    approach (a) (denylisting ``image/svg+xml`` by header alone): a client
+#    that lies about Content-Type -- e.g. sending real SVG bytes labeled
+#    ``image/jpeg`` -- would sail straight through an (a)-only check, but
+#    is still caught here because the header lie doesn't change the bytes.
+#    The existing ``image/*`` prefix check (now case-insensitive) is kept
+#    as a cheap, human-readable first-pass rejection (e.g. a plain-text
+#    upload never even reaches the byte-sniffing stage); the magic-byte
+#    check below is the actual security boundary.
+_RASTER_IMAGE_SIGNATURES: dict[str, tuple[bytes, ...]] = {
+    "jpeg": (b"\xff\xd8\xff",),
+    "png": (b"\x89PNG\r\n\x1a\n",),
+    # WEBP: RIFF????WEBP -- "RIFF" at offset 0, "WEBP" at offset 8.
+    "webp": (b"RIFF",),
+    # HEIC/HEIF (ISO base media "ftyp" box): 4-byte size, "ftyp" at offset
+    # 4, then a 4-byte "major brand" identifying HEIC/HEIF variants that a
+    # phone camera would plausibly produce.
+    "heic": (b"ftyp",),
+}
+_HEIC_BRANDS = {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"hevm", b"hevs", b"mif1", b"msf1"}
+# Longest prefix any signature check below needs to inspect (WEBP's "WEBP"
+# marker at offset 8..12 is the deepest lookup).
+_SNIFF_HEADER_BYTES = 12
+
+
+def _looks_like_supported_raster_image(header: bytes) -> bool:
+    """True iff ``header`` (the first ``_SNIFF_HEADER_BYTES`` bytes of an
+    uploaded file) matches a known magic number for JPEG, PNG, WEBP, or
+    HEIC -- the raster formats this app actually needs from a phone
+    camera. See the module-level comment above for why this check exists
+    and is independent of the client-supplied ``Content-Type`` header.
+    """
+    if header.startswith(_RASTER_IMAGE_SIGNATURES["jpeg"][0]):
+        return True
+    if header.startswith(_RASTER_IMAGE_SIGNATURES["png"][0]):
+        return True
+    if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+        return True
+    if header[4:8] == b"ftyp" and header[8:12] in _HEIC_BRANDS:
+        return True
+    return False
+
+
 def _pick_extension(filename: str | None, content_type: str) -> str:
     """Best-effort file extension for the stored filename.
 
@@ -260,7 +338,14 @@ async def create_item(
         raise HTTPException(status_code=400, detail="No photo file was uploaded.")
 
     content_type = photo.content_type or ""
-    if not content_type.startswith("image/"):
+    # Case-insensitive: HTTP media types are case-insensitive per RFC 9110,
+    # so e.g. "IMAGE/JPEG" must be accepted just like "image/jpeg". This is
+    # a cheap, human-readable first-pass filter only (e.g. it rejects a
+    # plain-text upload outright without even reading its bytes) -- it is
+    # NOT trusted as the actual content-safety boundary; see the
+    # magic-byte sniff below (and the module-level comment above
+    # ``_looks_like_supported_raster_image``) for that.
+    if not content_type.lower().startswith("image/"):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -292,12 +377,21 @@ async def create_item(
 
     total_bytes = 0
     oversized = False
+    # Captured from the very first chunk read below (which, at
+    # ``_UPLOAD_READ_CHUNK_BYTES`` == 1MB, is always >= the handful of
+    # bytes any of the magic-number checks need unless the whole upload is
+    # itself shorter than that -- in which case ``header_bytes`` is simply
+    # the entire file, and the sniff below correctly fails to match rather
+    # than erroring). Only ever set once; later chunks don't touch it.
+    header_bytes = b""
     try:
         with dest_path.open("wb") as dest_file:
             while True:
                 chunk = await photo.read(_UPLOAD_READ_CHUNK_BYTES)
                 if not chunk:
                     break
+                if not header_bytes:
+                    header_bytes = chunk[:_SNIFF_HEADER_BYTES]
                 total_bytes += len(chunk)
                 if total_bytes > MAX_UPLOAD_BYTES:
                     oversized = True
@@ -315,6 +409,24 @@ async def create_item(
     if total_bytes == 0:
         dest_path.unlink(missing_ok=True)
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    # The actual content-safety boundary (see the module-level comment
+    # above ``_looks_like_supported_raster_image``): reject anything whose
+    # bytes don't match a known raster-image magic number, regardless of
+    # what Content-Type header the client claimed -- this is what catches
+    # e.g. real SVG bytes mislabeled as "image/jpeg", which the
+    # Content-Type check above alone would not.
+    if not _looks_like_supported_raster_image(header_bytes):
+        dest_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Uploaded file's content does not match a supported image "
+                "format (JPEG, PNG, WEBP, or HEIC); the file's actual "
+                "bytes did not pass validation, regardless of its "
+                "Content-Type header."
+            ),
+        )
 
     item = Item(photo_path=str(dest_path), status=ItemStatus.PENDING_IDENTIFICATION)
     session.add(item)
