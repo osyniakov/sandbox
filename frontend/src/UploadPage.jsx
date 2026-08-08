@@ -26,6 +26,7 @@ function UploadPage() {
   // 'idle' | 'uploading' | 'error'
   const [status, setStatus] = useState('idle')
   const [errorMessage, setErrorMessage] = useState('')
+  const [hint, setHint] = useState('')
   const fileInputRef = useRef(null)
   const navigate = useNavigate()
 
@@ -40,6 +41,7 @@ function UploadPage() {
 
     const formData = new FormData()
     formData.append('photo', file)
+    formData.append('hint', hint)
 
     try {
       const response = await fetch(`${API_BASE_URL}/items`, {
@@ -67,6 +69,7 @@ function UploadPage() {
   function handleReset() {
     setStatus('idle')
     setErrorMessage('')
+    setHint('')
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -85,6 +88,23 @@ function UploadPage() {
           View basement inventory
         </Link>
       </p>
+
+      <label
+        htmlFor="hint-input"
+        className="block mt-6 mb-2 font-semibold text-heading"
+      >
+        Hint (optional)
+      </label>
+      <input
+        id="hint-input"
+        type="text"
+        value={hint}
+        onChange={(e) => setHint(e.target.value)}
+        placeholder="e.g. Bosch drill, orange casing"
+        maxLength={500}
+        disabled={status === 'uploading'}
+        className="form-input mx-auto disabled:opacity-60 disabled:cursor-not-allowed"
+      />
 
       <label
         htmlFor="photo-input"

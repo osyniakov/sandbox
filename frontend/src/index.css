@@ -137,6 +137,13 @@
       @apply bg-primary-hover/10 border-primary;
     }
   }
+
+  /* Apply to single-line text <input> elements (e.g. type="text").
+     Restores a visible bordered box in place of the border/background
+     preflight removed, matching .form-select/.form-file's look. */
+  .form-input {
+    @apply rounded border border-border bg-bg text-text text-base px-3 py-2;
+  }
 }
 
 :root {

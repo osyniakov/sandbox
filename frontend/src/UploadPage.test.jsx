@@ -75,6 +75,117 @@ describe('UploadPage photo capture/upload flow', () => {
     expect(options.body.get('photo')).toBe(file)
   })
 
+  it('updates the displayed hint value as the user types', async () => {
+    const user = userEvent.setup()
+    renderUploadPage()
+
+    const hintInput = screen.getByLabelText(/hint \(optional\)/i)
+    await user.type(hintInput, 'Bosch drill, orange casing')
+
+    expect(hintInput).toHaveValue('Bosch drill, orange casing')
+  })
+
+  it('includes the typed hint in the upload FormData', async () => {
+    const user = userEvent.setup()
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: 42, status: 'pending_identification', photo_path: '/x' }),
+    })
+
+    renderUploadPage()
+
+    const hintInput = screen.getByLabelText(/hint \(optional\)/i)
+    await user.type(hintInput, 'Bosch drill, orange casing')
+
+    const input = screen.getByLabelText(/take or choose a photo/i)
+    const file = makeFixtureImageFile()
+    await user.upload(input, file)
+
+    await waitFor(() => {
+      expect(screen.getByText(/item #42/i)).toBeInTheDocument()
+    })
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const [, options] = fetch.mock.calls[0]
+    expect(options.body.get('hint')).toBe('Bosch drill, orange casing')
+  })
+
+  it('still uploads successfully when no hint is typed (hint is optional)', async () => {
+    const user = userEvent.setup()
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: 42, status: 'pending_identification', photo_path: '/x' }),
+    })
+
+    renderUploadPage()
+
+    const input = screen.getByLabelText(/take or choose a photo/i)
+    const file = makeFixtureImageFile()
+    await user.upload(input, file)
+
+    await waitFor(() => {
+      expect(screen.getByText(/item #42/i)).toBeInTheDocument()
+    })
+
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const [, options] = fetch.mock.calls[0]
+    expect(options.body.get('photo')).toBe(file)
+    expect(options.body.get('hint')).toBe('')
+  })
+
+  it('disables the hint input while the upload is in flight', async () => {
+    const user = userEvent.setup()
+
+    let resolveFetch
+    const fetchPromise = new Promise((resolve) => {
+      resolveFetch = resolve
+    })
+    fetch.mockReturnValueOnce(fetchPromise)
+
+    renderUploadPage()
+
+    const hintInput = screen.getByLabelText(/hint \(optional\)/i)
+    const input = screen.getByLabelText(/take or choose a photo/i)
+    const file = makeFixtureImageFile()
+
+    await user.upload(input, file)
+
+    expect(hintInput).toBeDisabled()
+
+    resolveFetch({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: 42, status: 'pending_identification', photo_path: '/x' }),
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText(/item #42/i)).toBeInTheDocument()
+    })
+  })
+
+  it('clears the hint field on reset after an error', async () => {
+    const user = userEvent.setup()
+    fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+    renderUploadPage()
+
+    const hintInput = screen.getByLabelText(/hint \(optional\)/i)
+    await user.type(hintInput, 'Bosch drill, orange casing')
+
+    const input = screen.getByLabelText(/take or choose a photo/i)
+    await user.upload(input, makeFixtureImageFile())
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/could not reach the server/i)
+    })
+
+    await user.click(screen.getByRole('button', { name: /try again/i }))
+
+    expect(screen.getByLabelText(/hint \(optional\)/i)).toHaveValue('')
+  })
+
   it('disables the input while the upload is genuinely in flight, then navigates once it resolves', async () => {
     const user = userEvent.setup()
 
