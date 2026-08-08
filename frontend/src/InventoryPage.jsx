@@ -236,7 +236,10 @@ function InventoryPage() {
                   )}
 
                   <div className="min-w-0 flex-1">
-                    <Link to={`/items/${item.id}`} className="link block truncate font-medium">
+                    <Link
+                      to={`/items/${item.id}`}
+                      className="link block font-medium break-words"
+                    >
                       {item.identified_name || `Item #${item.id}`}
                     </Link>
                     <p className="mt-1">
