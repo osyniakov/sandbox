@@ -2,17 +2,50 @@
 
 Photograph an item lying around in the basement, identify it, search
 Kleinanzeigen for comparable listings, and get a sell / give-away /
-throw-away recommendation.
+throw-away recommendation with a suggested price.
 
-This repository currently contains **scaffolding only**:
+## What's here
 
-- `backend/` — FastAPI app with a `GET /health` endpoint.
-- `frontend/` — React + Vite PWA skeleton with a placeholder home page.
-- `docker-compose.yml` — builds and runs both services together for local
-  dev.
+- `backend/` — FastAPI app. Photo upload runs a background pipeline:
+  **identify** the item (Claude vision) → **search** Kleinanzeigen for
+  comparable listings → **decide** sell/give-away/throw-away with a
+  suggested price. SQLite persistence, plus an inventory API for
+  listing items and manually tracking what you did with them (listed,
+  given away, disposed).
+- `frontend/` — React + Vite PWA: a photo capture/upload page, a
+  per-item results page (polls until the pipeline finishes), and a
+  basement inventory list with status-tracking controls.
+- `docker-compose.yml` — builds and runs both services together for
+  local dev.
+- `docs/kleinanzeigen-access.md` — background on how/why the
+  Kleinanzeigen integration works the way it does (there's no official
+  public API).
 
-No Kleinanzeigen integration, vision/identification logic, or database
-persistence exists yet — those land in later tasks.
+## Configuration
+
+The backend needs a real Anthropic API key to run photo identification:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Without it, uploads still work, but the pipeline stops at the
+identification step (`status` stays `pending_identification`) rather
+than erroring — see "How the pipeline behaves without a working step"
+below.
+
+Other environment variables, all optional with sensible defaults:
+
+| Variable | Where | Default | Purpose |
+|---|---|---|---|
+| `ANTHROPIC_API_KEY` | backend | — (required for real identification) | Claude vision API key |
+| `ANTHROPIC_VISION_MODEL` | backend | `claude-sonnet-5` | override the vision model |
+| `ALLOWED_ORIGINS` | backend | `http://localhost:5173,http://127.0.0.1:5173` | comma-separated CORS allowlist |
+| `VITE_API_BASE_URL` | frontend | `http://localhost:8000` | where the frontend calls the backend |
+
+`backend/app/config.py` also has a `SELL_THRESHOLD` constant (currently
+a placeholder €10 cutoff between "sell" and "give away") if you want to
+tune the decision logic without touching env vars.
 
 ## Running with Docker Compose
 
@@ -56,6 +89,7 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+export ANTHROPIC_API_KEY=sk-ant-...   # optional but needed for real identification
 uvicorn app.main:app --reload --port 8000
 ```
 
@@ -84,4 +118,47 @@ npm run dev
 
 This starts the Vite dev server (default `http://localhost:5173`). Use
 `npm run build` to produce a production build in `frontend/dist`
-(includes the generated PWA manifest and service worker).
+(includes the generated PWA manifest and service worker). See
+`frontend/README.md` for the `VITE_API_BASE_URL` setup and a full
+walkthrough of testing from your phone (the point of this app is
+camera capture, so a desktop-only test misses the main use case).
+
+## Using the app
+
+1. Open the frontend (`http://localhost:5173` or your phone's LAN
+   address, see `frontend/README.md`) and take/choose a photo. It
+   uploads immediately and takes you to that item's results page.
+2. The results page polls `GET /items/{id}` every ~2.5s while the
+   pipeline runs, showing the photo, identified name/category, the
+   recommended decision (sell/give-away/throw-away), a suggested price
+   for sellable items, and clickable comparable Kleinanzeigen listings.
+3. Once you've acted on an item (listed it, given it away, or thrown it
+   out), go to **View basement inventory** and mark its status — the
+   app never posts to Kleinanzeigen for you, you always list manually.
+
+### API surface, if you want to script against it
+
+- `POST /items` — multipart photo upload, starts the pipeline.
+- `GET /items/{id}` — full item detail (identification, decision,
+  comparable listings, status).
+- `GET /items?status=&decision=` — list items, optionally filtered.
+- `PATCH /items/{id}/status` — manually transition status (e.g.
+  `{"status": "listed"}`); rejects invalid transitions with a 400
+  explaining what's actually valid from the item's current state.
+- `GET /uploads/{filename}` — serves the stored photo.
+
+### How the pipeline behaves without a working step
+
+Each pipeline stage (identify → search → decide) either advances the
+item's `status` on success or leaves it exactly where it was on
+failure — nothing crashes or silently skips ahead. So:
+
+- No `ANTHROPIC_API_KEY` (or a failing vision call) → item stays at
+  `pending_identification` forever; `GET /items/{id}` still returns
+  200, just with null identification fields.
+- No internet access for Kleinanzeigen search → item stays at
+  `pending_search`, with whatever identification results it already
+  has.
+- Either way, nothing about the app breaks — it just means that item's
+  results page will show a "still working on this item" message
+  indefinitely instead of a decision.
