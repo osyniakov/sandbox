@@ -40,6 +40,7 @@ from fastapi import (
     FastAPI,
     File,
     Form,
+    Header,
     HTTPException,
     Request,
     UploadFile,
@@ -49,6 +50,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.auth import AuthError, issue_session_token, verify_google_id_token, verify_session_token
 from app.db import engine, get_session, init_db
 from app.models import ComparableListing, Decision, Item, ItemStatus
 from app.pipeline import run_pipeline_with_new_session
@@ -242,6 +244,96 @@ app.mount(UPLOAD_URL_PREFIX, _UploadsStaticFiles(), name="uploads")
 def health() -> dict[str, str]:
     """Basic liveness check."""
     return {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# Authentication (sandbox-dfr.2)
+# ---------------------------------------------------------------------------
+#
+# Google Sign-In verification, session-token issuance/verification, and the
+# whitelist check itself all live in ``app.auth`` (sandbox-dfr.1) -- this
+# section is purely the HTTP surface over that module: exchanging a Google
+# ID token for our own session token (``POST /auth/google``), checking a
+# session token (``GET /auth/me``), a symmetric no-op logout
+# (``POST /auth/logout``), and the reusable ``require_user`` dependency
+# other authenticated routes will attach in a later bead.
+
+
+class GoogleAuthRequest(BaseModel):
+    id_token: str
+
+
+@app.post("/auth/google")
+def auth_google(body: GoogleAuthRequest) -> dict[str, str]:
+    """Exchange a Google ID token for one of this app's own session tokens.
+
+    Verifies ``body.id_token`` via ``app.auth.verify_google_id_token``
+    (signature/expiry/audience check against Google, plus the
+    ``email_verified`` and ``ALLOWED_EMAILS`` whitelist checks -- see that
+    module's docstring). Returns 401 if verification fails for any reason
+    (invalid/expired/malformed token, unverified email, or an email not on
+    the whitelist), with ``AuthError``'s own message as the detail --
+    including, for the not-on-the-whitelist case, the email itself. That's
+    acceptable here (unlike e.g. a login-by-password form): the caller has
+    already proven ownership of that email via a real Google-signed token,
+    so echoing it back isn't disclosing anything they didn't already know.
+
+    On success, issues a session token (``app.auth.issue_session_token``)
+    and returns it alongside the verified email.
+    """
+    try:
+        email = verify_google_id_token(body.id_token)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+
+    token = issue_session_token(email)
+    return {"token": token, "email": email}
+
+
+def require_user(authorization: str | None = Header(None)) -> str:
+    """FastAPI dependency: require a valid ``Authorization: Bearer <token>``
+    session token, returning the verified email.
+
+    Raises ``HTTPException(401)`` if the header is missing, doesn't start
+    with ``"Bearer "``, or the token fails verification (invalid, expired,
+    tampered, or signed with a different/unset ``SESSION_SECRET`` -- see
+    ``app.auth.verify_session_token``, which returns ``None`` for all of
+    those rather than distinguishing them). This is the single reusable
+    auth check other routes attach via ``Depends(require_user)`` -- see
+    ``GET /auth/me`` and ``POST /auth/logout`` below for the pattern; a
+    later bead attaches it to the ``/items*`` routes.
+    """
+    if authorization is None or not authorization.startswith("Bearer "):
+        raise HTTPException(
+            status_code=401,
+            detail="Missing or malformed Authorization header; expected 'Bearer <token>'.",
+        )
+
+    token = authorization[len("Bearer ") :]
+    email = verify_session_token(token)
+    if email is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired session token.")
+
+    return email
+
+
+@app.get("/auth/me")
+def get_me(email: str = Depends(require_user)) -> dict[str, str]:
+    """Return the authenticated caller's email, per its session token."""
+    return {"email": email}
+
+
+@app.post("/auth/logout")
+def auth_logout(email: str = Depends(require_user)) -> dict[str, bool]:
+    """Symmetric logout endpoint for the frontend to call.
+
+    Session tokens are stateless (signed, not stored server-side), so
+    there is nothing to invalidate here -- this is intentionally a no-op
+    beyond the ``require_user`` auth check itself (so calling logout
+    without a valid session is a 401); the frontend is responsible for
+    discarding its own locally-stored token (a later bead's job).
+    """
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
