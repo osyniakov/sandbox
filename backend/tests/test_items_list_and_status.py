@@ -80,12 +80,56 @@ def _make_item(
 
 
 # ---------------------------------------------------------------------------
+# Auth gate: no session -> 401 (sandbox-dfr.3)
+# ---------------------------------------------------------------------------
+
+
+def test_list_items_missing_authorization_header_rejected_with_401(
+    client: TestClient,
+) -> None:
+    response = client.get("/items")
+    assert response.status_code == 401
+
+
+def test_get_item_missing_authorization_header_rejected_with_401(
+    client: TestClient, db_session_factory
+) -> None:
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.PENDING_IDENTIFICATION
+    )
+
+    response = client.get(f"/items/{item_id}")
+
+    assert response.status_code == 401
+
+
+def test_patch_status_missing_authorization_header_rejected_with_401_and_no_side_effect(
+    client: TestClient, db_session_factory
+) -> None:
+    """PATCH /items/{id}/status without a valid session must be rejected
+    401 -- and, critically, the item's status must be left unchanged."""
+    item_id = _make_item(db_session_factory, status=ItemStatus.DECIDED)
+
+    response = client.patch(f"/items/{item_id}/status", json={"status": "listed"})
+
+    assert response.status_code == 401
+
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        assert item is not None
+        assert item.status == ItemStatus.DECIDED
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
 # GET /items -- listing + filtering
 # ---------------------------------------------------------------------------
 
 
 def test_list_items_returns_all_items_with_full_serialized_shape(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     id1 = _make_item(
         db_session_factory,
@@ -101,7 +145,7 @@ def test_list_items_returns_all_items_with_full_serialized_shape(
         identified_name="Lamp",
     )
 
-    response = client.get("/items")
+    response = client.get("/items", headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -118,25 +162,31 @@ def test_list_items_returns_all_items_with_full_serialized_shape(
     assert by_id[id2]["hint"] is None
 
 
-def test_list_items_empty_when_no_items(client: TestClient) -> None:
-    response = client.get("/items")
+def test_list_items_empty_when_no_items(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    response = client.get("/items", headers=auth_headers)
     assert response.status_code == 200
     assert response.json() == []
 
 
-def test_list_items_filter_by_status(client: TestClient, db_session_factory) -> None:
+def test_list_items_filter_by_status(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
     decided_id = _make_item(db_session_factory, status=ItemStatus.DECIDED)
     _make_item(db_session_factory, status=ItemStatus.PENDING_SEARCH)
     _make_item(db_session_factory, status=ItemStatus.LISTED)
 
-    response = client.get("/items", params={"status": "decided"})
+    response = client.get("/items", params={"status": "decided"}, headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
     assert [item["id"] for item in body] == [decided_id]
 
 
-def test_list_items_filter_by_decision(client: TestClient, db_session_factory) -> None:
+def test_list_items_filter_by_decision(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
     sell_id = _make_item(
         db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
     )
@@ -147,7 +197,7 @@ def test_list_items_filter_by_decision(client: TestClient, db_session_factory) -
         db_session_factory, status=ItemStatus.DECIDED, decision=Decision.THROW_AWAY
     )
 
-    response = client.get("/items", params={"decision": "sell"})
+    response = client.get("/items", params={"decision": "sell"}, headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -155,7 +205,7 @@ def test_list_items_filter_by_decision(client: TestClient, db_session_factory) -
 
 
 def test_list_items_filter_by_status_and_decision_together(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     match_id = _make_item(
         db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
@@ -169,7 +219,7 @@ def test_list_items_filter_by_status_and_decision_together(
         db_session_factory, status=ItemStatus.LISTED, decision=Decision.SELL
     )
 
-    response = client.get("/items", params={"status": "decided", "decision": "sell"})
+    response = client.get("/items", params={"status": "decided", "decision": "sell"}, headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -177,7 +227,7 @@ def test_list_items_filter_by_status_and_decision_together(
 
 
 def test_list_items_no_filters_returns_everything(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     ids = [
         _make_item(db_session_factory, status=ItemStatus.PENDING_IDENTIFICATION),
@@ -185,15 +235,17 @@ def test_list_items_no_filters_returns_everything(
         _make_item(db_session_factory, status=ItemStatus.DISPOSED, decision=Decision.THROW_AWAY),
     ]
 
-    response = client.get("/items")
+    response = client.get("/items", headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
     assert sorted(item["id"] for item in body) == sorted(ids)
 
 
-def test_list_items_invalid_status_filter_returns_422(client: TestClient) -> None:
-    response = client.get("/items", params={"status": "not_a_real_status"})
+def test_list_items_invalid_status_filter_returns_422(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    response = client.get("/items", params={"status": "not_a_real_status"}, headers=auth_headers)
     assert response.status_code == 422
 
 
@@ -202,23 +254,27 @@ def test_list_items_invalid_status_filter_returns_422(client: TestClient) -> Non
 # ---------------------------------------------------------------------------
 
 
-def test_get_item_includes_hint_when_set(client: TestClient, db_session_factory) -> None:
+def test_get_item_includes_hint_when_set(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
     item_id = _make_item(
         db_session_factory,
         status=ItemStatus.PENDING_IDENTIFICATION,
         user_hint="Bosch drill, orange casing",
     )
 
-    response = client.get(f"/items/{item_id}")
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
 
     assert response.status_code == 200
     assert response.json()["hint"] == "Bosch drill, orange casing"
 
 
-def test_get_item_hint_is_none_when_not_set(client: TestClient, db_session_factory) -> None:
+def test_get_item_hint_is_none_when_not_set(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
     item_id = _make_item(db_session_factory, status=ItemStatus.PENDING_IDENTIFICATION)
 
-    response = client.get(f"/items/{item_id}")
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
 
     assert response.status_code == 200
     assert response.json()["hint"] is None
@@ -245,12 +301,12 @@ def test_get_item_hint_is_none_when_not_set(client: TestClient, db_session_facto
     ],
 )
 def test_get_item_valid_next_statuses_matches_transition_table(
-    client: TestClient, db_session_factory, status: ItemStatus
+    client: TestClient, db_session_factory, status: ItemStatus, auth_headers: dict[str, str]
 ) -> None:
     item_id = _make_item(db_session_factory, status=status)
     expected = sorted(s.value for s in MANUAL_STATUS_TRANSITIONS[status])
 
-    response = client.get(f"/items/{item_id}")
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
 
     assert response.status_code == 200
     assert response.json()["valid_next_statuses"] == expected
@@ -269,12 +325,12 @@ def test_get_item_valid_next_statuses_matches_transition_table(
     ],
 )
 def test_list_items_valid_next_statuses_matches_transition_table(
-    client: TestClient, db_session_factory, status: ItemStatus
+    client: TestClient, db_session_factory, status: ItemStatus, auth_headers: dict[str, str]
 ) -> None:
     item_id = _make_item(db_session_factory, status=status)
     expected = sorted(s.value for s in MANUAL_STATUS_TRANSITIONS[status])
 
-    response = client.get("/items")
+    response = client.get("/items", headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -283,7 +339,7 @@ def test_list_items_valid_next_statuses_matches_transition_table(
 
 
 def test_pending_statuses_have_empty_valid_next_statuses(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     for status in (
         ItemStatus.PENDING_IDENTIFICATION,
@@ -291,15 +347,15 @@ def test_pending_statuses_have_empty_valid_next_statuses(
         ItemStatus.PENDING_DECISION,
     ):
         item_id = _make_item(db_session_factory, status=status)
-        response = client.get(f"/items/{item_id}")
+        response = client.get(f"/items/{item_id}", headers=auth_headers)
         assert response.json()["valid_next_statuses"] == []
 
 
 def test_decided_valid_next_statuses_is_listed_given_away_disposed(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     item_id = _make_item(db_session_factory, status=ItemStatus.DECIDED)
-    response = client.get(f"/items/{item_id}")
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
     assert response.json()["valid_next_statuses"] == [
         "disposed",
         "given_away",
@@ -317,13 +373,13 @@ def test_decided_valid_next_statuses_is_listed_given_away_disposed(
     ["listed", "given_away", "disposed"],
 )
 def test_decided_item_can_transition_to_any_manual_target(
-    client: TestClient, db_session_factory, target: str
+    client: TestClient, db_session_factory, target: str, auth_headers: dict[str, str]
 ) -> None:
     item_id = _make_item(
         db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
     )
 
-    response = client.patch(f"/items/{item_id}/status", json={"status": target})
+    response = client.patch(f"/items/{item_id}/status", json={"status": target}, headers=auth_headers)
 
     assert response.status_code == 200
     body = response.json()
@@ -331,7 +387,7 @@ def test_decided_item_can_transition_to_any_manual_target(
 
 
 def test_decided_item_can_transition_to_disposed_even_when_decision_is_sell(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     """The target status doesn't need to match Item.decision -- the user
     is free to override the app's recommendation (see the
@@ -340,7 +396,7 @@ def test_decided_item_can_transition_to_disposed_even_when_decision_is_sell(
         db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
     )
 
-    response = client.patch(f"/items/{item_id}/status", json={"status": "disposed"})
+    response = client.patch(f"/items/{item_id}/status", json={"status": "disposed"}, headers=auth_headers)
 
     assert response.status_code == 200
     assert response.json()["status"] == "disposed"
@@ -358,11 +414,11 @@ def test_decided_item_can_transition_to_disposed_even_when_decision_is_sell(
     ],
 )
 def test_post_action_statuses_can_move_between_each_other(
-    client: TestClient, db_session_factory, start: str, target: str
+    client: TestClient, db_session_factory, start: str, target: str, auth_headers: dict[str, str]
 ) -> None:
     item_id = _make_item(db_session_factory, status=ItemStatus(start))
 
-    response = client.patch(f"/items/{item_id}/status", json={"status": target})
+    response = client.patch(f"/items/{item_id}/status", json={"status": target}, headers=auth_headers)
 
     assert response.status_code == 200
     assert response.json()["status"] == target
@@ -374,13 +430,13 @@ def test_post_action_statuses_can_move_between_each_other(
 
 
 def test_pending_identification_to_disposed_is_rejected_with_400(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     """The bead's explicit edge-case example: jumping straight from
     pending_identification to disposed must be rejected."""
     item_id = _make_item(db_session_factory, status=ItemStatus.PENDING_IDENTIFICATION)
 
-    response = client.patch(f"/items/{item_id}/status", json={"status": "disposed"})
+    response = client.patch(f"/items/{item_id}/status", json={"status": "disposed"}, headers=auth_headers)
 
     assert response.status_code == 400
     detail = response.json()["detail"]
@@ -394,11 +450,11 @@ def test_pending_identification_to_disposed_is_rejected_with_400(
 )
 @pytest.mark.parametrize("target", ["listed", "given_away", "disposed"])
 def test_pending_statuses_reject_all_manual_targets(
-    client: TestClient, db_session_factory, start_status: str, target: str
+    client: TestClient, db_session_factory, start_status: str, target: str, auth_headers: dict[str, str]
 ) -> None:
     item_id = _make_item(db_session_factory, status=ItemStatus(start_status))
 
-    response = client.patch(f"/items/{item_id}/status", json={"status": target})
+    response = client.patch(f"/items/{item_id}/status", json={"status": target}, headers=auth_headers)
 
     assert response.status_code == 400
     detail = response.json()["detail"]
@@ -408,12 +464,14 @@ def test_pending_statuses_reject_all_manual_targets(
 
 
 def test_decided_cannot_transition_back_to_pending_or_itself(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     item_id = _make_item(db_session_factory, status=ItemStatus.DECIDED)
 
     response = client.patch(
-        f"/items/{item_id}/status", json={"status": "pending_search"}
+        f"/items/{item_id}/status",
+        json={"status": "pending_search"},
+        headers=auth_headers,
     )
 
     assert response.status_code == 400
@@ -425,11 +483,11 @@ def test_decided_cannot_transition_back_to_pending_or_itself(
 
 
 def test_error_message_lists_current_status_and_valid_next_states(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     item_id = _make_item(db_session_factory, status=ItemStatus.LISTED)
 
-    response = client.patch(f"/items/{item_id}/status", json={"status": "decided"})
+    response = client.patch(f"/items/{item_id}/status", json={"status": "decided"}, headers=auth_headers)
 
     assert response.status_code == 400
     detail = response.json()["detail"]
@@ -441,18 +499,22 @@ def test_error_message_lists_current_status_and_valid_next_states(
     assert "disposed" in detail
 
 
-def test_patch_status_on_missing_item_returns_404(client: TestClient) -> None:
-    response = client.patch("/items/999999/status", json={"status": "disposed"})
+def test_patch_status_on_missing_item_returns_404(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    response = client.patch("/items/999999/status", json={"status": "disposed"}, headers=auth_headers)
     assert response.status_code == 404
 
 
 def test_patch_status_invalid_target_value_returns_422(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     item_id = _make_item(db_session_factory, status=ItemStatus.DECIDED)
 
     response = client.patch(
-        f"/items/{item_id}/status", json={"status": "not_a_real_status"}
+        f"/items/{item_id}/status",
+        json={"status": "not_a_real_status"},
+        headers=auth_headers,
     )
 
     assert response.status_code == 422

@@ -30,7 +30,9 @@ from app.db import get_session, make_engine, make_session_factory
 from app.main import app
 
 
-async def _raw_asgi_get(target_app, raw_path: str) -> tuple[int, bytes]:
+async def _raw_asgi_get(
+    target_app, raw_path: str, auth_headers: dict[str, str] | None = None
+) -> tuple[int, bytes]:
     """Invoke ``target_app`` directly over the raw ASGI interface with an
     attacker-controlled, already-decoded request path -- bypassing
     ``httpx``/``TestClient``'s own client-side URL normalization
@@ -57,7 +59,20 @@ async def _raw_asgi_get(target_app, raw_path: str) -> tuple[int, bytes]:
     real protection mechanism) end-to-end through the real routing layer
     (``Mount`` regex matching -> ``_UploadsStaticFiles.__call__`` ->
     ``get_response`` -> ``lookup_path``).
+
+    ``auth_headers`` (typically the ``auth_headers`` fixture's return
+    value) is optional and, if given, its ``Authorization`` header is
+    included in the raw scope -- needed since ``/uploads/*`` is now
+    gated behind ``app.main._require_auth_for_uploads`` (sandbox-dfr.3),
+    so a raw ASGI request with no Authorization header would be rejected
+    401 by that middleware before ever reaching the traversal-containment
+    logic these tests actually mean to exercise.
     """
+    headers = [(b"host", b"testserver")]
+    if auth_headers is not None:
+        for key, value in auth_headers.items():
+            headers.append((key.lower().encode("utf-8"), value.encode("utf-8")))
+
     scope = {
         "type": "http",
         "asgi": {"version": "3.0", "spec_version": "2.3"},
@@ -68,7 +83,7 @@ async def _raw_asgi_get(target_app, raw_path: str) -> tuple[int, bytes]:
         "raw_path": raw_path.encode("utf-8"),
         "query_string": b"",
         "root_path": "",
-        "headers": [(b"host", b"testserver")],
+        "headers": headers,
         "client": ("testclient", 123),
         "server": ("testserver", 80),
     }
@@ -131,17 +146,22 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClie
 # ---------------------------------------------------------------------------
 
 
-def test_uploaded_photo_is_fetchable_at_its_photo_url(client: TestClient) -> None:
+def test_uploaded_photo_is_fetchable_at_its_photo_url(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
     jpeg_bytes = _make_jpeg_bytes()
 
     upload_response = client.post(
         "/items",
         files={"photo": ("lamp.jpg", jpeg_bytes, "image/jpeg")},
+        headers=auth_headers,
     )
     assert upload_response.status_code == 201
     item_body = upload_response.json()
 
-    get_item_response = client.get(f"/items/{item_body['id']}")
+    get_item_response = client.get(
+        f"/items/{item_body['id']}", headers=auth_headers
+    )
     assert get_item_response.status_code == 200
     item = get_item_response.json()
 
@@ -149,13 +169,15 @@ def test_uploaded_photo_is_fetchable_at_its_photo_url(client: TestClient) -> Non
     assert item["photo_url"].startswith("/uploads/")
     assert item["photo_url"] == f"/uploads/{Path(item['photo_path']).name}"
 
-    photo_response = client.get(item["photo_url"])
+    photo_response = client.get(item["photo_url"], headers=auth_headers)
     assert photo_response.status_code == 200
     assert photo_response.content == jpeg_bytes
     assert photo_response.headers["content-type"] == "image/jpeg"
 
 
-def test_uploaded_png_photo_served_with_image_png_content_type(client: TestClient) -> None:
+def test_uploaded_png_photo_served_with_image_png_content_type(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
     image = Image.new("RGB", (2, 2), color=(0, 255, 0))
     buf = io.BytesIO()
     image.save(buf, format="PNG")
@@ -164,12 +186,13 @@ def test_uploaded_png_photo_served_with_image_png_content_type(client: TestClien
     upload_response = client.post(
         "/items",
         files={"photo": ("chair.png", png_bytes, "image/png")},
+        headers=auth_headers,
     )
     assert upload_response.status_code == 201
     item_id = upload_response.json()["id"]
 
-    item = client.get(f"/items/{item_id}").json()
-    photo_response = client.get(item["photo_url"])
+    item = client.get(f"/items/{item_id}", headers=auth_headers).json()
+    photo_response = client.get(item["photo_url"], headers=auth_headers)
 
     assert photo_response.status_code == 200
     assert photo_response.content == png_bytes
@@ -181,13 +204,26 @@ def test_uploaded_png_photo_served_with_image_png_content_type(client: TestClien
 # ---------------------------------------------------------------------------
 
 
-def test_missing_file_returns_404_not_error(client: TestClient) -> None:
-    response = client.get("/uploads/does-not-exist.jpg")
+def test_missing_file_returns_404_not_error(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    response = client.get("/uploads/does-not-exist.jpg", headers=auth_headers)
     assert response.status_code == 404
 
 
+def test_missing_authorization_header_returns_401_before_static_lookup(
+    client: TestClient,
+) -> None:
+    """An unauthenticated request to /uploads/* must be rejected 401 by
+    the auth middleware -- BEFORE the StaticFiles app underneath ever
+    runs -- not fall through to a 404 as if it were merely a missing
+    file (sandbox-dfr.3)."""
+    response = client.get("/uploads/does-not-exist.jpg")
+    assert response.status_code == 401
+
+
 def test_uploads_mount_survives_upload_dir_not_yet_existing(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, auth_headers: dict[str, str]
 ) -> None:
     """UPLOAD_DIR is created lazily in `lifespan`; before any upload (or
     on a machine's very first run) it may not exist yet. The mount itself
@@ -205,7 +241,7 @@ def test_uploads_mount_survives_upload_dir_not_yet_existing(
     assert not never_created_dir.exists()
 
     test_client = TestClient(app)  # no `with`: lifespan startup does not run
-    response = test_client.get("/uploads/anything.jpg")
+    response = test_client.get("/uploads/anything.jpg", headers=auth_headers)
 
     assert response.status_code == 404
     assert not never_created_dir.exists()
@@ -226,7 +262,7 @@ def test_uploads_mount_survives_upload_dir_not_yet_existing(
 
 
 def test_path_traversal_dotdot_does_not_escape_upload_dir_raw_asgi(
-    client: TestClient, tmp_path: Path
+    client: TestClient, tmp_path: Path, auth_headers: dict[str, str]
 ) -> None:
     # A secret file that lives outside UPLOAD_DIR (a sibling of it, both
     # under tmp_path) -- if traversal protection ever regressed, a request
@@ -234,17 +270,19 @@ def test_path_traversal_dotdot_does_not_escape_upload_dir_raw_asgi(
     secret_path = tmp_path / "secret.txt"
     secret_path.write_text("top secret, must never be served")
 
-    status, body = asyncio.run(_raw_asgi_get(app, "/uploads/../secret.txt"))
+    status, body = asyncio.run(
+        _raw_asgi_get(app, "/uploads/../secret.txt", auth_headers)
+    )
 
     assert status == 404
     assert b"top secret" not in body
 
 
 def test_path_traversal_deep_dotdot_toward_etc_passwd_does_not_escape_raw_asgi(
-    client: TestClient,
+    client: TestClient, auth_headers: dict[str, str]
 ) -> None:
     status, body = asyncio.run(
-        _raw_asgi_get(app, "/uploads/../../../../../../etc/passwd")
+        _raw_asgi_get(app, "/uploads/../../../../../../etc/passwd", auth_headers)
     )
 
     assert status == 404
@@ -252,7 +290,7 @@ def test_path_traversal_deep_dotdot_toward_etc_passwd_does_not_escape_raw_asgi(
 
 
 def test_path_traversal_dotdot_does_not_escape_upload_dir(
-    client: TestClient, tmp_path: Path
+    client: TestClient, tmp_path: Path, auth_headers: dict[str, str]
 ) -> None:
     """Same attack via the ordinary `TestClient`/httpx path -- see the
     module-level note above on why this is a secondary, not primary,
@@ -262,29 +300,34 @@ def test_path_traversal_dotdot_does_not_escape_upload_dir(
     secret_path = tmp_path / "secret.txt"
     secret_path.write_text("top secret, must never be served")
 
-    response = client.get("/uploads/../secret.txt", follow_redirects=False)
+    response = client.get(
+        "/uploads/../secret.txt", follow_redirects=False, headers=auth_headers
+    )
     assert response.status_code in (404, 403)
     assert b"top secret" not in response.content
 
 
 def test_path_traversal_url_encoded_dotdot_does_not_escape(
-    client: TestClient, tmp_path: Path
+    client: TestClient, tmp_path: Path, auth_headers: dict[str, str]
 ) -> None:
     secret_path = tmp_path / "secret.txt"
     secret_path.write_text("top secret, must never be served")
 
     # %2e%2e%2f is a URL-encoded "../".
-    response = client.get("/uploads/%2e%2e%2fsecret.txt", follow_redirects=False)
+    response = client.get(
+        "/uploads/%2e%2e%2fsecret.txt", follow_redirects=False, headers=auth_headers
+    )
     assert response.status_code in (404, 403)
     assert b"top secret" not in response.content
 
 
 def test_path_traversal_encoded_dotdot_toward_etc_passwd_does_not_escape(
-    client: TestClient,
+    client: TestClient, auth_headers: dict[str, str]
 ) -> None:
     response = client.get(
         "/uploads/%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
         follow_redirects=False,
+        headers=auth_headers,
     )
     assert response.status_code in (404, 403)
     assert b"root:" not in response.content

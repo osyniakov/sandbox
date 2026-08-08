@@ -73,13 +73,14 @@ def db_session_factory(client: TestClient):
 
 
 def test_valid_jpeg_upload_returns_201_and_persists_item(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     jpeg_bytes = _make_jpeg_bytes()
 
     response = client.post(
         "/items",
         files={"photo": ("lamp.jpg", jpeg_bytes, "image/jpeg")},
+        headers=auth_headers,
     )
 
     assert response.status_code == 201
@@ -103,7 +104,9 @@ def test_valid_jpeg_upload_returns_201_and_persists_item(
         session.close()
 
 
-def test_valid_png_upload_returns_201(client: TestClient) -> None:
+def test_valid_png_upload_returns_201(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
     image = Image.new("RGB", (2, 2), color=(0, 255, 0))
     buf = io.BytesIO()
     image.save(buf, format="PNG")
@@ -112,6 +115,7 @@ def test_valid_png_upload_returns_201(client: TestClient) -> None:
     response = client.post(
         "/items",
         files={"photo": ("chair.png", png_bytes, "image/png")},
+        headers=auth_headers,
     )
 
     assert response.status_code == 201
@@ -123,6 +127,7 @@ def test_valid_png_upload_returns_201(client: TestClient) -> None:
 
 def test_stored_extension_derived_from_sniffed_format_not_content_type_or_filename(
     client: TestClient,
+    auth_headers: dict[str, str],
 ) -> None:
     """The stored file's extension must come from the SNIFFED format (the
     magic-byte check), never from the client-supplied Content-Type header
@@ -134,6 +139,7 @@ def test_stored_extension_derived_from_sniffed_format_not_content_type_or_filena
     response = client.post(
         "/items",
         files={"photo": ("totally-a-lamp.svg", jpeg_bytes, "image/x-weird")},
+        headers=auth_headers,
     )
 
     assert response.status_code == 201
@@ -149,6 +155,7 @@ def test_stored_extension_derived_from_sniffed_format_not_content_type_or_filena
 
 def test_uppercase_content_type_with_real_jpeg_bytes_accepted(
     client: TestClient,
+    auth_headers: dict[str, str],
 ) -> None:
     """HTTP media types are case-insensitive (RFC 9110); "IMAGE/JPEG" must
     be accepted just like "image/jpeg" (sandbox-yqf.16)."""
@@ -157,6 +164,7 @@ def test_uppercase_content_type_with_real_jpeg_bytes_accepted(
     response = client.post(
         "/items",
         files={"photo": ("lamp.jpg", jpeg_bytes, "IMAGE/JPEG")},
+        headers=auth_headers,
     )
 
     assert response.status_code == 201
@@ -170,10 +178,13 @@ def test_uppercase_content_type_with_real_jpeg_bytes_accepted(
 # ---------------------------------------------------------------------------
 
 
-def test_non_image_content_type_rejected_with_400(client: TestClient) -> None:
+def test_non_image_content_type_rejected_with_400(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
     response = client.post(
         "/items",
         files={"photo": ("notes.txt", b"just some text, not an image", "text/plain")},
+        headers=auth_headers,
     )
 
     assert response.status_code == 400
@@ -182,11 +193,13 @@ def test_non_image_content_type_rejected_with_400(client: TestClient) -> None:
 
 def test_image_extension_but_non_image_content_type_still_rejected(
     client: TestClient,
+    auth_headers: dict[str, str],
 ) -> None:
     """A .jpg filename with a non-image content type must not be trusted."""
     response = client.post(
         "/items",
         files={"photo": ("fake.jpg", b"not actually a jpeg", "application/octet-stream")},
+        headers=auth_headers,
     )
 
     assert response.status_code == 400
@@ -210,12 +223,15 @@ _MALICIOUS_SVG_BYTES = (
 )
 
 
-def test_svg_with_honest_content_type_rejected_with_400(client: TestClient) -> None:
+def test_svg_with_honest_content_type_rejected_with_400(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
     """An SVG correctly labeled image/svg+xml is still rejected -- this app
     only accepts raster photo formats, and SVG can carry a <script>."""
     response = client.post(
         "/items",
         files={"photo": ("evil.svg", _MALICIOUS_SVG_BYTES, "image/svg+xml")},
+        headers=auth_headers,
     )
 
     assert response.status_code == 400
@@ -223,6 +239,7 @@ def test_svg_with_honest_content_type_rejected_with_400(client: TestClient) -> N
 
 def test_svg_bytes_mislabeled_as_jpeg_still_rejected_with_400(
     client: TestClient,
+    auth_headers: dict[str, str],
 ) -> None:
     """A client that lies about Content-Type (real SVG bytes labeled
     image/jpeg, to smuggle past a header-only check) must still be caught
@@ -231,19 +248,21 @@ def test_svg_bytes_mislabeled_as_jpeg_still_rejected_with_400(
     response = client.post(
         "/items",
         files={"photo": ("evil.jpg", _MALICIOUS_SVG_BYTES, "image/jpeg")},
+        headers=auth_headers,
     )
 
     assert response.status_code == 400
 
 
 def test_svg_upload_does_not_leave_a_stored_file_or_item_row(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     """A rejected SVG upload must not persist to disk or the DB -- same
     cleanup guarantee as the other rejection paths in this file."""
     response = client.post(
         "/items",
         files={"photo": ("evil.svg", _MALICIOUS_SVG_BYTES, "image/svg+xml")},
+        headers=auth_headers,
     )
     assert response.status_code == 400
 
@@ -263,27 +282,63 @@ def test_svg_upload_does_not_leave_a_stored_file_or_item_row(
 # ---------------------------------------------------------------------------
 
 
-def test_oversized_upload_rejected_with_413(client: TestClient) -> None:
-    oversized_bytes = b"\xff" * (main_module.MAX_UPLOAD_BYTES + 1)
-
-    response = client.post(
-        "/items",
-        files={"photo": ("huge.jpg", oversized_bytes, "image/jpeg")},
-    )
-
-    assert response.status_code == 413
-
-
-def test_oversized_upload_does_not_leave_partial_file_or_item_row(
-    client: TestClient, db_session_factory
+def test_oversized_upload_rejected_with_413(
+    client: TestClient, auth_headers: dict[str, str]
 ) -> None:
     oversized_bytes = b"\xff" * (main_module.MAX_UPLOAD_BYTES + 1)
 
     response = client.post(
         "/items",
         files={"photo": ("huge.jpg", oversized_bytes, "image/jpeg")},
+        headers=auth_headers,
+    )
+
+    assert response.status_code == 413
+
+
+def test_oversized_upload_does_not_leave_partial_file_or_item_row(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    oversized_bytes = b"\xff" * (main_module.MAX_UPLOAD_BYTES + 1)
+
+    response = client.post(
+        "/items",
+        files={"photo": ("huge.jpg", oversized_bytes, "image/jpeg")},
+        headers=auth_headers,
     )
     assert response.status_code == 413
+
+    session = db_session_factory()
+    try:
+        assert session.query(Item).count() == 0
+    finally:
+        session.close()
+
+    uploads_dir = main_module.UPLOAD_DIR
+    if uploads_dir.exists():
+        assert list(uploads_dir.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# Auth gate: no session -> 401, and no side effects (sandbox-dfr.3)
+# ---------------------------------------------------------------------------
+
+
+def test_missing_authorization_header_rejected_with_401_and_no_side_effects(
+    client: TestClient, db_session_factory
+) -> None:
+    """POST /items without a valid session must be rejected 401 -- and,
+    critically, the rejected request must not create an Item row or write
+    the photo to disk (the same "no side effects on rejection" guarantee
+    the other rejection paths in this file already prove)."""
+    jpeg_bytes = _make_jpeg_bytes()
+
+    response = client.post(
+        "/items",
+        files={"photo": ("lamp.jpg", jpeg_bytes, "image/jpeg")},
+    )
+
+    assert response.status_code == 401
 
     session = db_session_factory()
     try:
@@ -301,27 +356,33 @@ def test_oversized_upload_does_not_leave_partial_file_or_item_row(
 # ---------------------------------------------------------------------------
 
 
-def test_missing_file_part_rejected_with_400(client: TestClient) -> None:
-    response = client.post("/items")
+def test_missing_file_part_rejected_with_400(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    response = client.post("/items", headers=auth_headers)
 
     assert response.status_code == 400
 
 
-def test_empty_file_rejected_with_400(client: TestClient) -> None:
+def test_empty_file_rejected_with_400(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
     response = client.post(
         "/items",
         files={"photo": ("empty.jpg", b"", "image/jpeg")},
+        headers=auth_headers,
     )
 
     assert response.status_code == 400
 
 
 def test_empty_file_does_not_create_item_row(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     response = client.post(
         "/items",
         files={"photo": ("empty.jpg", b"", "image/jpeg")},
+        headers=auth_headers,
     )
     assert response.status_code == 400
 
@@ -338,7 +399,7 @@ def test_empty_file_does_not_create_item_row(
 
 
 def test_upload_without_hint_field_leaves_user_hint_none(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     """Existing behavior, unchanged: no ``hint`` form field at all -> the
     persisted item's ``user_hint`` stays ``None``."""
@@ -347,6 +408,7 @@ def test_upload_without_hint_field_leaves_user_hint_none(
     response = client.post(
         "/items",
         files={"photo": ("lamp.jpg", jpeg_bytes, "image/jpeg")},
+        headers=auth_headers,
     )
 
     assert response.status_code == 201
@@ -362,7 +424,7 @@ def test_upload_without_hint_field_leaves_user_hint_none(
 
 
 def test_upload_with_hint_persists_stripped_text(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     jpeg_bytes = _make_jpeg_bytes()
 
@@ -370,6 +432,7 @@ def test_upload_with_hint_persists_stripped_text(
         "/items",
         files={"photo": ("drill.jpg", jpeg_bytes, "image/jpeg")},
         data={"hint": "Bosch drill, orange casing"},
+        headers=auth_headers,
     )
 
     assert response.status_code == 201
@@ -385,7 +448,7 @@ def test_upload_with_hint_persists_stripped_text(
 
 
 def test_upload_with_whitespace_only_hint_normalized_to_none(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     jpeg_bytes = _make_jpeg_bytes()
 
@@ -393,6 +456,7 @@ def test_upload_with_whitespace_only_hint_normalized_to_none(
         "/items",
         files={"photo": ("lamp.jpg", jpeg_bytes, "image/jpeg")},
         data={"hint": "   "},
+        headers=auth_headers,
     )
 
     assert response.status_code == 201
@@ -408,7 +472,7 @@ def test_upload_with_whitespace_only_hint_normalized_to_none(
 
 
 def test_upload_with_hint_leading_trailing_whitespace_trimmed(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     jpeg_bytes = _make_jpeg_bytes()
 
@@ -416,6 +480,7 @@ def test_upload_with_hint_leading_trailing_whitespace_trimmed(
         "/items",
         files={"photo": ("lamp.jpg", jpeg_bytes, "image/jpeg")},
         data={"hint": "   some brand   "},
+        headers=auth_headers,
     )
 
     assert response.status_code == 201
@@ -431,7 +496,7 @@ def test_upload_with_hint_leading_trailing_whitespace_trimmed(
 
 
 def test_upload_with_overlong_hint_rejected_with_400_and_no_side_effects(
-    client: TestClient, db_session_factory
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
 ) -> None:
     """A hint over 500 characters is rejected before any photo bytes are
     written to disk or any ``Item`` row is created."""
@@ -442,6 +507,7 @@ def test_upload_with_overlong_hint_rejected_with_400_and_no_side_effects(
         "/items",
         files={"photo": ("lamp.jpg", jpeg_bytes, "image/jpeg")},
         data={"hint": overlong_hint},
+        headers=auth_headers,
     )
 
     assert response.status_code == 400

@@ -81,10 +81,11 @@ def db_session_factory(client: TestClient):
     return make_session_factory(main_module.engine)
 
 
-def _upload(client: TestClient) -> dict[str, Any]:
+def _upload(client: TestClient, auth_headers: dict[str, str]) -> dict[str, Any]:
     response = client.post(
         "/items",
         files={"photo": ("lamp.jpg", _make_jpeg_bytes(), "image/jpeg")},
+        headers=auth_headers,
     )
     assert response.status_code == 201
     return response.json()
@@ -164,15 +165,15 @@ class SpyPricingService:
 
 
 def test_full_pipeline_reaches_decided_with_populated_fields(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, auth_headers: dict[str, str]
 ) -> None:
     monkeypatch.setattr(pipeline_module, "ItemIdentificationService", FakeIdentificationService)
     monkeypatch.setattr(pipeline_module, "ComparableListingSearchService", FakeSearchServiceWithResults)
 
-    created = _upload(client)
+    created = _upload(client, auth_headers)
     item_id = created["id"]
 
-    response = client.get(f"/items/{item_id}")
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
 
@@ -199,7 +200,7 @@ def test_full_pipeline_reaches_decided_with_populated_fields(
 
 
 def test_full_pipeline_zero_comparables_still_reaches_decided(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, auth_headers: dict[str, str]
 ) -> None:
     class FakeSearchServiceZeroResults:
         def search_item(self, item: Item) -> bool:
@@ -210,10 +211,10 @@ def test_full_pipeline_zero_comparables_still_reaches_decided(
     monkeypatch.setattr(pipeline_module, "ItemIdentificationService", FakeIdentificationService)
     monkeypatch.setattr(pipeline_module, "ComparableListingSearchService", FakeSearchServiceZeroResults)
 
-    created = _upload(client)
+    created = _upload(client, auth_headers)
     item_id = created["id"]
 
-    response = client.get(f"/items/{item_id}")
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
 
@@ -232,7 +233,7 @@ def test_full_pipeline_zero_comparables_still_reaches_decided(
 
 
 def test_identification_failure_leaves_item_pending_identification(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, auth_headers: dict[str, str]
 ) -> None:
     monkeypatch.setattr(pipeline_module, "ItemIdentificationService", FailingIdentificationService)
     # Search/pricing should never even be reached; make sure of that too.
@@ -245,10 +246,10 @@ def test_identification_failure_leaves_item_pending_identification(
 
     monkeypatch.setattr(pipeline_module, "ComparableListingSearchService", UnreachableSearchService)
 
-    created = _upload(client)
+    created = _upload(client, auth_headers)
     item_id = created["id"]
 
-    response = client.get(f"/items/{item_id}")
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
 
@@ -261,7 +262,7 @@ def test_identification_failure_leaves_item_pending_identification(
 
 
 def test_search_failure_leaves_item_pending_search_and_skips_decision(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, auth_headers: dict[str, str]
 ) -> None:
     monkeypatch.setattr(pipeline_module, "ItemIdentificationService", FakeIdentificationService)
     monkeypatch.setattr(pipeline_module, "ComparableListingSearchService", FailingSearchService)
@@ -269,10 +270,10 @@ def test_search_failure_leaves_item_pending_search_and_skips_decision(
     spy = SpyPricingService()
     monkeypatch.setattr(pipeline_module, "PricingDecisionService", lambda: spy)
 
-    created = _upload(client)
+    created = _upload(client, auth_headers)
     item_id = created["id"]
 
-    response = client.get(f"/items/{item_id}")
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
 
@@ -294,21 +295,23 @@ def test_search_failure_leaves_item_pending_search_and_skips_decision(
 # ---------------------------------------------------------------------------
 
 
-def test_get_item_404_for_unknown_id(client: TestClient) -> None:
-    response = client.get("/items/999999")
+def test_get_item_404_for_unknown_id(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    response = client.get("/items/999999", headers=auth_headers)
     assert response.status_code == 404
 
 
 def test_get_item_returns_all_documented_fields(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, auth_headers: dict[str, str]
 ) -> None:
     monkeypatch.setattr(pipeline_module, "ItemIdentificationService", FakeIdentificationService)
     monkeypatch.setattr(pipeline_module, "ComparableListingSearchService", FakeSearchServiceWithResults)
 
-    created = _upload(client)
+    created = _upload(client, auth_headers)
     item_id = created["id"]
 
-    response = client.get(f"/items/{item_id}")
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
 

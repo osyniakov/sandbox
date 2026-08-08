@@ -46,6 +46,7 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -317,6 +318,52 @@ def require_user(authorization: str | None = Header(None)) -> str:
     return email
 
 
+# ---------------------------------------------------------------------------
+# Auth gate for the /uploads static-file mount (sandbox-dfr.3)
+# ---------------------------------------------------------------------------
+#
+# ``GET /uploads/{filename}`` is served by ``_UploadsStaticFiles``, an ASGI
+# sub-application wired in via ``app.mount(UPLOAD_URL_PREFIX, ...)`` above --
+# NOT a plain ``@app.get(...)`` route -- so a ``Depends(require_user)`` can't
+# be attached to it directly the way it can to the ``/items*`` routes below.
+# Starlette/FastAPI HTTP middleware, by contrast, wraps the entire ASGI call
+# chain (including mounted sub-apps): it runs before routing decides whether
+# a request lands on a normal route or a ``Mount``, regardless of whether
+# this function is registered before or after ``app.mount(...)`` textually
+# (confirmed empirically -- see ``tests/test_uploads_static.py``'s auth
+# tests, which pass under this registration order). That makes middleware
+# the right tool here: gate any request path under ``UPLOAD_URL_PREFIX``
+# before ``call_next`` ever reaches the static-file app underneath.
+#
+# Deliberately calls ``require_user`` itself (a plain function, not
+# FastAPI-injection-only) rather than re-implementing its Bearer-header
+# parsing a second time -- ``require_user`` already raises the exact
+# ``HTTPException`` this middleware wants to turn into a response, so
+# calling it directly is a stricter reuse than only sharing
+# ``verify_session_token`` (the brief's minimum bar) would be: there is
+# exactly one place in this codebase that parses an ``Authorization:
+# Bearer <token>`` header, full stop.
+@app.middleware("http")
+async def _require_auth_for_uploads(request: Request, call_next):
+    """Require a valid session (same check as ``require_user``) for any
+    request path under ``UPLOAD_URL_PREFIX`` (e.g. ``GET /uploads/x.jpg``).
+
+    Returns a 401 JSON response (same ``{"detail": ...}`` shape
+    ``require_user``'s ``HTTPException`` already produces) WITHOUT calling
+    ``call_next`` when the header is missing/malformed/invalid -- so the
+    ``StaticFiles`` app mounted underneath never runs, and never touches
+    disk, for an unauthorized request. Every other path is passed through
+    to ``call_next`` unchanged.
+    """
+    if request.url.path.startswith(UPLOAD_URL_PREFIX):
+        authorization = request.headers.get("authorization")
+        try:
+            require_user(authorization)
+        except HTTPException as exc:
+            return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
+
+
 @app.get("/auth/me")
 def get_me(email: str = Depends(require_user)) -> dict[str, str]:
     """Return the authenticated caller's email, per its session token."""
@@ -450,6 +497,7 @@ async def create_item(
     photo: UploadFile | None = File(None),
     hint: str | None = Form(None),
     session: Session = Depends(get_session),
+    user: str = Depends(require_user),
 ) -> dict[str, object]:
     """Create a new ``Item`` from an uploaded photo and start the pipeline.
 
@@ -664,6 +712,7 @@ def _serialize_item(item: Item) -> dict[str, object]:
 def get_item(
     item_id: int,
     session: Session = Depends(get_session),
+    user: str = Depends(require_user),
 ) -> dict[str, object]:
     """Fetch a single ``Item`` by id, including its comparable listings.
 
@@ -688,6 +737,7 @@ def list_items(
     status: ItemStatus | None = None,
     decision: Decision | None = None,
     session: Session = Depends(get_session),
+    user: str = Depends(require_user),
 ) -> list[dict[str, object]]:
     """List all ``Item``s, optionally filtered by ``status`` and/or
     ``decision`` query params (e.g. ``GET /items?status=decided&decision=sell``).
@@ -793,6 +843,7 @@ def update_item_status(
     item_id: int,
     body: ItemStatusUpdateRequest,
     session: Session = Depends(get_session),
+    user: str = Depends(require_user),
 ) -> dict[str, object]:
     """Manually advance an ``Item``'s status per ``MANUAL_STATUS_TRANSITIONS``.
 
