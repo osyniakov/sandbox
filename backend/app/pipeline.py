@@ -1,10 +1,13 @@
 """End-to-end pipeline orchestration: photo upload -> decision.
 
-Wires together the three previously-independent services --
+Wires together four previously-independent services --
 ``ItemIdentificationService`` (``app/identification.py``),
-``ComparableListingSearchService`` (``app/comparable_search.py``), and
-``PricingDecisionService`` (``app/pricing.py``) -- into a single ordered
-pipeline: identify -> search -> decide. This module owns the DB session
+``ComparableListingSearchService`` (``app/comparable_search.py``),
+``PricingDecisionService`` (``app/pricing.py``), and
+``ListingTextService`` (``app/listing_text.py``) -- into a single ordered
+pipeline: identify -> search -> decide (-> generate listing text, a
+best-effort sub-step of the decide stage, not a gating stage of its
+own -- see stage 3 below). This module owns the DB session
 lifecycle (each service mutates its ``Item`` argument in place but never
 commits, by design -- see each module's own docstring), committing after
 every successfully-completed stage so a crash or failure mid-pipeline
@@ -88,6 +91,7 @@ from sqlalchemy.orm import Session
 from app.comparable_search import ComparableListingSearchService
 from app.db import make_session_factory
 from app.identification import ItemIdentificationService
+from app.listing_text import ListingTextService
 from app.models import Item, ItemStatus
 from app.pricing import PricingDecisionService
 
@@ -101,6 +105,7 @@ def run_pipeline(
     identification_service: ItemIdentificationService | None = None,
     search_service: ComparableListingSearchService | None = None,
     pricing_service: PricingDecisionService | None = None,
+    listing_text_service: ListingTextService | None = None,
 ) -> None:
     """Run identify -> search -> decide for the ``Item`` with id ``item_id``.
 
@@ -136,11 +141,25 @@ def run_pipeline(
        ``PricingDecisionService.decide_item`` does not itself check
        incoming status (see ``app/pricing.py``'s module docstring) and
        would happily misclassify an item that never actually finished
-       searching. Then commit.
+       searching. Immediately after ``decide_item`` returns (so
+       ``item.status`` is already ``decided`` in memory, before this
+       stage's commit), unconditionally call
+       ``listing_text_service.generate_listing_text(item)`` to populate
+       ``suggested_title``/``suggested_description`` -- this is a
+       best-effort enhancement, not a gate: the service itself handles
+       decision-gating (no-op for ``throw_away``) and never raises, and
+       this function does not branch on its return value, so a
+       ``False`` result never changes ``item.status`` or halts the
+       pipeline. Then commit -- meaning ``suggested_title``/
+       ``suggested_description`` land in the SAME commit as
+       ``status=decided``, so a client polling ``GET /items/{id}`` never
+       observes ``decided`` without the listing text already in its
+       final state (when generation succeeds).
     """
     identification_service = identification_service or ItemIdentificationService()
     search_service = search_service or ComparableListingSearchService()
     pricing_service = pricing_service or PricingDecisionService()
+    listing_text_service = listing_text_service or ListingTextService()
 
     item = session.get(Item, item_id)
     if item is None:
@@ -184,6 +203,30 @@ def run_pipeline(
         return
 
     pricing_service.decide_item(item)
+    # Best-effort listing-text generation, run after decide_item (so
+    # item.decision/item.status=decided are already set in memory) and
+    # before this stage's commit -- see module docstring and the
+    # Stage 3 docstring note above for why this must land in the same
+    # commit as the decision. Never gated on the return value: a
+    # False result (or a no-op for throw_away/pending) leaves
+    # suggested_title/suggested_description as None and does not affect
+    # status/decision/suggested_price in any way.
+    #
+    # Defense-in-depth: ListingTextService.generate_listing_text is
+    # documented and tested to never raise (see app/listing_text.py), so
+    # this try/except is not covering an expected code path -- it's a
+    # second, independent safety net so that a bug in that
+    # never-supposed-to-raise contract can't take down the entire
+    # pipeline over what should be a non-critical enhancement. No
+    # retries, no status changes, no branching on the exception type --
+    # just log and continue.
+    try:
+        listing_text_service.generate_listing_text(item)
+    except Exception:
+        logger.exception(
+            "Listing-text generation raised unexpectedly for item id=%s; continuing without it",
+            item_id,
+        )
     session.commit()
     logger.info(
         "Pipeline completed for item id=%s: decision=%s suggested_price=%r",
@@ -200,6 +243,7 @@ def run_pipeline_with_new_session(
     identification_service: ItemIdentificationService | None = None,
     search_service: ComparableListingSearchService | None = None,
     pricing_service: PricingDecisionService | None = None,
+    listing_text_service: ListingTextService | None = None,
 ) -> None:
     """Open a fresh session against ``engine`` and run :func:`run_pipeline`.
 
@@ -217,6 +261,7 @@ def run_pipeline_with_new_session(
             identification_service=identification_service,
             search_service=search_service,
             pricing_service=pricing_service,
+            listing_text_service=listing_text_service,
         )
     finally:
         session.close()

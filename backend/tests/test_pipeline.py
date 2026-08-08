@@ -291,6 +291,253 @@ def test_search_failure_leaves_item_pending_search_and_skips_decision(
 
 
 # ---------------------------------------------------------------------------
+# Listing-text generation (stage 3 sub-step, sandbox-dwl.3)
+# ---------------------------------------------------------------------------
+
+
+class FakeListingTextService:
+    """Mimics a confident listing-text generation.
+
+    Mirrors the real ``ListingTextService``'s decision-gating (see
+    ``app/listing_text.py``): a no-op, returning ``False`` without
+    touching the item, for anything other than ``SELL``/``GIVE_AWAY``.
+    """
+
+    def generate_listing_text(self, item: Item) -> bool:
+        if item.decision not in (Decision.SELL, Decision.GIVE_AWAY):
+            return False
+        item.suggested_title = "IKEA Schreibtischlampe, gebraucht"
+        item.suggested_description = (
+            "Gut erhaltene IKEA Schreibtischlampe, funktioniert einwandfrei."
+        )
+        return True
+
+
+class FailingListingTextService:
+    """Always fails without raising, mimicking a provider/parse failure."""
+
+    def generate_listing_text(self, item: Item) -> bool:
+        return False
+
+
+class RaisingListingTextService:
+    """Always raises, mimicking a bug in the never-supposed-to-raise contract.
+
+    ``ListingTextService.generate_listing_text`` is documented and tested
+    (sandbox-dwl.2) to never raise -- but ``run_pipeline`` also wraps the
+    call in its own try/except as an independent second layer of defense
+    (see ``app/pipeline.py``'s Stage 3). This fake exercises that
+    defense-in-depth directly, rather than the service's own contract.
+    """
+
+    def generate_listing_text(self, item: Item) -> bool:
+        raise RuntimeError("boom: unexpected failure in listing-text generation")
+
+
+def test_sell_decision_generates_listing_text_in_same_commit(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
+    db_session_factory,
+) -> None:
+    monkeypatch.setattr(pipeline_module, "ItemIdentificationService", FakeIdentificationService)
+    monkeypatch.setattr(pipeline_module, "ComparableListingSearchService", FakeSearchServiceWithResults)
+    monkeypatch.setattr(pipeline_module, "ListingTextService", FakeListingTextService)
+
+    created = _upload(client, auth_headers)
+    item_id = created["id"]
+
+    # median([15.0, 25.0]) == 20.0 -> SELL, per FakeSearchServiceWithResults.
+    # A fresh session/query immediately after the upload call returns (no
+    # extra commit/round-trip, no polling loop) confirms suggested_title/
+    # suggested_description landed in the SAME commit as status=decided.
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        assert item is not None
+        assert item.status == ItemStatus.DECIDED
+        assert item.decision == Decision.SELL
+        assert item.suggested_title == "IKEA Schreibtischlampe, gebraucht"
+        assert item.suggested_description == (
+            "Gut erhaltene IKEA Schreibtischlampe, funktioniert einwandfrei."
+        )
+    finally:
+        session.close()
+
+
+def test_give_away_decision_generates_listing_text_in_same_commit(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
+    db_session_factory,
+) -> None:
+    class FakeSearchServiceLowPrice:
+        """Comparables exist but median is below SELL_THRESHOLD -> give_away."""
+
+        def search_item(self, item: Item) -> bool:
+            item.comparable_listings = [
+                ComparableListing(
+                    title="IKEA desk lamp, worn",
+                    price=4.0,
+                    url="https://kleinanzeigen.example/3",
+                    condition="fair",
+                    location="Berlin",
+                ),
+                ComparableListing(
+                    title="IKEA desk lamp, cheap",
+                    price=6.0,
+                    url="https://kleinanzeigen.example/4",
+                    condition="fair",
+                    location="Munich",
+                ),
+            ]
+            item.status = ItemStatus.PENDING_DECISION
+            return True
+
+    monkeypatch.setattr(pipeline_module, "ItemIdentificationService", FakeIdentificationService)
+    monkeypatch.setattr(pipeline_module, "ComparableListingSearchService", FakeSearchServiceLowPrice)
+    monkeypatch.setattr(pipeline_module, "ListingTextService", FakeListingTextService)
+
+    created = _upload(client, auth_headers)
+    item_id = created["id"]
+
+    # median([4.0, 6.0]) == 5.0, below SELL_THRESHOLD (10.0) -> GIVE_AWAY.
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        assert item is not None
+        assert item.status == ItemStatus.DECIDED
+        assert item.decision == Decision.GIVE_AWAY
+        assert item.suggested_title == "IKEA Schreibtischlampe, gebraucht"
+        assert item.suggested_description == (
+            "Gut erhaltene IKEA Schreibtischlampe, funktioniert einwandfrei."
+        )
+    finally:
+        session.close()
+
+
+def test_throw_away_decision_skips_listing_text(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
+    db_session_factory,
+) -> None:
+    class FakeSearchServiceZeroResults:
+        def search_item(self, item: Item) -> bool:
+            item.comparable_listings = []
+            item.status = ItemStatus.PENDING_DECISION
+            return True
+
+    monkeypatch.setattr(pipeline_module, "ItemIdentificationService", FakeIdentificationService)
+    monkeypatch.setattr(pipeline_module, "ComparableListingSearchService", FakeSearchServiceZeroResults)
+    monkeypatch.setattr(pipeline_module, "ListingTextService", FakeListingTextService)
+
+    created = _upload(client, auth_headers)
+    item_id = created["id"]
+
+    # Zero comparables -> throw_away (see app/pricing.py's documented
+    # boundary rule 2); listing-text generation must be skipped entirely
+    # even though FakeListingTextService would otherwise always succeed.
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        assert item is not None
+        assert item.status == ItemStatus.DECIDED
+        assert item.decision == Decision.THROW_AWAY
+        assert item.suggested_title is None
+        assert item.suggested_description is None
+    finally:
+        session.close()
+
+
+def test_listing_text_failure_does_not_halt_pipeline(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
+    db_session_factory,
+) -> None:
+    """A False return from listing-text generation must be a non-event.
+
+    The pipeline must still reach `decided` with its decision/price
+    intact, and (critically) no exception may propagate out of
+    `run_pipeline` -- a bug here would otherwise take down the entire
+    pipeline over what is meant to be a non-critical enhancement.
+    """
+    monkeypatch.setattr(pipeline_module, "ItemIdentificationService", FakeIdentificationService)
+    monkeypatch.setattr(pipeline_module, "ComparableListingSearchService", FakeSearchServiceWithResults)
+    monkeypatch.setattr(pipeline_module, "ListingTextService", FailingListingTextService)
+
+    created = _upload(client, auth_headers)
+    item_id = created["id"]
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+
+    # Listing-text failure must not halt the pipeline or affect the
+    # decision/price already computed by decide_item.
+    assert body["status"] == "decided"
+    assert body["decision"] == Decision.SELL.value
+    assert body["suggested_price"] == 20.0
+
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        assert item is not None
+        assert item.status == ItemStatus.DECIDED
+        assert item.suggested_title is None
+        assert item.suggested_description is None
+    finally:
+        session.close()
+
+
+def test_listing_text_raising_does_not_crash_pipeline(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    auth_headers: dict[str, str],
+    db_session_factory,
+) -> None:
+    """A raising listing-text service must not crash the pipeline.
+
+    This exercises ``run_pipeline``'s own try/except around the
+    ``generate_listing_text`` call (defense-in-depth on top of the
+    service's own never-raises contract, see ``app/pipeline.py``'s Stage
+    3 docstring): the item must still reach `decided` with its
+    decision/price intact, suggested_title/suggested_description must
+    remain None, and no exception may propagate out of `run_pipeline`
+    (if it did, the background task would simply die -- but this test
+    also confirms the upload's own request/response cycle isn't affected).
+    """
+    monkeypatch.setattr(pipeline_module, "ItemIdentificationService", FakeIdentificationService)
+    monkeypatch.setattr(pipeline_module, "ComparableListingSearchService", FakeSearchServiceWithResults)
+    monkeypatch.setattr(pipeline_module, "ListingTextService", RaisingListingTextService)
+
+    created = _upload(client, auth_headers)
+    item_id = created["id"]
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+    assert response.status_code == 200
+    body = response.json()
+
+    # A raising generate_listing_text must not halt the pipeline or affect
+    # the decision/price already computed by decide_item.
+    assert body["status"] == "decided"
+    assert body["decision"] == Decision.SELL.value
+    assert body["suggested_price"] == 20.0
+
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        assert item is not None
+        assert item.status == ItemStatus.DECIDED
+        assert item.decision == Decision.SELL
+        assert item.suggested_title is None
+        assert item.suggested_description is None
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
 # GET /items/{id} basics
 # ---------------------------------------------------------------------------
 
