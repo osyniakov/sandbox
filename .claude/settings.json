@@ -11,5 +11,8 @@
         "matcher": ""
       }
     ]
+  },
+  "worktree": {
+    "baseRef": "head"
   }
 }
