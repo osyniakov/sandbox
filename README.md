@@ -69,6 +69,10 @@ Run the backend test suite inside the container with:
 docker compose run --rm backend pytest
 ```
 
+`backend/app` and `backend/tests` are both bind-mounted into the
+container, so this reflects live host edits to app or test code
+without an image rebuild.
+
 > **Note:** in this sandboxed development environment, `docker compose
 > build` could not be fully verified — the sandbox's outbound network
 > policy blocks `production.cloudfront.docker.com` (the CDN Docker Hub
