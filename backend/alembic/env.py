@@ -23,8 +23,14 @@ target_metadata = Base.metadata
 
 # Set the DB URL from app.db's DATA_DIR-aware logic rather than a hardcoded
 # `sqlalchemy.url` in alembic.ini, so Alembic always resolves the same DB
-# path as the running app (including honoring the DATA_DIR env var).
-config.set_main_option("sqlalchemy.url", get_database_url())
+# path as the running app (including honoring the DATA_DIR env var). This is
+# only a FALLBACK: if the Config object we were handed already has an
+# explicit sqlalchemy.url set (e.g. by app.db_migrate._build_config(), which
+# programmatically targets a specific database), that value must win rather
+# than being silently overwritten here every time Alembic actually runs a
+# command (stamp/upgrade/etc.).
+if not config.get_main_option("sqlalchemy.url"):
+    config.set_main_option("sqlalchemy.url", get_database_url())
 
 # other values from the config, defined by the needs of env.py,
 # can be acquired:
