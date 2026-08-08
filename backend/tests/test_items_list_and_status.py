@@ -60,6 +60,7 @@ def _make_item(
     status: ItemStatus,
     decision: Decision = Decision.PENDING,
     identified_name: str | None = None,
+    user_hint: str | None = None,
 ) -> int:
     session = db_session_factory()
     try:
@@ -68,6 +69,7 @@ def _make_item(
             status=status,
             decision=decision,
             identified_name=identified_name,
+            user_hint=user_hint,
         )
         session.add(item)
         session.commit()
@@ -90,6 +92,7 @@ def test_list_items_returns_all_items_with_full_serialized_shape(
         status=ItemStatus.DECIDED,
         decision=Decision.SELL,
         identified_name="Drill",
+        user_hint="Bosch drill, orange casing",
     )
     id2 = _make_item(
         db_session_factory,
@@ -108,6 +111,11 @@ def test_list_items_returns_all_items_with_full_serialized_shape(
         assert "comparable_listings" in item
         assert "decision" in item
         assert "status" in item
+        assert "hint" in item
+
+    by_id = {item["id"]: item for item in body}
+    assert by_id[id1]["hint"] == "Bosch drill, orange casing"
+    assert by_id[id2]["hint"] is None
 
 
 def test_list_items_empty_when_no_items(client: TestClient) -> None:
@@ -187,6 +195,33 @@ def test_list_items_no_filters_returns_everything(
 def test_list_items_invalid_status_filter_returns_422(client: TestClient) -> None:
     response = client.get("/items", params={"status": "not_a_real_status"})
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# ``hint`` -- serialized from ``Item.user_hint`` (sandbox-iec.4)
+# ---------------------------------------------------------------------------
+
+
+def test_get_item_includes_hint_when_set(client: TestClient, db_session_factory) -> None:
+    item_id = _make_item(
+        db_session_factory,
+        status=ItemStatus.PENDING_IDENTIFICATION,
+        user_hint="Bosch drill, orange casing",
+    )
+
+    response = client.get(f"/items/{item_id}")
+
+    assert response.status_code == 200
+    assert response.json()["hint"] == "Bosch drill, orange casing"
+
+
+def test_get_item_hint_is_none_when_not_set(client: TestClient, db_session_factory) -> None:
+    item_id = _make_item(db_session_factory, status=ItemStatus.PENDING_IDENTIFICATION)
+
+    response = client.get(f"/items/{item_id}")
+
+    assert response.status_code == 200
+    assert response.json()["hint"] is None
 
 
 # ---------------------------------------------------------------------------
