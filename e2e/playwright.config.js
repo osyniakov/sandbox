@@ -35,11 +35,11 @@
 //                        Falls back to Playwright's normal default
 //                        resolution if unset -- no sandbox-specific path
 //                        is hardcoded here.
-//   E2E_TEST_TIMEOUT_MS         Per-test timeout in ms. Default 120000 (2
+//   E2E_TEST_TIMEOUT_MS         Per-test timeout in ms. Default 180000 (3
 //                        minutes).
 //   E2E_EXPECT_TIMEOUT_MS       Default polling timeout in ms for
 //                        `expect(locator).toBeVisible()` and similar.
-//                        Default 90000 (90s).
+//                        Default 150000 (150s).
 //   E2E_NAVIGATION_TIMEOUT_MS   Timeout in ms for page.goto()/navigation
 //                        waits. Default 90000 (90s).
 //   E2E_ACTION_TIMEOUT_MS       Timeout in ms for individual Playwright
@@ -54,7 +54,16 @@
 // a fast local response: real Claude vision + real Kleinanzeigen search
 // (which has a documented ~1.5s minimum delay plus retries -- see
 // backend/app/comparable_search.py) + real Claude listing-text generation
-// can plausibly take tens of seconds per item.
+// can plausibly take tens of seconds per item. E2E_EXPECT_TIMEOUT_MS in
+// particular is set safely ABOVE (not just equal to) frontend/src/
+// ItemResultPage.jsx's own MAX_POLL_MS (2 minutes, the point at which the
+// frontend itself gives up polling and shows an error) -- a legitimately
+// slow-but-eventually-successful real pipeline run must not get cut off
+// by the E2E test's own timeout before the app's own patience runs out;
+// that would be a false test failure, not a real bug. E2E_TEST_TIMEOUT_MS
+// (the whole test's budget, covering sign-in/navigation/upload too, not
+// just the poll wait) is set comfortably above E2E_EXPECT_TIMEOUT_MS for
+// the same reason.
 
 import { defineConfig, devices } from '@playwright/test'
 
@@ -87,8 +96,8 @@ function envIntMs(name, defaultValue) {
   return parsed
 }
 
-const testTimeoutMs = envIntMs('E2E_TEST_TIMEOUT_MS', 120_000)
-const expectTimeoutMs = envIntMs('E2E_EXPECT_TIMEOUT_MS', 90_000)
+const testTimeoutMs = envIntMs('E2E_TEST_TIMEOUT_MS', 180_000)
+const expectTimeoutMs = envIntMs('E2E_EXPECT_TIMEOUT_MS', 150_000)
 const navigationTimeoutMs = envIntMs('E2E_NAVIGATION_TIMEOUT_MS', 90_000)
 const actionTimeoutMs = envIntMs('E2E_ACTION_TIMEOUT_MS', 30_000)
 
