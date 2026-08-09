@@ -84,6 +84,7 @@ last known status") is a client-side concern, out of scope for this bead.
 from __future__ import annotations
 
 import logging
+import os
 
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -96,6 +97,30 @@ from app.models import Item, ItemStatus
 from app.pricing import PricingDecisionService
 
 logger = logging.getLogger(__name__)
+
+# Name of the env var that switches the pipeline's no-arg service defaults
+# (below, in run_pipeline) from the real, network-calling providers to the
+# deterministic fakes in app/e2e_stubs.py -- for Playwright/E2E test runs
+# only. ANY truthy value (see _e2e_stub_providers_enabled) enables it.
+# Unset (the default -- including on Railway's real backend/frontend
+# services) means byte-identical behavior to before this env var existed.
+E2E_STUB_PROVIDERS_ENV_VAR = "E2E_STUB_PROVIDERS"
+
+# Values (case-insensitive) treated as "not set"/falsy for
+# E2E_STUB_PROVIDERS, in addition to the var being entirely absent.
+_FALSY_ENV_VALUES = {"", "0", "false", "no", "off"}
+
+
+def _e2e_stub_providers_enabled() -> bool:
+    """Return True if E2E_STUB_PROVIDERS is set to any truthy value.
+
+    Deliberately does NOT import app.e2e_stubs -- only decides whether the
+    caller should. See module docstring on E2E_STUB_PROVIDERS_ENV_VAR and
+    app/e2e_stubs.py's own module docstring for why the stub module itself
+    is only ever imported lazily, inside the branch gated on this
+    function's return value, and never at this module's top level.
+    """
+    return os.environ.get(E2E_STUB_PROVIDERS_ENV_VAR, "").strip().lower() not in _FALSY_ENV_VALUES
 
 
 def run_pipeline(
@@ -156,10 +181,36 @@ def run_pipeline(
        observes ``decided`` without the listing text already in its
        final state (when generation succeeds).
     """
-    identification_service = identification_service or ItemIdentificationService()
-    search_service = search_service or ComparableListingSearchService()
+    # Service defaults. When E2E_STUB_PROVIDERS is unset (the default,
+    # including on Railway), this is byte-identical to before this env var
+    # existed: the `else` branch below is exactly the original
+    # `X = X or RealService()` lines, and app.e2e_stubs is never imported.
+    # Only when the env var is set (any truthy value -- see
+    # _e2e_stub_providers_enabled) do the network-calling
+    # ItemIdentificationService/ComparableListingSearchService/
+    # ListingTextService get constructed with deterministic fake providers
+    # from app.e2e_stubs instead of their real, no-arg defaults. An
+    # explicitly-passed `*_service` argument (e.g. from an existing test
+    # that monkeypatches these) always wins over either branch, exactly as
+    # before. pricing_service is unaffected either way: PricingDecisionService
+    # has no external dependency (see app/pricing.py's own module docstring).
+    if _e2e_stub_providers_enabled():
+        from app.e2e_stubs import (
+            FakeComparableSearchProvider,
+            FakeIdentificationProvider,
+            FakeListingTextProvider,
+        )
+
+        identification_service = identification_service or ItemIdentificationService(
+            FakeIdentificationProvider()
+        )
+        search_service = search_service or ComparableListingSearchService(FakeComparableSearchProvider())
+        listing_text_service = listing_text_service or ListingTextService(FakeListingTextProvider())
+    else:
+        identification_service = identification_service or ItemIdentificationService()
+        search_service = search_service or ComparableListingSearchService()
+        listing_text_service = listing_text_service or ListingTextService()
     pricing_service = pricing_service or PricingDecisionService()
-    listing_text_service = listing_text_service or ListingTextService()
 
     item = session.get(Item, item_id)
     if item is None:
