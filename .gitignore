@@ -45,6 +45,10 @@ frontend/dist/
 .vite/
 npm-debug.log*
 
+# Playwright E2E run artifacts (e2e/)
+e2e/test-results/
+e2e/playwright-report/
+
 # Uploaded photos (backend/app/main.py POST /items) -- user data, not
 # committed, same treatment as backend/data/*.db.
 backend/uploads/

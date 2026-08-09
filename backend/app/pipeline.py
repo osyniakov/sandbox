@@ -156,10 +156,14 @@ def run_pipeline(
        observes ``decided`` without the listing text already in its
        final state (when generation succeeds).
     """
+    # Service defaults: construct the real, network-calling providers when
+    # not explicitly overridden by the caller (e.g. by a test that
+    # monkeypatches these). pricing_service has no external dependency (see
+    # app/pricing.py's own module docstring).
     identification_service = identification_service or ItemIdentificationService()
     search_service = search_service or ComparableListingSearchService()
-    pricing_service = pricing_service or PricingDecisionService()
     listing_text_service = listing_text_service or ListingTextService()
+    pricing_service = pricing_service or PricingDecisionService()
 
     item = session.get(Item, item_id)
     if item is None:

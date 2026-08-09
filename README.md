@@ -164,6 +164,30 @@ directly). A pre-existing DB from before Alembic was introduced is
 automatically detected and reconciled the first time the migration step
 runs against it — no manual intervention needed.
 
+## End-to-end tests
+
+`e2e/` is a Playwright suite that drives a real browser against the
+**already-deployed real frontend + backend** (Railway) — not local
+processes, and not stubbed external services: real Claude vision/
+listing-text generation and real Kleinanzeigen search happen for real,
+exactly as for a real user. Point it at a deployment with
+`E2E_FRONTEND_URL`, plus `E2E_SESSION_SECRET`/`E2E_TEST_EMAIL` for
+sign-in. Since Google blocks automated sign-in, sign-in is bypassed by
+minting a session token directly for a pre-designated test identity,
+using the target backend's own real `SESSION_SECRET` — this adds zero
+new backend surface, since it reuses the same internal function
+(`app.auth.issue_session_token`) the backend's own unit tests and its
+real `/auth/google` handler already call. Because it exercises real
+Claude and real Kleinanzeigen search, it's not deterministic which
+decision (sell/give_away/throw_away) a given test upload lands on, so
+its assertions are written to be structurally correct for whichever
+real outcome occurs rather than forcing a specific one. In practice
+it's packaged as a Docker image (`e2e/Dockerfile`) and deployed as a
+one-shot Railway service, since this project's own sandbox development
+environment can't reach the deployed app's network at all, let alone
+Kleinanzeigen. See `e2e/README.md` for full setup, environment
+variables, and how the auth bypass works.
+
 ## Running natively (fallback / local development)
 
 ### Backend

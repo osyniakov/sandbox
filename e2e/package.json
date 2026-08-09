@@ -1,0 +1,13 @@
+{
+  "name": "e2e",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Playwright E2E suite (sandbox-634 epic) driving a real browser against the already-deployed real frontend/backend. See README.md for required env vars.",
+  "scripts": {
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
+  }
+}
