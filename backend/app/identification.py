@@ -31,10 +31,9 @@ about a photo, and this module treats them differently on purpose:
    response that isn't valid/parseable JSON, etc.). This is a
    *transient/infrastructure* problem. A provider signals this by
    raising :class:`IdentificationError` (or any other exception) out of
-   ``identify()``. The service catches it, logs it, and leaves
-   ``Item.status`` at ``pending_identification`` so the item is retried
-   later. No exception propagates out of
-   ``ItemIdentificationService.identify_item``.
+   ``identify()``. The service catches it, logs it, and sets
+   ``Item.status`` to the terminal ``identification_failed`` status. No
+   exception propagates out of ``ItemIdentificationService.identify_item``.
 
 2. **The call succeeded, but the model itself wasn't confident** (e.g. a
    blurry photo, or a pile of indistinguishable junk). The provider still
@@ -260,8 +259,8 @@ class ItemIdentificationService:
         Returns ``True`` if identification succeeded (fields were
         populated and ``item.status`` advanced to ``pending_search``), or
         ``False`` if the underlying provider call failed -- in which case
-        ``item.status`` is left untouched (still ``pending_identification``)
-        so it can be retried later.
+        ``item.status`` is set to the terminal ``identification_failed``
+        status.
 
         Never raises: provider failures are caught, logged via the
         standard ``logging`` module, and reported through the return
@@ -275,6 +274,7 @@ class ItemIdentificationService:
                 getattr(item, "id", None),
                 item.photo_path,
             )
+            item.status = ItemStatus.IDENTIFICATION_FAILED
             return False
 
         raw_name = raw.get("name")

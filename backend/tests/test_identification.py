@@ -142,7 +142,7 @@ def test_identify_item_passes_none_hint_when_item_has_no_hint() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_provider_exception_leaves_status_pending_identification_and_does_not_raise() -> None:
+def test_provider_exception_sets_identification_failed_status_and_does_not_raise() -> None:
     item = _make_item()
     provider = _StubProvider(error=TimeoutError("vision API timed out"))
     service = ItemIdentificationService(provider=provider)
@@ -150,7 +150,7 @@ def test_provider_exception_leaves_status_pending_identification_and_does_not_ra
     ok = service.identify_item(item)
 
     assert ok is False
-    assert item.status == ItemStatus.PENDING_IDENTIFICATION
+    assert item.status == ItemStatus.IDENTIFICATION_FAILED
     # None of the identification fields should have been touched.
     assert item.identified_name is None
     assert item.category is None
@@ -167,7 +167,7 @@ def test_identification_error_from_provider_is_caught() -> None:
     ok = service.identify_item(item)
 
     assert ok is False
-    assert item.status == ItemStatus.PENDING_IDENTIFICATION
+    assert item.status == ItemStatus.IDENTIFICATION_FAILED
 
 
 # ---------------------------------------------------------------------------
@@ -440,7 +440,7 @@ def test_claude_vision_provider_end_to_end_through_service(tmp_path) -> None:
     assert item.status == ItemStatus.PENDING_SEARCH
 
 
-def test_claude_vision_provider_via_service_on_client_failure_leaves_status_untouched(tmp_path) -> None:
+def test_claude_vision_provider_via_service_on_client_failure_sets_identification_failed(tmp_path) -> None:
     photo = tmp_path / "chair.jpg"
     photo.write_bytes(b"fake-jpeg-bytes")
 
@@ -450,7 +450,7 @@ def test_claude_vision_provider_via_service_on_client_failure_leaves_status_unto
 
     item = _make_item(photo_path=str(photo))
     assert service.identify_item(item) is False
-    assert item.status == ItemStatus.PENDING_IDENTIFICATION
+    assert item.status == ItemStatus.IDENTIFICATION_FAILED
 
 
 def test_claude_vision_provider_does_not_require_api_key_when_client_injected(tmp_path, monkeypatch) -> None:

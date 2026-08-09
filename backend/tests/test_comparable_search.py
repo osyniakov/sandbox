@@ -220,7 +220,7 @@ def test_none_keywords_treated_as_zero_results() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_provider_fails_twice_leaves_status_untouched_and_retries_exactly_once() -> None:
+def test_provider_fails_twice_sets_search_failed_status_and_retries_exactly_once() -> None:
     item = _make_item()
     provider = _StubProvider(
         responses=[
@@ -233,7 +233,7 @@ def test_provider_fails_twice_leaves_status_untouched_and_retries_exactly_once()
     ok = service.search_item(item)
 
     assert ok is False
-    assert item.status == ItemStatus.PENDING_SEARCH
+    assert item.status == ItemStatus.SEARCH_FAILED
     # comparable_listings should not have been touched/replaced.
     assert list(item.comparable_listings) == []
     # Exactly two calls: the initial attempt plus exactly one retry.
@@ -273,7 +273,7 @@ def test_generic_exception_from_provider_is_also_caught() -> None:
     ok = service.search_item(item)
 
     assert ok is False
-    assert item.status == ItemStatus.PENDING_SEARCH
+    assert item.status == ItemStatus.SEARCH_FAILED
 
 
 def test_hard_failure_on_a_looser_query_aborts_without_trying_further_queries() -> None:
@@ -298,7 +298,7 @@ def test_hard_failure_on_a_looser_query_aborts_without_trying_further_queries() 
     ok = service.search_item(item)
 
     assert ok is False
-    assert item.status == ItemStatus.PENDING_SEARCH
+    assert item.status == ItemStatus.SEARCH_FAILED
     assert list(item.comparable_listings) == []
     assert provider.calls == ["desk lamp ikea", "desk lamp", "desk lamp"]
     assert len(provider.calls) == 3

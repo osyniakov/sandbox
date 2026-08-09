@@ -68,9 +68,8 @@ the two outcomes that matter here are different:
    unresolvable location, a response that can't be parsed, etc.). A
    provider signals this by raising :class:`ComparableSearchError` (or any
    other exception) out of ``search()``. The service retries **once**, and
-   if the retry also fails, logs the error and leaves ``Item.status`` at
-   ``pending_search`` (untouched) so the item can be retried later. No
-   exception ever propagates out of
+   if the retry also fails, logs the error and sets ``Item.status`` to the
+   terminal ``search_failed`` status. No exception ever propagates out of
    ``ComparableListingSearchService.search_item``.
 2. **The call succeeded but found nothing** (a valid, well-formed empty
    result set -- e.g. a very obscure item, or an overly-specific keyword
@@ -120,8 +119,9 @@ retry (``_MAX_SEARCH_ATTEMPTS = 2`` live calls total for that query). If
 a candidate query comes back as a **hard failure** even after its own
 retry, ``search_item`` does **not** treat that as "zero results, try a
 looser query" -- it aborts the whole search immediately and returns
-``False`` (``Item.status`` left untouched), exactly like the pre-existing
-single-query failure behavior. Rationale: a definitive failure (e.g. the
+``False`` (``Item.status`` set to the terminal ``search_failed`` status),
+exactly like the pre-existing single-query failure behavior (modulo the
+new terminal status this bead introduces). Rationale: a definitive failure (e.g. the
 provider/network is actually down) is very likely to fail again on the
 next candidate query too, so treating it as a cue to loosen the query
 would just burn more rate-limited calls without a realistic chance of
@@ -450,10 +450,9 @@ class ComparableListingSearchService:
         advances to ``pending_decision``. Returns ``False`` if any
         candidate query's underlying provider call failed on both its
         initial attempt and its one retry, in which case ``item.status``
-        is left untouched (still ``pending_search``) so it can be retried
-        later -- see module docstring "Query-loosening on zero results"
-        for exactly how the query-loosening and failure-retry axes
-        interact.
+        is set to the terminal ``search_failed`` status -- see module
+        docstring "Query-loosening on zero results" for exactly how the
+        query-loosening and failure-retry axes interact.
 
         Never raises: provider failures are caught, logged via the
         standard ``logging`` module, and reported through the return value
@@ -483,6 +482,7 @@ class ComparableListingSearchService:
                 # failure-retry) -- abort the whole search rather than
                 # treating the failure as a cue to try a looser query. See
                 # module docstring "Query-loosening on zero results".
+                item.status = ItemStatus.SEARCH_FAILED
                 return False
             if raw_results:
                 # Found at least one result -- stop loosening immediately,
@@ -519,7 +519,7 @@ class ComparableListingSearchService:
                 )
         logger.error(
             "Comparable-listing search exhausted all %d attempts for item id=%s query=%r; "
-            "giving up, leaving status untouched. Last error: %s",
+            "giving up, caller will mark item as search_failed. Last error: %s",
             _MAX_SEARCH_ATTEMPTS,
             item_id,
             query,

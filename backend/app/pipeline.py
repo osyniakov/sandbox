@@ -53,13 +53,10 @@ Clients that want to know when a newly-uploaded item is "done" should
 poll ``GET /items/{id}`` and inspect ``status``:
 
 * ``pending_identification`` -- still processing (queued, or the
-  identification stage is in flight) OR identification failed and the
-  item is stuck for retry. Not distinguishable from "just uploaded,
-  hasn't started yet" without a separate retry/attempt counter (there
-  isn't one yet) -- keep polling.
-* ``pending_search`` -- identification succeeded; still processing
-  (search in flight) OR search failed after retries and the item is
-  stuck. Keep polling.
+  identification stage is in flight). Not distinguishable from "just
+  uploaded, hasn't started yet" -- keep polling.
+* ``pending_search`` -- identification succeeded; search stage is in
+  flight. Keep polling.
 * ``pending_decision`` -- search succeeded (including the valid "zero
   comparables found" outcome); the decision stage should follow
   immediately (it has no external dependency and does not fail). In
@@ -69,16 +66,22 @@ poll ``GET /items/{id}`` and inspect ``status``:
 * ``listed`` / ``given_away`` / ``disposed`` -- also terminal; these are
   post-decision manual-tracking statuses set by later features (see
   ``sandbox-yqf.11``), not by this pipeline. Stop polling.
+* ``identification_failed`` -- **terminal.** The identification stage
+  exhausted its provider call without success (see ``app/identification.py``
+  "Failure vs. ambiguity convention"); the pipeline halted before search
+  ever ran. Stop polling.
+* ``search_failed`` -- **terminal.** Identification succeeded but the
+  comparable-listing search stage exhausted both its initial attempt and
+  its one retry on every candidate query it tried (see
+  ``app/comparable_search.py`` "Failure vs. zero-results convention"); the
+  pipeline halted before the decision stage ever ran. Stop polling.
 
-Note there is currently no explicit "permanently failed" terminal status:
-a stage that fails after exhausting its own retries simply leaves the
-item parked at that stage's "pending_*" status (see the "Failure vs.
-ambiguity/zero-results convention" sections of ``app/identification.py``
-and ``app/comparable_search.py``) for a future retry mechanism, rather
-than transitioning to some ``failed`` status. A client polling
-indefinitely on a genuinely-stuck item would poll forever; a bounded
-polling loop (e.g. "give up after N attempts / T seconds and show the
-last known status") is a client-side concern, out of scope for this bead.
+Both new failure statuses are set by the responsible service itself
+(``ItemIdentificationService.identify_item`` /
+``ComparableListingSearchService.search_item``) on their own documented
+failure path, before returning ``False`` -- ``run_pipeline`` does not set
+either status itself; it merely observes the boolean return value and
+stops proceeding to the next stage, exactly as it always has.
 """
 
 from __future__ import annotations
@@ -112,7 +115,8 @@ def run_pipeline(
     Uses the given, already-open ``session`` for all reads/writes and
     commits it after each successfully-completed stage. Never raises out
     to the caller for pipeline-stage failures (those are reported via
-    ``Item.status`` staying at an intermediate value, per each service's
+    ``Item.status`` moving to a terminal failure value --
+    ``identification_failed`` / ``search_failed`` -- per each service's
     own documented contract) -- the caller (typically a FastAPI
     ``BackgroundTask``, see module docstring) doesn't need to do anything
     with a return value.
@@ -122,18 +126,18 @@ def run_pipeline(
     1. **Identification** (mandatory integration requirement #1): call
        ``identify_item(item)``, then commit regardless of outcome so any
        mutated fields persist. If it returns ``False`` (the provider call
-       failed), stop here -- ``item.status`` is left at
-       ``pending_identification`` by the service itself, and this
+       failed), stop here -- ``item.status`` is set to the terminal
+       ``identification_failed`` status by the service itself, and this
        function does not proceed to the search stage.
     2. **Search**: only reached if identification succeeded. Call
        ``search_item(item)``, then commit. If it returns ``False`` (both
        the initial attempt and the one retry failed), stop here --
-       ``item.status`` is left at ``pending_search`` by the service
-       itself, and this function does not proceed to the decision stage.
-       Note a *successful* search with zero comparable listings found is
-       not a failure (``search_item`` returns ``True`` and advances
-       status to ``pending_decision``) -- the pipeline proceeds to decide
-       in that case.
+       ``item.status`` is set to the terminal ``search_failed`` status by
+       the service itself, and this function does not proceed to the
+       decision stage. Note a *successful* search with zero comparable
+       listings found is not a failure (``search_item`` returns ``True``
+       and advances status to ``pending_decision``) -- the pipeline
+       proceeds to decide in that case.
     3. **Decision** (mandatory integration requirement #2): guarded
        explicitly by checking ``item.status == ItemStatus.PENDING_DECISION``
        before calling ``decide_item`` -- belt-and-braces on top of the
@@ -173,7 +177,7 @@ def run_pipeline(
     # --- Stage 1: identification --------------------------------------
     identified = identification_service.identify_item(item)
     # Mandatory requirement #1: commit so identification results (or, on
-    # failure, the untouched pending_identification status) persist.
+    # failure, the identification_failed status) persist.
     session.commit()
     if not identified:
         logger.info(
