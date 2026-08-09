@@ -12,7 +12,34 @@ import SignOutControl from './SignOutControl.jsx'
 // this pipeline, but they're just as terminal from this page's polling
 // point of view -- `decision`/`suggested_price`/`comparable_listings` are
 // all already populated by the time an item reaches any of them.
-const TERMINAL_STATUSES = ['decided', 'listed', 'given_away', 'disposed']
+// `identification_failed`/`search_failed` (sandbox-khm.1) are also
+// terminal -- a stage that permanently failed rather than resolving a
+// decision -- so polling stops immediately for them too instead of running
+// out the MAX_POLL_MS "stuck" fallback below.
+const TERMINAL_STATUSES = [
+  'decided',
+  'listed',
+  'given_away',
+  'disposed',
+  'identification_failed',
+  'search_failed',
+]
+
+// The subset of TERMINAL_STATUSES above that mean the pipeline permanently
+// failed rather than reaching a real decision -- `item.decision` stays at
+// the DB default (Decision.PENDING) for these, so they need their own
+// error rendering instead of falling into the decision-badge/
+// comparable-listings block below.
+const FAILED_STATUSES = ['identification_failed', 'search_failed']
+
+// Status-specific copy for the FAILED_STATUSES error block, keyed by
+// `item.status`.
+const FAILURE_MESSAGES = {
+  identification_failed:
+    "We couldn't identify this item from the photo. Try a clearer or different photo.",
+  search_failed:
+    "We identified the item but couldn't find comparable listings right now. Try again later.",
+}
 
 // How often to re-fetch the item while its pipeline is still running.
 // The pipeline itself can take anywhere from a few seconds to tens of
@@ -215,6 +242,7 @@ function ItemResultPage() {
   }
 
   const isTerminal = TERMINAL_STATUSES.includes(item.status)
+  const isFailed = FAILED_STATUSES.includes(item.status)
   const decisionInfo = DECISION_INFO[item.decision] || DECISION_INFO.pending
 
   return (
@@ -279,7 +307,24 @@ function ItemResultPage() {
         </div>
       )}
 
-      {isTerminal && (
+      {/* `identification_failed`/`search_failed` (sandbox-khm.1) are
+          terminal but never reach a real decision -- `item.decision` stays
+          at the DB default (`pending`), so rendering the decision-badge/
+          comparable-listings block below for them would show a
+          nonsensical "... Pending" badge. Render a distinct error block
+          instead, reusing the same visual language (role="alert" +
+          throw-away-colored border/background) as the top-level
+          `loadError` block above for consistency. */}
+      {isFailed && (
+        <div
+          className="mt-6 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
+          role="alert"
+        >
+          <p>{FAILURE_MESSAGES[item.status]}</p>
+        </div>
+      )}
+
+      {isTerminal && !isFailed && (
         <>
           <div
             className={`inline-block my-4 rounded-full border px-4 py-2 font-semibold ${decisionInfo.className}`}
