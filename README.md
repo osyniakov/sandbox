@@ -188,11 +188,6 @@ environment can't reach the deployed app's network at all, let alone
 Kleinanzeigen. See `e2e/README.md` for full setup, environment
 variables, and how the auth bypass works.
 
-Separately, `backend/app/e2e_stubs.py` (gated behind the
-`E2E_STUB_PROVIDERS` env var) provides stubbed identify/search/decide
-providers for fast local pipeline testing — this is unrelated,
-optional infrastructure that the Playwright suite above does not use.
-
 ## Running natively (fallback / local development)
 
 ### Backend
