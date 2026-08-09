@@ -1,0 +1,6 @@
+snapshot_format=1
+domestique_version=0.1.0
+installed_ref=unknown
+installed_at=2026-08-07T05:27:00Z
+script_sha256=e8a6f889f72ff891cc3749c2fd10595555b6c2b90d5ee3420d3a446ae8aa1523
+files=.claude/agents/implementer.md,.claude/agents/reviewer.md,.claude/commands/decompose.md,.claude/commands/goal.md,CLAUDE.md

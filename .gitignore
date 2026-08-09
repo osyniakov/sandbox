@@ -21,3 +21,36 @@
 
 # virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
+
+# Claude Code personal/local overrides (not shared with the team)
+.claude/settings.local.json
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+.vite/
+npm-debug.log*
+
+# Uploaded photos (backend/app/main.py POST /items) -- user data, not
+# committed, same treatment as backend/data/*.db.
+backend/uploads/
+
+# Claude Code isolated-agent worktrees (harness-managed scratch state,
+# not repo content -- created under the repo root when subagents run
+# with isolation:"worktree").
+.claude/worktrees/
+

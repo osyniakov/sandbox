@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Basement Declutter</title>
+    <!-- Google Identity Services (GIS) client library: renders the Sign
+         In with Google button and issues the ID token SignInPage.jsx
+         exchanges for a session token via `POST /auth/google`. Loaded
+         async/defer since it's not needed for first paint (the sign-in
+         gate itself is plain React/Tailwind); SignInPage.jsx polls for
+         `window.google` to be ready before initializing it. -->
+    <script src="https://accounts.google.com/gsi/client" async defer></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

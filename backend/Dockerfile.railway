@@ -1,0 +1,44 @@
+# Production image for the FastAPI backend, used by platforms (e.g.
+# Railway) that build a service directly from a Dockerfile.
+#
+# This is intentionally SEPARATE from ../backend/Dockerfile, which is the
+# dev-oriented image used by docker-compose.yml (bind-mounts app/tests,
+# no production concerns). Do not merge the two: Railway's build system
+# detects and unconditionally uses `backend/Dockerfile` whenever it exists
+# in this directory, ignoring an explicit `dockerfilePath: null` override,
+# so a separate file is the only way to give Railway a production-shaped
+# image without breaking the existing dev workflow. Railway must be
+# pointed at this file explicitly via its `dockerfilePath` config.
+#
+# Base image, WORKDIR, and requirements install are kept in sync with
+# ../backend/Dockerfile to avoid Python-version drift between dev and
+# prod.
+#
+# alembic.ini and alembic/ are copied in (alongside app/) so that the
+# `python -m app.db_migrate` pre-start step below has the migration
+# tooling and scripts available in the built image.
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+COPY alembic.ini .
+COPY alembic ./alembic
+
+EXPOSE 8000
+
+# Shell-form CMD (no JSON-array brackets) is required here: Railway's
+# `startCommand` override replaces this CMD with a literal string that is
+# NOT passed through a shell, so a JSON-array CMD would never get $PORT
+# shell-expanded and the app would crash with
+# "Invalid value for '--port': '$PORT' is not a valid integer". Docker
+# implicitly wraps shell-form CMD in `/bin/sh -c`, which does expand
+# ${PORT:-8000} at container start. Railway injects PORT at runtime;
+# ${PORT:-8000} falls back to 8000 when PORT is unset (e.g. running this
+# image outside Railway). Shell form also lets us chain the migration step
+# with `&&`, so the container fails closed: if `python -m app.db_migrate`
+# fails, uvicorn never starts.
+CMD python -m app.db_migrate && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}

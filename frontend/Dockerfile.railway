@@ -1,0 +1,66 @@
+# Production image for the frontend (React/Vite SPA), used by platforms
+# (e.g. Railway) that build a service directly from a Dockerfile.
+#
+# This is intentionally SEPARATE from ../frontend/Dockerfile, which is the
+# dev-oriented image used by docker-compose.yml (npm install + vite dev
+# server, no build step, no dist/ output). Do not merge the two: Railway's
+# build system detects and unconditionally uses `frontend/Dockerfile`
+# whenever it exists in this directory, ignoring an explicit
+# `dockerfilePath: null` override, so a separate file is the only way to
+# give Railway a production-shaped image without breaking the existing dev
+# workflow. Railway must be pointed at this file explicitly via its
+# `dockerfilePath` config.
+#
+# Base image and WORKDIR are kept in sync with ../frontend/Dockerfile to
+# avoid Node-version drift between dev and prod.
+
+# ---- build stage -----------------------------------------------------
+FROM node:22-slim AS build
+
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+COPY . .
+
+# Vite bakes VITE_* env vars into the compiled JS bundle at BUILD time via
+# import.meta.env -- Railway does NOT automatically forward service
+# environment variables into a Dockerfile build unless they're explicitly
+# declared as ARG and promoted to ENV before the build step runs. Without
+# these lines, VITE_API_BASE_URL/VITE_GOOGLE_CLIENT_ID would be undefined
+# in the built bundle regardless of what's configured on the Railway
+# service (VITE_GOOGLE_CLIENT_ID undefined would silently break Google
+# Sign-In in production, not just misroute API calls). Invoke the build
+# with `--build-arg VITE_API_BASE_URL=<url> --build-arg VITE_GOOGLE_CLIENT_ID=<id>`
+# to set both.
+ARG VITE_API_BASE_URL
+ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
+ARG VITE_GOOGLE_CLIENT_ID
+ENV VITE_GOOGLE_CLIENT_ID=$VITE_GOOGLE_CLIENT_ID
+
+RUN npm run build
+
+# ---- runtime stage -----------------------------------------------------
+FROM node:22-slim
+
+WORKDIR /app
+
+# Only the built static output is needed at runtime -- no source, no
+# node_modules from the build stage.
+COPY --from=build /app/dist ./dist
+
+EXPOSE 3000
+
+# Shell-form CMD (no JSON-array brackets) is required here: Railway's
+# `startCommand` override replaces this CMD with a literal string that is
+# NOT passed through a shell, so a JSON-array CMD would never get $PORT
+# shell-expanded and the app would crash trying to bind an unexpanded
+# literal "$PORT". Docker implicitly wraps shell-form CMD in
+# `/bin/sh -c`, which does expand ${PORT:-3000} at container start.
+# Railway injects PORT at runtime; ${PORT:-3000} falls back to 3000 when
+# PORT is unset (e.g. running this image outside Railway). `npx serve` is
+# used rather than a separately installed dependency to keep this image
+# minimal and avoid adding a runtime dependency to package.json purely for
+# deployment.
+CMD npx serve -s dist -l ${PORT:-3000}
