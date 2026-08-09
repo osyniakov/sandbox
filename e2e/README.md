@@ -42,8 +42,8 @@ invents, guesses, or hardcodes either.
 | Var | Meaning | Default |
 | --- | --- | --- |
 | `PLAYWRIGHT_CHROMIUM_PATH` | Path to a Chromium executable to launch instead of Playwright's own bundled/auto-resolved one. | unset -- falls back to Playwright's normal default resolution |
-| `E2E_TEST_TIMEOUT_MS` | Per-test timeout, in ms. | `120000` (2 min) |
-| `E2E_EXPECT_TIMEOUT_MS` | Default polling timeout for `expect(locator).toBeVisible()` and similar, in ms. | `90000` (90s) |
+| `E2E_TEST_TIMEOUT_MS` | Per-test timeout, in ms. | `180000` (3 min) |
+| `E2E_EXPECT_TIMEOUT_MS` | Default polling timeout for `expect(locator).toBeVisible()` and similar, in ms. | `150000` (150s) |
 | `E2E_NAVIGATION_TIMEOUT_MS` | Timeout for `page.goto()`/navigation waits, in ms. | `90000` (90s) |
 | `E2E_ACTION_TIMEOUT_MS` | Timeout for individual Playwright actions (click, fill, ...), in ms. | `30000` (30s) |
 
