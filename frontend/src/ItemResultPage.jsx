@@ -130,6 +130,29 @@ function CopyButton({ text, label }) {
   )
 }
 
+// Builds a best-effort link to Kleinanzeigen's public search results page
+// for `query` (the exact `item.search_query_used` text, sandbox-b9a.1),
+// following Kleinanzeigen's standard search URL pattern:
+// https://www.kleinanzeigen.de/s-<slug>/k0, where <slug> is the query
+// lowercased, with runs of whitespace collapsed and each word joined by a
+// dash (e.g. "IKEA Schreibtischlampe" -> "ikea-schreibtischlampe"), each
+// word individually percent-encoded via encodeURIComponent so any
+// special characters in the query stay URL-safe.
+//
+// NOTE: this URL format could not be verified against the real site from
+// this sandbox (kleinanzeigen.de is network-blocked here). If it turns out
+// wrong once tested against the real site, only this function needs
+// correcting -- not the rest of this feature's data plumbing.
+export function buildKleinanzeigenSearchUrl(query) {
+  const slug = query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .map((word) => encodeURIComponent(word))
+    .join('-')
+  return `https://www.kleinanzeigen.de/s-${slug}/k0`
+}
+
 async function fetchItem(id, signal) {
   const response = await apiFetch(`/items/${id}`, { signal })
   if (!response.ok) {
@@ -363,6 +386,31 @@ function ItemResultPage() {
                 </div>
               </div>
             )}
+
+          {/* The actual Kleinanzeigen search query used to find the
+              comparable listings below (sandbox-b9a.1/.2) -- only rendered
+              when a non-empty string, since a search may never have been
+              attempted (e.g. identification failed, or never produced
+              usable keywords). Placed just above "Comparable listings" so
+              it's clear which query produced them. */}
+          {item.search_query_used && (
+            <div className="mt-6 text-left">
+              <div className="flex items-start justify-between gap-2">
+                <p>Kleinanzeigen search used: {item.search_query_used}</p>
+                <CopyButton text={item.search_query_used} label="search query" />
+              </div>
+              <p className="mt-1">
+                <a
+                  href={buildKleinanzeigenSearchUrl(item.search_query_used)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="link"
+                >
+                  Search on Kleinanzeigen ↗
+                </a>
+              </p>
+            </div>
+          )}
 
           <div className="mt-6 text-left">
             <h3 className="mb-2">Comparable listings</h3>
