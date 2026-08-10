@@ -693,6 +693,7 @@ def _serialize_item(item: Item) -> dict[str, object]:
         "brand": item.brand,
         "condition": item.condition,
         "search_keywords": item.search_keywords,
+        "search_query_used": item.search_query_used,
         "hint": item.user_hint,
         "suggested_price": item.suggested_price,
         "suggested_title": item.suggested_title,

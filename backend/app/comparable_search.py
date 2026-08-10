@@ -471,6 +471,7 @@ class ComparableListingSearchService:
                 item_id,
             )
             item.comparable_listings = []
+            item.search_query_used = None
             item.status = ItemStatus.PENDING_DECISION
             return True
 
@@ -481,7 +482,11 @@ class ComparableListingSearchService:
                 # This candidate query failed outright (exhausted its own
                 # failure-retry) -- abort the whole search rather than
                 # treating the failure as a cue to try a looser query. See
-                # module docstring "Query-loosening on zero results".
+                # module docstring "Query-loosening on zero results". Still
+                # record the failing query for debug context, matching the
+                # search_failed error message the frontend already shows
+                # (sandbox-khm.2).
+                item.search_query_used = query
                 item.status = ItemStatus.SEARCH_FAILED
                 return False
             if raw_results:
@@ -498,6 +503,17 @@ class ComparableListingSearchService:
                 "; trying a looser query" if attempt_num < len(query_attempts) else "; giving up, zero results",
             )
 
+        # ``query`` retains the loop variable's last-assigned value here,
+        # whether the loop exited via `break` on a successful (non-empty)
+        # result -- in which case it's the query that actually found
+        # something -- or ran to completion after every candidate query
+        # returned zero results -- in which case it's the last (loosest)
+        # query tried. Both cases are exactly what a user wants to see:
+        # "this is the query that was searched". Python's `for` loop does
+        # not create a new scope, so the loop variable is simply still
+        # bound to its final value here (this is standard, guaranteed
+        # Python behavior, not implementation-specific).
+        item.search_query_used = query
         item.comparable_listings = _parse_listings(raw_results)
         item.status = ItemStatus.PENDING_DECISION
         return True

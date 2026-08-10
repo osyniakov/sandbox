@@ -86,6 +86,7 @@ def test_well_formed_results_produce_populated_comparable_listings() -> None:
     assert ok is True
     assert provider.calls == ["desk lamp ikea"]
     assert item.status == ItemStatus.PENDING_DECISION
+    assert item.search_query_used == "desk lamp ikea"
     assert len(item.comparable_listings) == 2
 
     listing = item.comparable_listings[0]
@@ -150,6 +151,10 @@ def test_zero_results_returns_empty_list_and_still_advances_status() -> None:
     assert item.status == ItemStatus.PENDING_DECISION
     assert provider.calls == ["desk lamp ikea", "desk lamp", "ikea"]
     assert len(provider.calls) == 3
+    # All attempts exhausted with zero results: search_query_used reflects
+    # the LAST (loosest) candidate query that was tried, not the original
+    # joined query -- consistent with "here's exactly what was searched".
+    assert item.search_query_used == "ikea"
 
 
 def test_zero_results_on_joined_query_but_looser_single_keyword_finds_results() -> None:
@@ -186,6 +191,10 @@ def test_zero_results_on_joined_query_but_looser_single_keyword_finds_results() 
     # calls, not three (the third candidate query, "ikea", is never tried).
     assert provider.calls == ["desk lamp ikea silver", "desk lamp"]
     assert len(provider.calls) == 2
+    # search_query_used must reflect the NARROWER query that actually
+    # succeeded ("desk lamp"), not the original joined query ("desk lamp
+    # ikea silver") that returned zero results.
+    assert item.search_query_used == "desk lamp"
 
 
 def test_no_usable_keywords_treated_as_zero_results() -> None:
@@ -200,6 +209,8 @@ def test_no_usable_keywords_treated_as_zero_results() -> None:
     assert item.status == ItemStatus.PENDING_DECISION
     # Provider should never even be called -- nothing to search with.
     assert provider.calls == []
+    # No query was ever attempted, so search_query_used stays None.
+    assert item.search_query_used is None
 
 
 def test_none_keywords_treated_as_zero_results() -> None:
@@ -213,6 +224,7 @@ def test_none_keywords_treated_as_zero_results() -> None:
     assert item.comparable_listings == []
     assert item.status == ItemStatus.PENDING_DECISION
     assert provider.calls == []
+    assert item.search_query_used is None
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +251,9 @@ def test_provider_fails_twice_sets_search_failed_status_and_retries_exactly_once
     # Exactly two calls: the initial attempt plus exactly one retry.
     assert len(provider.calls) == 2
     assert provider.calls == ["desk lamp ikea", "desk lamp ikea"]
+    # Even on outright failure, the failing query is recorded for debug
+    # context alongside the search_failed status.
+    assert item.search_query_used == "desk lamp ikea"
 
 
 def test_provider_fails_once_then_succeeds_recovers_on_retry() -> None:

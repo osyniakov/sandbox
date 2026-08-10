@@ -578,6 +578,7 @@ def test_get_item_returns_all_documented_fields(
         "brand",
         "condition",
         "search_keywords",
+        "search_query_used",
         "suggested_price",
         "decision",
         "status",
