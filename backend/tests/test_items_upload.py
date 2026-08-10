@@ -86,13 +86,26 @@ def test_valid_jpeg_upload_returns_201_and_persists_item(
     assert response.status_code == 201
     body = response.json()
     assert "id" in body
+    # This reflects the item's status at creation time (the response body
+    # is built before the background pipeline task runs), so it's still
+    # pending_identification even though, by the time this response has
+    # been returned, the background pipeline has already run to completion
+    # against the real (un-mocked, no ANTHROPIC_API_KEY / no network in
+    # this test env) ClaudeVisionProvider and failed -- see the DB-fetched
+    # assertion below.
     assert body["status"] == "pending_identification"
 
     session = db_session_factory()
     try:
         fetched = session.get(Item, body["id"])
         assert fetched is not None
-        assert fetched.status == ItemStatus.PENDING_IDENTIFICATION
+        # The background pipeline's real identification call fails in this
+        # test environment (no network / no ANTHROPIC_API_KEY), so the item
+        # ends up at the terminal identification_failed status rather than
+        # actually being identified -- this test only exercises the upload
+        # endpoint itself, not a successful pipeline run (see
+        # test_pipeline.py for pipeline behavior with mocked services).
+        assert fetched.status == ItemStatus.IDENTIFICATION_FAILED
         assert fetched.photo_path
         photo_path = Path(fetched.photo_path)
         assert photo_path.exists()

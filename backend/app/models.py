@@ -84,6 +84,8 @@ class ItemStatus(str, enum.Enum):
     LISTED = "listed"
     GIVEN_AWAY = "given_away"
     DISPOSED = "disposed"
+    IDENTIFICATION_FAILED = "identification_failed"
+    SEARCH_FAILED = "search_failed"
 
 
 class Item(Base):

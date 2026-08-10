@@ -110,7 +110,12 @@ class FakeIdentificationService:
 
 
 class FailingIdentificationService:
+    """Always fails, mirroring the real service's documented failure
+    contract: sets the terminal ``identification_failed`` status before
+    returning ``False``."""
+
     def identify_item(self, item: Item) -> bool:
+        item.status = ItemStatus.IDENTIFICATION_FAILED
         return False
 
 
@@ -139,9 +144,12 @@ class FakeSearchServiceWithResults:
 
 
 class FailingSearchService:
-    """Always fails (both attempts exhausted), per the real service's contract."""
+    """Always fails (both attempts exhausted), per the real service's
+    contract: sets the terminal ``search_failed`` status before returning
+    ``False``."""
 
     def search_item(self, item: Item) -> bool:
+        item.status = ItemStatus.SEARCH_FAILED
         return False
 
 
@@ -232,7 +240,7 @@ def test_full_pipeline_zero_comparables_still_reaches_decided(
 # ---------------------------------------------------------------------------
 
 
-def test_identification_failure_leaves_item_pending_identification(
+def test_identification_failure_sets_identification_failed_status(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, auth_headers: dict[str, str]
 ) -> None:
     monkeypatch.setattr(pipeline_module, "ItemIdentificationService", FailingIdentificationService)
@@ -253,7 +261,7 @@ def test_identification_failure_leaves_item_pending_identification(
     assert response.status_code == 200
     body = response.json()
 
-    assert body["status"] == "pending_identification"
+    assert body["status"] == "identification_failed"
     assert body["identified_name"] is None
     assert body["decision"] == Decision.PENDING.value
     assert body["suggested_price"] is None
@@ -261,7 +269,7 @@ def test_identification_failure_leaves_item_pending_identification(
     assert search_spy["called"] is False
 
 
-def test_search_failure_leaves_item_pending_search_and_skips_decision(
+def test_search_failure_sets_search_failed_status_and_skips_decision(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, auth_headers: dict[str, str]
 ) -> None:
     monkeypatch.setattr(pipeline_module, "ItemIdentificationService", FakeIdentificationService)
@@ -277,8 +285,8 @@ def test_search_failure_leaves_item_pending_search_and_skips_decision(
     assert response.status_code == 200
     body = response.json()
 
-    # Search failed -> status stuck at pending_search, not a 500.
-    assert body["status"] == "pending_search"
+    # Search failed -> terminal search_failed status, not a 500.
+    assert body["status"] == "search_failed"
     # Identification did succeed and persisted (mandatory requirement #1:
     # identify_item's results are committed even though the pipeline halts
     # at the next stage).

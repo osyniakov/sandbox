@@ -31,10 +31,9 @@ about a photo, and this module treats them differently on purpose:
    response that isn't valid/parseable JSON, etc.). This is a
    *transient/infrastructure* problem. A provider signals this by
    raising :class:`IdentificationError` (or any other exception) out of
-   ``identify()``. The service catches it, logs it, and leaves
-   ``Item.status`` at ``pending_identification`` so the item is retried
-   later. No exception propagates out of
-   ``ItemIdentificationService.identify_item``.
+   ``identify()``. The service catches it, logs it, and sets
+   ``Item.status`` to the terminal ``identification_failed`` status. No
+   exception propagates out of ``ItemIdentificationService.identify_item``.
 
 2. **The call succeeded, but the model itself wasn't confident** (e.g. a
    blurry photo, or a pile of indistinguishable junk). The provider still
@@ -134,6 +133,31 @@ class IdentificationError(Exception):
     """
 
 
+def _extract_text_block(response: Any) -> str:
+    """Return the text of the first ``text``-type block in ``response.content``.
+
+    The Anthropic Messages API does not guarantee that ``content[0]`` is a
+    text block -- when extended thinking is enabled (or for other reasons),
+    a ``ThinkingBlock`` (or some other non-text block) can be returned
+    before the actual text response. Blindly indexing ``content[0]`` then
+    either raises ``AttributeError`` (non-text blocks have no ``.text``
+    attribute) or silently grabs the wrong block's (possibly empty) text,
+    which later surfaces as a confusing ``json.JSONDecodeError``. This scans
+    all content blocks and returns the first whose ``type`` is ``"text"``,
+    regardless of position.
+    """
+    text_block = next(
+        (block for block in response.content if getattr(block, "type", None) == "text"),
+        None,
+    )
+    if text_block is None:
+        block_types = [getattr(block, "type", None) for block in response.content]
+        raise IdentificationError(
+            f"Claude vision response contained no text content block (block types: {block_types!r})"
+        )
+    return text_block.text
+
+
 class ClaudeVisionProvider:
     """Default ``IdentificationProvider`` backed by Anthropic's vision API.
 
@@ -214,8 +238,10 @@ class ClaudeVisionProvider:
             raise IdentificationError(f"Claude vision API call failed: {exc}") from exc
 
         try:
-            text = response.content[0].text
+            text = _extract_text_block(response)
             data = json.loads(text)
+        except IdentificationError:
+            raise
         except Exception as exc:
             raise IdentificationError(
                 f"Could not parse Claude vision response as JSON: {exc}"
@@ -260,8 +286,8 @@ class ItemIdentificationService:
         Returns ``True`` if identification succeeded (fields were
         populated and ``item.status`` advanced to ``pending_search``), or
         ``False`` if the underlying provider call failed -- in which case
-        ``item.status`` is left untouched (still ``pending_identification``)
-        so it can be retried later.
+        ``item.status`` is set to the terminal ``identification_failed``
+        status.
 
         Never raises: provider failures are caught, logged via the
         standard ``logging`` module, and reported through the return
@@ -275,6 +301,7 @@ class ItemIdentificationService:
                 getattr(item, "id", None),
                 item.photo_path,
             )
+            item.status = ItemStatus.IDENTIFICATION_FAILED
             return False
 
         raw_name = raw.get("name")

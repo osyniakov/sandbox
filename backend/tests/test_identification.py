@@ -142,7 +142,7 @@ def test_identify_item_passes_none_hint_when_item_has_no_hint() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_provider_exception_leaves_status_pending_identification_and_does_not_raise() -> None:
+def test_provider_exception_sets_identification_failed_status_and_does_not_raise() -> None:
     item = _make_item()
     provider = _StubProvider(error=TimeoutError("vision API timed out"))
     service = ItemIdentificationService(provider=provider)
@@ -150,7 +150,7 @@ def test_provider_exception_leaves_status_pending_identification_and_does_not_ra
     ok = service.identify_item(item)
 
     assert ok is False
-    assert item.status == ItemStatus.PENDING_IDENTIFICATION
+    assert item.status == ItemStatus.IDENTIFICATION_FAILED
     # None of the identification fields should have been touched.
     assert item.identified_name is None
     assert item.category is None
@@ -167,7 +167,7 @@ def test_identification_error_from_provider_is_caught() -> None:
     ok = service.identify_item(item)
 
     assert ok is False
-    assert item.status == ItemStatus.PENDING_IDENTIFICATION
+    assert item.status == ItemStatus.IDENTIFICATION_FAILED
 
 
 # ---------------------------------------------------------------------------
@@ -244,32 +244,73 @@ def test_confident_name_but_empty_keywords_gets_keyword_fallback() -> None:
 
 
 class _FakeContentBlock:
+    """A fake ``text``-type content block, matching the real SDK's shape."""
+
     def __init__(self, text: str) -> None:
+        self.type = "text"
         self.text = text
 
 
+class _FakeThinkingBlock:
+    """A fake ``thinking``-type content block (extended thinking).
+
+    Deliberately has no ``.text`` attribute, mirroring the real SDK's
+    ``ThinkingBlock`` (which exposes ``.thinking`` instead) -- this is what
+    triggers ``AttributeError: 'ThinkingBlock' object has no attribute
+    'text'`` if code blindly indexes ``content[0]``.
+    """
+
+    def __init__(self, thinking: str = "pondering...") -> None:
+        self.type = "thinking"
+        self.thinking = thinking
+
+
 class _FakeMessage:
-    def __init__(self, text: str) -> None:
-        self.content = [_FakeContentBlock(text)]
+    def __init__(self, text: str, leading_blocks: list[Any] | None = None) -> None:
+        self.content = [*(leading_blocks or []), _FakeContentBlock(text)]
 
 
 class _FakeMessagesAPI:
-    def __init__(self, response_text: str | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        response_text: str | None = None,
+        error: Exception | None = None,
+        leading_blocks: list[Any] | None = None,
+        content: list[Any] | None = None,
+    ) -> None:
         self._response_text = response_text
         self._error = error
+        self._leading_blocks = leading_blocks
+        self._content = content
         self.last_kwargs: dict[str, Any] | None = None
 
-    def create(self, **kwargs: Any) -> _FakeMessage:
+    def create(self, **kwargs: Any) -> Any:
         self.last_kwargs = kwargs
         if self._error is not None:
             raise self._error
+        if self._content is not None:
+
+            class _RawMessage:
+                pass
+
+            msg = _RawMessage()
+            msg.content = self._content
+            return msg
         assert self._response_text is not None
-        return _FakeMessage(self._response_text)
+        return _FakeMessage(self._response_text, leading_blocks=self._leading_blocks)
 
 
 class _FakeAnthropicClient:
-    def __init__(self, response_text: str | None = None, error: Exception | None = None) -> None:
-        self.messages = _FakeMessagesAPI(response_text=response_text, error=error)
+    def __init__(
+        self,
+        response_text: str | None = None,
+        error: Exception | None = None,
+        leading_blocks: list[Any] | None = None,
+        content: list[Any] | None = None,
+    ) -> None:
+        self.messages = _FakeMessagesAPI(
+            response_text=response_text, error=error, leading_blocks=leading_blocks, content=content
+        )
 
 
 def test_claude_vision_provider_parses_well_formed_json_response(tmp_path) -> None:
@@ -415,6 +456,55 @@ def test_claude_vision_provider_raises_identification_error_on_unparseable_respo
         provider.identify(str(photo))
 
 
+def test_claude_vision_provider_finds_text_block_after_leading_thinking_block(tmp_path) -> None:
+    """Regression test: a leading ThinkingBlock (extended thinking) must not
+    break parsing -- the provider should find the actual text block
+    regardless of its position in ``response.content``."""
+    photo = tmp_path / "lamp.jpg"
+    photo.write_bytes(b"fake-jpeg-bytes")
+
+    response_json = json.dumps(
+        {
+            "name": "Desk Lamp",
+            "category": "lighting",
+            "brand": "IKEA",
+            "condition": "good",
+            "search_keywords": ["desk lamp"],
+            "confidence": "high",
+        }
+    )
+    fake_client = _FakeAnthropicClient(
+        response_text=response_json,
+        leading_blocks=[_FakeThinkingBlock()],
+    )
+    provider = ClaudeVisionProvider(client=fake_client)
+
+    result = provider.identify(str(photo))
+
+    assert result["name"] == "Desk Lamp"
+    assert result["brand"] == "IKEA"
+
+
+def test_claude_vision_provider_raises_clear_error_when_no_text_block_present(tmp_path) -> None:
+    """No text block anywhere in the response -> a clear IdentificationError,
+    not a generic AttributeError or JSONDecodeError."""
+    photo = tmp_path / "lamp.jpg"
+    photo.write_bytes(b"fake-jpeg-bytes")
+
+    fake_client = _FakeAnthropicClient(content=[_FakeThinkingBlock()])
+    provider = ClaudeVisionProvider(client=fake_client)
+
+    with pytest.raises(IdentificationError, match="no text content block") as exc_info:
+        provider.identify(str(photo))
+
+    # Locks in the anti-rewrap fix specifically (not just the message
+    # substring, which a broken re-wrap would still contain as a suffix):
+    # the outer `except Exception` must not re-catch and re-wrap this error
+    # with a misleading "...as JSON"/chained-exception shape.
+    assert "as JSON" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
+
+
 def test_claude_vision_provider_end_to_end_through_service(tmp_path) -> None:
     """Full path: ClaudeVisionProvider (fake client) -> ItemIdentificationService."""
     photo = tmp_path / "chair.jpg"
@@ -440,7 +530,7 @@ def test_claude_vision_provider_end_to_end_through_service(tmp_path) -> None:
     assert item.status == ItemStatus.PENDING_SEARCH
 
 
-def test_claude_vision_provider_via_service_on_client_failure_leaves_status_untouched(tmp_path) -> None:
+def test_claude_vision_provider_via_service_on_client_failure_sets_identification_failed(tmp_path) -> None:
     photo = tmp_path / "chair.jpg"
     photo.write_bytes(b"fake-jpeg-bytes")
 
@@ -450,7 +540,7 @@ def test_claude_vision_provider_via_service_on_client_failure_leaves_status_unto
 
     item = _make_item(photo_path=str(photo))
     assert service.identify_item(item) is False
-    assert item.status == ItemStatus.PENDING_IDENTIFICATION
+    assert item.status == ItemStatus.IDENTIFICATION_FAILED
 
 
 def test_claude_vision_provider_does_not_require_api_key_when_client_injected(tmp_path, monkeypatch) -> None:

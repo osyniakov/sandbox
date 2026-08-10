@@ -278,32 +278,73 @@ def test_clamp_title_respects_custom_max_length() -> None:
 
 
 class _FakeContentBlock:
+    """A fake ``text``-type content block, matching the real SDK's shape."""
+
     def __init__(self, text: str) -> None:
+        self.type = "text"
         self.text = text
 
 
+class _FakeThinkingBlock:
+    """A fake ``thinking``-type content block (extended thinking).
+
+    Deliberately has no ``.text`` attribute, mirroring the real SDK's
+    ``ThinkingBlock`` (which exposes ``.thinking`` instead) -- this is what
+    triggers ``AttributeError: 'ThinkingBlock' object has no attribute
+    'text'`` if code blindly indexes ``content[0]``.
+    """
+
+    def __init__(self, thinking: str = "pondering...") -> None:
+        self.type = "thinking"
+        self.thinking = thinking
+
+
 class _FakeMessage:
-    def __init__(self, text: str) -> None:
-        self.content = [_FakeContentBlock(text)]
+    def __init__(self, text: str, leading_blocks: list[Any] | None = None) -> None:
+        self.content = [*(leading_blocks or []), _FakeContentBlock(text)]
 
 
 class _FakeMessagesAPI:
-    def __init__(self, response_text: str | None = None, error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        response_text: str | None = None,
+        error: Exception | None = None,
+        leading_blocks: list[Any] | None = None,
+        content: list[Any] | None = None,
+    ) -> None:
         self._response_text = response_text
         self._error = error
+        self._leading_blocks = leading_blocks
+        self._content = content
         self.last_kwargs: dict[str, Any] | None = None
 
-    def create(self, **kwargs: Any) -> _FakeMessage:
+    def create(self, **kwargs: Any) -> Any:
         self.last_kwargs = kwargs
         if self._error is not None:
             raise self._error
+        if self._content is not None:
+
+            class _RawMessage:
+                pass
+
+            msg = _RawMessage()
+            msg.content = self._content
+            return msg
         assert self._response_text is not None
-        return _FakeMessage(self._response_text)
+        return _FakeMessage(self._response_text, leading_blocks=self._leading_blocks)
 
 
 class _FakeAnthropicClient:
-    def __init__(self, response_text: str | None = None, error: Exception | None = None) -> None:
-        self.messages = _FakeMessagesAPI(response_text=response_text, error=error)
+    def __init__(
+        self,
+        response_text: str | None = None,
+        error: Exception | None = None,
+        leading_blocks: list[Any] | None = None,
+        content: list[Any] | None = None,
+    ) -> None:
+        self.messages = _FakeMessagesAPI(
+            response_text=response_text, error=error, leading_blocks=leading_blocks, content=content
+        )
 
 
 def _item_info(decision: Decision = Decision.SELL) -> dict[str, Any]:
@@ -349,6 +390,40 @@ def test_claude_listing_text_provider_raises_on_unparseable_response() -> None:
 
     with pytest.raises(ListingTextError):
         provider.generate(_item_info())
+
+
+def test_claude_listing_text_provider_finds_text_block_after_leading_thinking_block() -> None:
+    """Regression test: a leading ThinkingBlock (extended thinking) must not
+    break parsing -- the provider should find the actual text block
+    regardless of its position in ``response.content``."""
+    response_json = json.dumps({"title": "Schreibtischlampe IKEA", "description": "Gut erhaltene Lampe. VB 15 Euro."})
+    fake_client = _FakeAnthropicClient(
+        response_text=response_json,
+        leading_blocks=[_FakeThinkingBlock()],
+    )
+    provider = ClaudeListingTextProvider(client=fake_client)
+
+    result = provider.generate(_item_info())
+
+    assert result["title"] == "Schreibtischlampe IKEA"
+    assert result["description"] == "Gut erhaltene Lampe. VB 15 Euro."
+
+
+def test_claude_listing_text_provider_raises_clear_error_when_no_text_block_present() -> None:
+    """No text block anywhere in the response -> a clear ListingTextError,
+    not a generic AttributeError or JSONDecodeError."""
+    fake_client = _FakeAnthropicClient(content=[_FakeThinkingBlock()])
+    provider = ClaudeListingTextProvider(client=fake_client)
+
+    with pytest.raises(ListingTextError, match="no text content block") as exc_info:
+        provider.generate(_item_info())
+
+    # Locks in the anti-rewrap fix specifically (not just the message
+    # substring, which a broken re-wrap would still contain as a suffix):
+    # the outer `except Exception` must not re-catch and re-wrap this error
+    # with a misleading "...as JSON"/chained-exception shape.
+    assert "as JSON" not in str(exc_info.value)
+    assert exc_info.value.__cause__ is None
 
 
 def test_claude_listing_text_provider_end_to_end_through_service() -> None:

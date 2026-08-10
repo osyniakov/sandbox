@@ -120,6 +120,23 @@ const PROCESSING_ITEM = {
   comparable_listings: [],
 }
 
+// Failed-pipeline fixtures (sandbox-khm.1/.2) -- `decision` stays at the DB
+// default ('pending') since these statuses are reached without ever
+// producing a real decision (see backend/app/models.py's ItemStatus).
+const IDENTIFICATION_FAILED_ITEM = {
+  ...PROCESSING_ITEM,
+  id: 5,
+  status: 'identification_failed',
+}
+
+const SEARCH_FAILED_ITEM = {
+  ...PROCESSING_ITEM,
+  id: 6,
+  identified_name: 'Cordless Drill',
+  category: 'Power Tools',
+  status: 'search_failed',
+}
+
 // Wrapped in AuthProvider (sandbox-dfr.5) since ItemResultPage now renders
 // SignOutControl (reads useAuth()) and fetches its photo via
 // useAuthedImageUrl (reads apiFetch, which reads localStorage directly, not
@@ -390,6 +407,50 @@ describe('ItemResultPage', () => {
     expect(screen.queryByText(/comparable listings/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/sell|give away|throw away/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/undefined/i)).not.toBeInTheDocument()
+  })
+
+  it('shows a distinct error message (not a decision badge) for identification_failed, and stops polling immediately', async () => {
+    vi.useFakeTimers()
+
+    mockPollingItemAndPhoto([IDENTIFICATION_FAILED_ITEM])
+
+    renderAtItem(5)
+
+    await advanceAndFlush(0)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /couldn't identify this item from the photo/i,
+    )
+    expect(screen.queryByText(/pending/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/still working on this item/i)).not.toBeInTheDocument()
+    expect(itemFetchCallCount()).toBe(1)
+
+    // Terminal by construction (identification_failed is now in
+    // TERMINAL_STATUSES) -- no further polling even well past one interval.
+    await advanceAndFlush(POLL_INTERVAL_MS * 5)
+    expect(itemFetchCallCount()).toBe(1)
+
+    vi.useRealTimers()
+  })
+
+  it('shows a distinct error message (not a decision badge) for search_failed, and stops polling immediately', async () => {
+    vi.useFakeTimers()
+
+    mockPollingItemAndPhoto([SEARCH_FAILED_ITEM])
+
+    renderAtItem(6)
+
+    await advanceAndFlush(0)
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      /couldn't find comparable listings right now/i,
+    )
+    expect(screen.queryByText(/pending/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/still working on this item/i)).not.toBeInTheDocument()
+    expect(itemFetchCallCount()).toBe(1)
+
+    await advanceAndFlush(POLL_INTERVAL_MS * 5)
+    expect(itemFetchCallCount()).toBe(1)
+
+    vi.useRealTimers()
   })
 
   it('renders the photo via an authenticated blob-URL fetch, not a raw unauthenticated <img src>', async () => {
