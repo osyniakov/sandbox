@@ -104,6 +104,19 @@ class Item(Base):
     # Stored as a JSON array of strings.
     search_keywords: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
+    # The exact Kleinanzeigen search query STRING that
+    # ``ComparableListingSearchService.search_item`` actually used, after its
+    # query-loosening logic ran (see ``app/comparable_search.py``'s module
+    # docstring "Query-loosening on zero results"). This is distinct from
+    # ``search_keywords`` above: ``search_keywords`` is the identification
+    # stage's raw output -- a list of independent candidate terms -- while
+    # ``search_query_used`` is the single query string that was actually
+    # sent to the provider (which may be all of those keywords joined, or
+    # just one of them individually if the joined query returned zero
+    # results and a narrower attempt succeeded, or the last attempted query
+    # if every attempt returned zero results and the search gave up).
+    search_query_used: Mapped[str | None] = mapped_column(String, nullable=True)
+
     suggested_price: Mapped[float | None] = mapped_column(Float, nullable=True)
     suggested_title: Mapped[str | None] = mapped_column(String, nullable=True)
     suggested_description: Mapped[str | None] = mapped_column(String, nullable=True)

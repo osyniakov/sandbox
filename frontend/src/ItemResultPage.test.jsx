@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import ItemResultPage from './ItemResultPage.jsx'
+import ItemResultPage, { buildKleinanzeigenSearchUrl } from './ItemResultPage.jsx'
 import { AuthProvider } from './AuthContext.jsx'
 import { API_BASE_URL } from './api.js'
 
@@ -26,6 +26,7 @@ const SELL_ITEM = {
   condition: 'good',
   hint: null,
   search_keywords: ['bosch', 'drill'],
+  search_query_used: null,
   suggested_price: 45.5,
   suggested_title: null,
   suggested_description: null,
@@ -91,6 +92,16 @@ const GIVE_AWAY_ITEM_WITH_SUGGESTION = {
   suggested_description: 'Complete board game, all pieces included.\nFree, just come pick it up.',
 }
 
+// search_query_used variant (sandbox-b9a.1/.2) -- the actual Kleinanzeigen
+// search query the pipeline used to find SELL_ITEM's comparable listings.
+// SELL_ITEM itself keeps this null (see search_query_used: null above) so
+// the "does not render" test below has a realistic fixture to assert
+// against, mirroring the suggested_title/suggested_description pattern.
+const SELL_ITEM_WITH_QUERY = {
+  ...SELL_ITEM,
+  search_query_used: 'bosch cordless drill',
+}
+
 const THROW_AWAY_ITEM = {
   ...SELL_ITEM,
   id: 3,
@@ -112,6 +123,7 @@ const PROCESSING_ITEM = {
   condition: null,
   hint: null,
   search_keywords: null,
+  search_query_used: null,
   suggested_price: null,
   decision: 'pending',
   status: 'pending_identification',
@@ -374,6 +386,59 @@ describe('ItemResultPage', () => {
     expect(screen.queryByText(/suggested kleinanzeigen listing/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /copy title/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /copy description/i })).not.toBeInTheDocument()
+  })
+
+  it('shows the search query used with a copy button and a working Kleinanzeigen search link when present', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM_WITH_QUERY })
+    const writeText = stubClipboard()
+
+    renderAtItem(1)
+
+    await waitFor(() => {
+      expect(screen.getByText(/kleinanzeigen search used: bosch cordless drill/i)).toBeInTheDocument()
+    })
+
+    const copyQueryButton = screen.getByRole('button', { name: /copy search query/i })
+    fireEvent.click(copyQueryButton)
+    expect(writeText).toHaveBeenCalledWith('bosch cordless drill')
+    await waitFor(() => {
+      expect(copyQueryButton).toHaveTextContent('Copied!')
+    })
+
+    const searchLink = screen.getByRole('link', { name: /search on kleinanzeigen/i })
+    expect(searchLink).toHaveAttribute(
+      'href',
+      buildKleinanzeigenSearchUrl(SELL_ITEM_WITH_QUERY.search_query_used),
+    )
+    expect(searchLink).toHaveAttribute('target', '_blank')
+    expect(searchLink).toHaveAttribute('rel', 'noopener noreferrer')
+  })
+
+  it('does not render the search-query-used section when search_query_used is null/empty', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM })
+
+    renderAtItem(1)
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
+    })
+
+    expect(screen.queryByText(/kleinanzeigen search used/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /copy search query/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /search on kleinanzeigen/i })).not.toBeInTheDocument()
+
+    // Also cover the empty-string case (falsy but not null) via the same
+    // conditional (`item.search_query_used &&`) without a second render.
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ...SELL_ITEM, search_query_used: '' }),
+    })
+    renderAtItem(1)
+    await waitFor(() => {
+      expect(screen.getAllByRole('heading', { name: /cordless drill/i })).toHaveLength(2)
+    })
+    expect(screen.queryAllByText(/kleinanzeigen search used/i)).toHaveLength(0)
   })
 
   it('renders the throw_away decision with no comparable listings and no suggested price', async () => {
@@ -668,5 +733,35 @@ describe('ItemResultPage', () => {
     expect(screen.getByText(/taking longer than expected/i)).toBeInTheDocument()
 
     vi.useRealTimers()
+  })
+})
+
+// Direct unit tests for the URL-building helper (sandbox-b9a.2), separate
+// from the component tests above so the exact URL format is pinned down in
+// isolation -- see that function's comment in ItemResultPage.jsx for why
+// this format is a best-effort guess, unverified against the real site.
+describe('buildKleinanzeigenSearchUrl', () => {
+  it('builds a dash-joined slug for a multi-word query', () => {
+    expect(buildKleinanzeigenSearchUrl('bosch cordless drill')).toBe(
+      'https://www.kleinanzeigen.de/s-bosch-cordless-drill/k0',
+    )
+  })
+
+  it('builds a single-segment slug for a single-word query', () => {
+    expect(buildKleinanzeigenSearchUrl('lamp')).toBe('https://www.kleinanzeigen.de/s-lamp/k0')
+  })
+
+  it('lowercases the query and collapses runs of whitespace', () => {
+    expect(buildKleinanzeigenSearchUrl('IKEA   Schreibtischlampe')).toBe(
+      'https://www.kleinanzeigen.de/s-ikea-schreibtischlampe/k0',
+    )
+  })
+
+  it('percent-encodes special characters within each word', () => {
+    expect(buildKleinanzeigenSearchUrl('bosch/drill "pro"')).toBe(
+      `https://www.kleinanzeigen.de/s-${encodeURIComponent('bosch/drill')}-${encodeURIComponent(
+        '"pro"',
+      )}/k0`,
+    )
   })
 })
