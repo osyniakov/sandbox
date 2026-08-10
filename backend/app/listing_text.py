@@ -107,6 +107,31 @@ class ListingTextError(Exception):
     """
 
 
+def _extract_text_block(response: Any) -> str:
+    """Return the text of the first ``text``-type block in ``response.content``.
+
+    The Anthropic Messages API does not guarantee that ``content[0]`` is a
+    text block -- when extended thinking is enabled (or for other reasons),
+    a ``ThinkingBlock`` (or some other non-text block) can be returned
+    before the actual text response. Blindly indexing ``content[0]`` then
+    either raises ``AttributeError`` (non-text blocks have no ``.text``
+    attribute) or silently grabs the wrong block's (possibly empty) text,
+    which later surfaces as a confusing ``json.JSONDecodeError``. This scans
+    all content blocks and returns the first whose ``type`` is ``"text"``,
+    regardless of position.
+    """
+    text_block = next(
+        (block for block in response.content if getattr(block, "type", None) == "text"),
+        None,
+    )
+    if text_block is None:
+        block_types = [getattr(block, "type", None) for block in response.content]
+        raise ListingTextError(
+            f"Claude listing-text response contained no text content block (block types: {block_types!r})"
+        )
+    return text_block.text
+
+
 def _decision_phrase(decision: Decision) -> str:
     if decision == Decision.GIVE_AWAY:
         return "given away for free"
@@ -187,8 +212,10 @@ class ClaudeListingTextProvider:
             raise ListingTextError(f"Claude listing-text API call failed: {exc}") from exc
 
         try:
-            text = response.content[0].text
+            text = _extract_text_block(response)
             data = json.loads(text)
+        except ListingTextError:
+            raise
         except Exception as exc:
             raise ListingTextError(
                 f"Could not parse Claude listing-text response as JSON: {exc}"

@@ -133,6 +133,31 @@ class IdentificationError(Exception):
     """
 
 
+def _extract_text_block(response: Any) -> str:
+    """Return the text of the first ``text``-type block in ``response.content``.
+
+    The Anthropic Messages API does not guarantee that ``content[0]`` is a
+    text block -- when extended thinking is enabled (or for other reasons),
+    a ``ThinkingBlock`` (or some other non-text block) can be returned
+    before the actual text response. Blindly indexing ``content[0]`` then
+    either raises ``AttributeError`` (non-text blocks have no ``.text``
+    attribute) or silently grabs the wrong block's (possibly empty) text,
+    which later surfaces as a confusing ``json.JSONDecodeError``. This scans
+    all content blocks and returns the first whose ``type`` is ``"text"``,
+    regardless of position.
+    """
+    text_block = next(
+        (block for block in response.content if getattr(block, "type", None) == "text"),
+        None,
+    )
+    if text_block is None:
+        block_types = [getattr(block, "type", None) for block in response.content]
+        raise IdentificationError(
+            f"Claude vision response contained no text content block (block types: {block_types!r})"
+        )
+    return text_block.text
+
+
 class ClaudeVisionProvider:
     """Default ``IdentificationProvider`` backed by Anthropic's vision API.
 
@@ -213,8 +238,10 @@ class ClaudeVisionProvider:
             raise IdentificationError(f"Claude vision API call failed: {exc}") from exc
 
         try:
-            text = response.content[0].text
+            text = _extract_text_block(response)
             data = json.loads(text)
+        except IdentificationError:
+            raise
         except Exception as exc:
             raise IdentificationError(
                 f"Could not parse Claude vision response as JSON: {exc}"
