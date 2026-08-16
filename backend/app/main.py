@@ -20,6 +20,9 @@ Endpoints:
   on the app's recommendation (e.g. actually listed it on
   Kleinanzeigen). See ``MANUAL_STATUS_TRANSITIONS`` below for the full
   transition table and the reasoning behind it (sandbox-yqf.11).
+* ``DELETE /items/{id}`` -- permanently delete an ``Item``, its
+  cascade-deleted ``comparable_listings`` rows, and its uploaded photo
+  file on disk (sandbox-uii.1).
 
 Full pipeline orchestration (identification -> comparable search ->
 pricing decision) lives in ``app/pipeline.py`` (sandbox-yqf.9); this
@@ -883,3 +886,36 @@ def update_item_status(
     session.commit()
     session.refresh(item)
     return _serialize_item(item)
+
+
+@app.delete("/items/{item_id}")
+def delete_item(
+    item_id: int,
+    session: Session = Depends(get_session),
+    user: str = Depends(require_user),
+) -> dict[str, object]:
+    """Permanently delete an ``Item`` and everything associated with it.
+
+    Returns 404 if no ``Item`` with ``item_id`` exists (same message style
+    as ``update_item_status``/``get_item``). On success, deletes the
+    item's uploaded photo file from disk FIRST (before the DB row), via
+    ``Path.unlink(missing_ok=True)`` -- ``missing_ok=True`` so an
+    already-missing photo file (e.g. removed out-of-band) doesn't turn
+    this into a 500 -- then deletes the ``Item`` row itself.
+    ``Item.comparable_listings``'s ``cascade="all, delete-orphan"`` (see
+    ``app/models.py``) makes SQLAlchemy delete the item's
+    ``ComparableListing`` rows automatically as part of the same
+    ``session.delete(item)`` + ``session.commit()``; no manual cleanup
+    query is needed here.
+
+    Returns 200 with a small JSON dict (not a bare 204) to match every
+    other endpoint in this file returning a JSON body.
+    """
+    item = session.get(Item, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
+
+    Path(item.photo_path).unlink(missing_ok=True)
+    session.delete(item)
+    session.commit()
+    return {"id": item_id, "deleted": True}

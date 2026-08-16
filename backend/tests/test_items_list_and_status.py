@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -20,7 +21,7 @@ from fastapi.testclient import TestClient
 import app.main as main_module
 from app.db import get_session, make_engine, make_session_factory
 from app.main import MANUAL_STATUS_TRANSITIONS, app
-from app.models import Decision, Item, ItemStatus
+from app.models import ComparableListing, Decision, Item, ItemStatus
 
 
 @pytest.fixture()
@@ -592,3 +593,151 @@ def test_patch_status_invalid_target_value_returns_422(
     )
 
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# DELETE /items/{id} (sandbox-uii.1)
+# ---------------------------------------------------------------------------
+#
+# Covers: successful delete (DB row gone, cascade-deleted
+# comparable_listings gone, photo file removed from disk), 404 for a
+# nonexistent item, 401 without auth, and the ``missing_ok=True``
+# already-missing-photo-file case explicitly.
+
+
+def _make_item_with_photo(
+    db_session_factory,
+    tmp_path: Path,
+    *,
+    status: ItemStatus = ItemStatus.DECIDED,
+    create_photo_file: bool = True,
+) -> tuple[int, Path]:
+    """Like ``_make_item``, but points ``photo_path`` at a real file under
+    ``tmp_path`` (optionally actually creating it on disk) so delete tests
+    can assert on real filesystem state rather than a fake path string."""
+    photo_path = tmp_path / f"photo-{uuid4().hex}.jpg"
+    if create_photo_file:
+        photo_path.write_bytes(b"fake-jpeg-bytes")
+
+    session = db_session_factory()
+    try:
+        item = Item(
+            photo_path=str(photo_path),
+            status=status,
+        )
+        session.add(item)
+        session.commit()
+        session.refresh(item)
+        return item.id, photo_path
+    finally:
+        session.close()
+
+
+def test_delete_item_missing_authorization_header_rejected_with_401_and_no_side_effect(
+    client: TestClient, db_session_factory, tmp_path: Path
+) -> None:
+    item_id, photo_path = _make_item_with_photo(db_session_factory, tmp_path)
+
+    response = client.delete(f"/items/{item_id}")
+
+    assert response.status_code == 401
+
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        assert item is not None
+    finally:
+        session.close()
+    assert photo_path.exists()
+
+
+def test_delete_item_on_missing_item_returns_404(
+    client: TestClient, auth_headers: dict[str, str]
+) -> None:
+    response = client.delete("/items/999999", headers=auth_headers)
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No item with id 999999."
+
+
+def test_delete_item_success_removes_row_cascade_listings_and_photo_file(
+    client: TestClient, db_session_factory, tmp_path: Path, auth_headers: dict[str, str]
+) -> None:
+    item_id, photo_path = _make_item_with_photo(db_session_factory, tmp_path)
+
+    # Attach comparable listings to the item, to confirm the cascade
+    # actually deletes them (not just trusting the ORM config) rather than
+    # e.g. leaving orphaned rows referencing a now-deleted item_id.
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Comparable Drill",
+                price=19.99,
+                url="https://example.com/listing/1",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Another Comparable Drill",
+                price=24.5,
+                url="https://example.com/listing/2",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.delete(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == item_id
+    assert body["deleted"] is True
+
+    # DB row is gone -- subsequent GET returns 404.
+    get_response = client.get(f"/items/{item_id}", headers=auth_headers)
+    assert get_response.status_code == 404
+
+    # Cascade-deleted comparable_listings rows are gone too (queried
+    # directly, not just trusted).
+    session = db_session_factory()
+    try:
+        assert session.get(Item, item_id) is None
+        remaining_listings = (
+            session.query(ComparableListing)
+            .filter(ComparableListing.item_id == item_id)
+            .all()
+        )
+        assert remaining_listings == []
+    finally:
+        session.close()
+
+    # The uploaded photo file is removed from disk.
+    assert not photo_path.exists()
+
+
+def test_delete_item_already_missing_photo_file_still_deletes_successfully(
+    client: TestClient, db_session_factory, tmp_path: Path, auth_headers: dict[str, str]
+) -> None:
+    """Exercises ``Path.unlink(missing_ok=True)`` explicitly: a photo file
+    that's already gone from disk (e.g. removed out-of-band) must not turn
+    the delete into a 500 -- the item should still delete cleanly."""
+    item_id, photo_path = _make_item_with_photo(
+        db_session_factory, tmp_path, create_photo_file=False
+    )
+    assert not photo_path.exists()
+
+    response = client.delete(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["id"] == item_id
+    assert body["deleted"] is True
+
+    session = db_session_factory()
+    try:
+        assert session.get(Item, item_id) is None
+    finally:
+        session.close()
