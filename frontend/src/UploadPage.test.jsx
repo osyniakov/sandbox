@@ -54,6 +54,19 @@ describe('UploadPage photo capture/upload flow', () => {
     cleanup()
   })
 
+  // Regression test for sandbox-7i6: a `capture` attribute on this input
+  // (e.g. `capture="environment"`) makes iOS Safari (and most mobile
+  // browsers) skip the normal file-picker sheet and jump straight into the
+  // camera, with no way to choose an existing photo from the library.
+  // `accept="image/*"` alone is enough to let the native picker offer both
+  // options -- `capture` must never be reintroduced here.
+  it('does not set a `capture` attribute on the photo input (would force the camera open on mobile)', () => {
+    renderUploadPage()
+
+    const input = screen.getByLabelText(/take or choose a photo/i)
+    expect(input).not.toHaveAttribute('capture')
+  })
+
   it('uploads the selected photo and navigates to the item results page on success', async () => {
     const user = userEvent.setup()
     fetch.mockResolvedValueOnce({
