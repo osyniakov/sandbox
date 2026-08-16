@@ -90,6 +90,30 @@ async function patchItemStatus(id, status, signal) {
   return response.json()
 }
 
+async function deleteItem(id, signal) {
+  const response = await apiFetch(`/items/${id}`, {
+    method: 'DELETE',
+    signal,
+  })
+  if (!response.ok) {
+    // Same session-expired handling as fetchItems/patchItemStatus above.
+    if (response.status === 401) {
+      throw new Error('Your session has expired. Please sign in again.')
+    }
+    let detail = `Failed to delete item (${response.status} ${response.statusText})`
+    try {
+      const body = await response.json()
+      if (body && typeof body.detail === 'string') {
+        detail = body.detail
+      }
+    } catch {
+      // Body wasn't JSON -- fall back to the generic message above.
+    }
+    throw new Error(detail)
+  }
+  return response.json()
+}
+
 // Renders a single inventory item's photo thumbnail (or a "no photo"/
 // loading placeholder), extracted into its own component because
 // `useAuthedImageUrl` is a hook and hooks can't be called inside the
@@ -144,6 +168,8 @@ function InventoryPage() {
   const [loadError, setLoadError] = useState('')
   const [updatingId, setUpdatingId] = useState(null)
   const [updateError, setUpdateError] = useState('')
+  const [deletingId, setDeletingId] = useState(null)
+  const [deleteError, setDeleteError] = useState('')
 
   const loadItems = useCallback(
     async (signal) => {
@@ -178,6 +204,22 @@ function InventoryPage() {
       setUpdateError(err.message || 'Could not update status.')
     } finally {
       setUpdatingId(null)
+    }
+  }
+
+  async function handleDelete(item) {
+    if (!window.confirm('Delete this item? This cannot be undone.')) {
+      return
+    }
+    setDeletingId(item.id)
+    setDeleteError('')
+    try {
+      await deleteItem(item.id)
+      setItems((prev) => prev.filter((existing) => existing.id !== item.id))
+    } catch (err) {
+      setDeleteError(err.message || 'Could not delete item.')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -244,6 +286,15 @@ function InventoryPage() {
         </div>
       )}
 
+      {deleteError && (
+        <div
+          className="mb-4 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
+          role="alert"
+        >
+          <p>{deleteError}</p>
+        </div>
+      )}
+
       {loadError && (
         <div
           className="mb-4 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
@@ -295,21 +346,28 @@ function InventoryPage() {
                   </div>
                 </div>
 
-                {nextStatuses.length > 0 && (
-                  <div className="flex w-full flex-col gap-1.5 sm:w-48">
-                    {nextStatuses.map((targetStatus) => (
-                      <button
-                        key={targetStatus}
-                        type="button"
-                        disabled={updatingId === item.id}
-                        onClick={() => handleAdvance(item, targetStatus)}
-                        className="cursor-pointer rounded border border-primary bg-primary px-3 py-1.5 text-sm font-medium whitespace-nowrap text-white hover:border-primary-hover hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        {STATUS_ACTION_LABELS[targetStatus]}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <div className="flex w-full flex-col gap-1.5 sm:w-48">
+                  {nextStatuses.map((targetStatus) => (
+                    <button
+                      key={targetStatus}
+                      type="button"
+                      disabled={updatingId === item.id || deletingId === item.id}
+                      onClick={() => handleAdvance(item, targetStatus)}
+                      className="cursor-pointer rounded border border-primary bg-primary px-3 py-1.5 text-sm font-medium whitespace-nowrap text-white hover:border-primary-hover hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {STATUS_ACTION_LABELS[targetStatus]}
+                    </button>
+                  ))}
+
+                  <button
+                    type="button"
+                    disabled={updatingId === item.id || deletingId === item.id}
+                    onClick={() => handleDelete(item)}
+                    className="cursor-pointer rounded border border-throw-away-border bg-throw-away-bg px-3 py-1.5 text-sm font-medium whitespace-nowrap text-throw-away-text hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {deletingId === item.id ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
               </li>
             )
           })}

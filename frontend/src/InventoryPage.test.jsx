@@ -411,4 +411,136 @@ describe('InventoryPage', () => {
       expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
     })
   })
+
+  it('deletes an item and removes it from the list after confirming', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fetch.mockImplementation((url, options = {}) => {
+      if (options.method === 'DELETE') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 1, deleted: true }),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => [DECIDED_SELL_ITEM],
+      })
+    })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /^delete$/i }))
+
+    expect(window.confirm).toHaveBeenCalledWith('Delete this item? This cannot be undone.')
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith(
+        `${API_BASE_URL}/items/1`,
+        expect.objectContaining({ method: 'DELETE' }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(screen.queryByText(/cordless drill/i)).not.toBeInTheDocument()
+    })
+  })
+
+  it('does not delete or call the endpoint when the confirmation is cancelled', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => [DECIDED_SELL_ITEM] })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /^delete$/i }))
+
+    expect(window.confirm).toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalledWith(
+      `${API_BASE_URL}/items/1`,
+      expect.objectContaining({ method: 'DELETE' }),
+    )
+    expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
+  })
+
+  it('shows an error and leaves the item in place when the delete request fails', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    fetch.mockImplementation((url, options = {}) => {
+      if (options.method === 'DELETE') {
+        return Promise.resolve({
+          ok: false,
+          status: 404,
+          statusText: 'Not Found',
+          json: async () => ({ detail: 'No item with id 1.' }),
+        })
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => [DECIDED_SELL_ITEM],
+      })
+    })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: /^delete$/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/no item with id 1/i)
+    })
+    expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
+  })
+
+  it('disables the delete button for an item while its delete is in flight', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    let resolveDelete
+    const deletePromise = new Promise((resolve) => {
+      resolveDelete = resolve
+    })
+    fetch.mockImplementation((url, options = {}) => {
+      if (options.method === 'DELETE') {
+        return deletePromise
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => [DECIDED_SELL_ITEM],
+      })
+    })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
+    })
+
+    const deleteButton = screen.getByRole('button', { name: /^delete$/i })
+    await user.click(deleteButton)
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /deleting/i })).toBeDisabled()
+    })
+
+    resolveDelete({ ok: true, status: 200, json: async () => ({ id: 1, deleted: true }) })
+
+    await waitFor(() => {
+      expect(screen.queryByText(/cordless drill/i)).not.toBeInTheDocument()
+    })
+  })
 })
