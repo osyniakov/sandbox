@@ -23,6 +23,30 @@ def _make_item(condition: str | None = "good", prices: list[float] | None = None
     return item
 
 
+def _make_item_with_listing_conditions(
+    item_condition: str | None = "good",
+    listings: list[tuple[float, str | None]] | None = None,
+) -> Item:
+    # Like _make_item, but lets each ComparableListing carry its own
+    # (price, condition) pair -- needed to exercise _median_price's
+    # new-condition filtering, which is per-listing, not per-item.
+    item = Item(
+        photo_path="/photos/item.jpg",
+        status=ItemStatus.PENDING_DECISION,
+        condition=item_condition,
+    )
+    item.comparable_listings = [
+        ComparableListing(
+            title=f"Listing {i}",
+            price=price,
+            url=f"https://example.com/{i}",
+            condition=listing_condition,
+        )
+        for i, (price, listing_condition) in enumerate(listings or [])
+    ]
+    return item
+
+
 # ---------------------------------------------------------------------------
 # sell
 # ---------------------------------------------------------------------------
@@ -161,3 +185,91 @@ def test_threshold_boundary_is_inclusive_of_sell() -> None:
     decision = PricingDecisionService().decide_item(item)
 
     assert decision == Decision.SELL
+
+
+# ---------------------------------------------------------------------------
+# new-condition comparable filtering (excludes brand-new listings from the
+# median, since every item this app prices is an inherently used/secondhand
+# good -- see _median_price/_is_new_condition in app/pricing.py).
+# ---------------------------------------------------------------------------
+
+
+def test_median_excludes_new_condition_comparables_mixed_with_used() -> None:
+    # Listings: (5, "neu") excluded, (20, "gebraucht") and (30, "gut") kept
+    # -> median of the surviving [20, 30] is 25.0, not the median of all
+    # three ([5, 20, 30] -> 20.0).
+    item = _make_item_with_listing_conditions(
+        item_condition="good",
+        listings=[(5.0, "neu"), (20.0, "gebraucht"), (30.0, "gut")],
+    )
+
+    decision = PricingDecisionService().decide_item(item)
+
+    assert item.suggested_price == 25.0
+    assert decision == Decision.SELL
+
+
+def test_median_falls_back_to_full_list_when_all_comparables_are_new() -> None:
+    # Every comparable is "new"-labeled -- filtering would leave zero
+    # comparables, so _median_price must gracefully fall back to the full
+    # unfiltered list rather than returning None (which would force an
+    # unwanted throw_away).
+    item = _make_item_with_listing_conditions(
+        item_condition="good",
+        listings=[(10.0, "neu"), (20.0, "brandneu"), (30.0, "new")],
+    )
+
+    decision = PricingDecisionService().decide_item(item)
+
+    assert item.suggested_price == 20.0
+    assert item.suggested_price is not None
+    assert decision == Decision.SELL
+
+
+def test_median_does_not_exclude_wie_neu_or_neuwertig_used_condition() -> None:
+    # "wie neu" ("like new") and "neuwertig" ("as new") are common
+    # Kleinanzeigen tiers meaning excellent-but-used condition, NOT
+    # genuinely new -- they must NOT be excluded from the median. This is
+    # the most important negative case for _is_new_condition.
+    item = _make_item_with_listing_conditions(
+        item_condition="good",
+        listings=[(20.0, "wie neu"), (30.0, "neuwertig"), (40.0, "gut")],
+    )
+
+    decision = PricingDecisionService().decide_item(item)
+
+    # None of the three listings are excluded -> median of [20, 30, 40] is 30.0.
+    assert item.suggested_price == 30.0
+    assert decision == Decision.SELL
+
+
+def test_median_does_not_exclude_none_condition_comparables() -> None:
+    # A comparable with condition=None (no condition data scraped) must
+    # not be treated as "new" -- absence of data is not a "new" signal.
+    item = _make_item_with_listing_conditions(
+        item_condition="good",
+        listings=[(20.0, None), (30.0, None)],
+    )
+
+    decision = PricingDecisionService().decide_item(item)
+
+    assert item.suggested_price == 25.0
+    assert decision == Decision.SELL
+
+
+def test_broken_item_condition_still_throws_away_regardless_of_new_filtering() -> None:
+    # item.condition == "broken" must still force throw_away even when the
+    # item's comparables include (and, after filtering, are entirely) a
+    # "new"-labeled listing -- new-condition filtering only ever applies to
+    # comparable listings, never to the item's own condition/_is_broken.
+    item = _make_item_with_listing_conditions(
+        item_condition="broken",
+        listings=[(50.0, "neu"), (60.0, "gut"), (70.0, "gebraucht")],
+    )
+
+    decision = PricingDecisionService().decide_item(item)
+
+    assert decision == Decision.THROW_AWAY
+    # suggested_price is still recorded (median of the non-new [60, 70]
+    # comparables) for informational purposes even though thrown away.
+    assert item.suggested_price == 65.0

@@ -110,14 +110,84 @@ logger = logging.getLogger(__name__)
 # regardless of comparable-listing data. See module docstring point 1.
 _BROKEN_CONDITION = "broken"
 
+# Comparable-listing condition strings (as scraped by
+# ``app/comparable_search.py``'s ``_extract_condition``, straight from
+# Kleinanzeigen's freeform "Zustand" attribute value) that unambiguously
+# mean "brand new / unopened / never used". Matched via exact (not
+# substring) equality after stripping whitespace and lowercasing, since
+# Kleinanzeigen's condition field is effectively a small fixed set of
+# tiers picked from a dropdown, not prose -- exact matching is also what
+# keeps this deliberately conservative: a substring check would risk
+# "neu" spuriously matching inside "wie neu" ("like new" -- a distinct,
+# common, explicitly-used-but-excellent tier that must NOT be excluded).
+# Every string in this set means "was never used"; every string that is
+# merely "excellent used condition" (e.g. "wie neu", "neuwertig", "like
+# new", "as new", "gebraucht - wie neu", "sehr guter zustand") is
+# deliberately absent and must stay absent.
+_NEW_CONDITION_VALUES = frozenset(
+    {
+        "neu",
+        "brandneu",
+        "new",
+        "brand new",
+        "originalverpackt (ovp), neu",
+    }
+)
+
+
+def _is_new_condition(condition: str | None) -> bool:
+    """Return ``True`` only if ``condition`` unambiguously means "brand new / unopened".
+
+    Conservative by design: only matches an exact (post strip+lower) hit
+    against ``_NEW_CONDITION_VALUES``. Explicitly does NOT match
+    used-but-excellent-condition phrasing like "wie neu"/"neuwertig"/"like
+    new"/"as new" -- those are a different, common Kleinanzeigen condition
+    tier that remains a perfectly valid comparable. ``None``/empty/
+    unrecognized strings (absence of condition data) are never treated as
+    "new" -- they return ``False``.
+    """
+    if not condition:
+        return False
+    return condition.strip().lower() in _NEW_CONDITION_VALUES
+
 
 def _median_price(comparable_listings: Sequence[ComparableListing]) -> float | None:
     """Return the median ``price`` across ``comparable_listings``, or ``None`` if empty.
 
     See module docstring "suggested_price formula" for why median (not
     mean) is used.
+
+    Before computing the median, listings whose ``condition`` is
+    unambiguously "brand new" (per ``_is_new_condition``) are excluded --
+    every item this app prices is an inherently used/secondhand basement
+    good, so comparing it against a brand-new retail listing would bias
+    the price signal. If every single comparable happens to be "new"-
+    labeled (filtering would leave zero comparables), this falls back to
+    computing the median from the full, unfiltered list rather than
+    losing pricing data entirely -- the same graceful-degradation
+    philosophy used elsewhere in this codebase (e.g. query-loosening in
+    ``app/comparable_search.py``).
     """
-    prices = [listing.price for listing in comparable_listings]
+    used_listings = [
+        listing for listing in comparable_listings if not _is_new_condition(listing.condition)
+    ]
+    if used_listings:
+        listings_for_median = used_listings
+        logger.debug(
+            "_median_price: excluded %d new-condition listing(s) out of %d total",
+            len(comparable_listings) - len(used_listings),
+            len(comparable_listings),
+        )
+    else:
+        listings_for_median = comparable_listings
+        if comparable_listings:
+            logger.info(
+                "_median_price: all %d comparable listing(s) were new-condition; "
+                "falling back to the full unfiltered list rather than losing pricing data",
+                len(comparable_listings),
+            )
+
+    prices = [listing.price for listing in listings_for_median]
     if not prices:
         return None
     return statistics.median(prices)
@@ -147,6 +217,15 @@ class PricingDecisionService:
         ``item.condition``, sets ``item.suggested_price``,
         ``item.decision``, and advances ``item.status`` to ``decided``.
         Returns the computed ``Decision`` for convenience.
+
+        Before the median is computed, ``item.comparable_listings`` entries
+        whose own ``condition`` is unambiguously "brand new" (see
+        ``_is_new_condition``) are excluded, since every item this app
+        prices is an inherently used/secondhand good -- with a graceful
+        fallback to the full, unfiltered list if every single comparable
+        turns out to be "new"-labeled (see ``_median_price``). This is
+        separate from ``item.condition``/``_is_broken``, which only ever
+        looks at the *item's own* condition, never a comparable listing's.
         """
         median_price = _median_price(item.comparable_listings)
         broken = _is_broken(item.condition)
