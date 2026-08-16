@@ -134,7 +134,6 @@ function UploadPage() {
         ref={fileInputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         onChange={handleFileChange}
         disabled={status === 'uploading'}
         aria-busy={status === 'uploading'}
