@@ -190,7 +190,7 @@ def test_threshold_boundary_is_inclusive_of_sell() -> None:
 # ---------------------------------------------------------------------------
 # new-condition comparable filtering (excludes brand-new listings from the
 # median, since every item this app prices is an inherently used/secondhand
-# good -- see _median_price/_is_new_condition in app/pricing.py).
+# good -- see _median_price/is_new_condition in app/pricing.py).
 # ---------------------------------------------------------------------------
 
 
@@ -230,7 +230,7 @@ def test_median_does_not_exclude_wie_neu_or_neuwertig_used_condition() -> None:
     # "wie neu" ("like new") and "neuwertig" ("as new") are common
     # Kleinanzeigen tiers meaning excellent-but-used condition, NOT
     # genuinely new -- they must NOT be excluded from the median. This is
-    # the most important negative case for _is_new_condition.
+    # the most important negative case for is_new_condition.
     item = _make_item_with_listing_conditions(
         item_condition="good",
         listings=[(20.0, "wie neu"), (30.0, "neuwertig"), (40.0, "gut")],

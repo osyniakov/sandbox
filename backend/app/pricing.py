@@ -135,7 +135,7 @@ _NEW_CONDITION_VALUES = frozenset(
 )
 
 
-def _is_new_condition(condition: str | None) -> bool:
+def is_new_condition(condition: str | None) -> bool:
     """Return ``True`` only if ``condition`` unambiguously means "brand new / unopened".
 
     Conservative by design: only matches an exact (post strip+lower) hit
@@ -158,7 +158,7 @@ def _median_price(comparable_listings: Sequence[ComparableListing]) -> float | N
     mean) is used.
 
     Before computing the median, listings whose ``condition`` is
-    unambiguously "brand new" (per ``_is_new_condition``) are excluded --
+    unambiguously "brand new" (per ``is_new_condition``) are excluded --
     every item this app prices is an inherently used/secondhand basement
     good, so comparing it against a brand-new retail listing would bias
     the price signal. If every single comparable happens to be "new"-
@@ -169,7 +169,7 @@ def _median_price(comparable_listings: Sequence[ComparableListing]) -> float | N
     ``app/comparable_search.py``).
     """
     used_listings = [
-        listing for listing in comparable_listings if not _is_new_condition(listing.condition)
+        listing for listing in comparable_listings if not is_new_condition(listing.condition)
     ]
     if used_listings:
         listings_for_median = used_listings
@@ -220,7 +220,7 @@ class PricingDecisionService:
 
         Before the median is computed, ``item.comparable_listings`` entries
         whose own ``condition`` is unambiguously "brand new" (see
-        ``_is_new_condition``) are excluded, since every item this app
+        ``is_new_condition``) are excluded, since every item this app
         prices is an inherently used/secondhand good -- with a graceful
         fallback to the full, unfiltered list if every single comparable
         turns out to be "new"-labeled (see ``_median_price``). This is
