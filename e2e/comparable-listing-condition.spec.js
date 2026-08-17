@@ -1,33 +1,32 @@
 // Comparable-listing "brand new" condition scenario (sandbox-igd.2), part
 // of the sandbox-634-epic-conventions E2E suite that drives a real browser
 // against the ALREADY-DEPLOYED real frontend + backend (Railway). This
-// exercises the sandbox-igd.1 backend change (backend/app/pricing.py's
-// `_is_new_condition`/`_median_price`, which excludes genuinely-new-
-// condition comparable listings from the median-price calculation): here
-// we assert the corresponding FRONTEND-visible invariant that no
-// comparable-listing entry ever rendered on a terminal item's results page
-// displays an unambiguous "brand new" condition label.
+// exercises the sandbox-igd.1/sandbox-yjz backend changes
+// (backend/app/pricing.py's `is_new_condition`/`_median_price`, plus
+// backend/app/main.py's `_displayable_comparable_listings`, which together
+// exclude genuinely-new-condition comparable listings from BOTH the
+// median-price calculation AND the serialized `comparable_listings` the
+// API returns): here we assert the corresponding FRONTEND-visible
+// invariant that no comparable-listing entry ever rendered on a terminal
+// item's results page displays an unambiguous "brand new" condition
+// label.
 //
 // IMPORTANT non-determinism note (matching this suite's existing honesty
 // conventions -- see upload-journey.spec.js / hint-and-second-item.spec.js
 // "What has and hasn't been verified" sections): real Kleinanzeigen search
-// results are non-deterministic across runs. sandbox-igd.1 does NOT filter
-// "new"-condition listings out of `item.comparable_listings` itself (only
-// out of the *median-price calculation* -- ItemResultPage.jsx still
-// renders every comparable listing the backend returns, including any
-// "new"-labeled ones), so this test's negative assertion below (no
-// rendered listing text matches an unambiguous "brand new" marker) is
-// checked against whatever comparable listings a real run happens to
-// surface. In any SINGLE real run, it is entirely possible -- expected,
-// even -- that zero comparable listings are "new"-labeled (or that there
-// are zero comparable listings at all), in which case this assertion is
-// trivially satisfied without ever having been meaningfully exercised
-// against a true "new"-labeled listing. That is expected and does not
-// indicate a bug in this test; see the local-fixture verification
-// described in this bead's implementation notes for a true positive/
-// negative proof of the matching logic itself (not committed here, per
-// this suite's established practice -- built and torn down locally
-// instead).
+// results are non-deterministic across runs, and as of sandbox-yjz a
+// genuinely new-condition listing should never even be SERIALIZED by the
+// backend (barring the all-listings-were-new graceful fallback), so this
+// test's negative assertion below (no rendered listing text matches an
+// unambiguous "brand new" marker) should hold by construction rather than
+// by chance. It can still be trivially (and validly) satisfied by a run
+// that surfaces zero comparable listings at all, or where none of the
+// found listings were ever new-condition to begin with -- that's expected
+// and does not indicate a bug in this test; see the local-fixture
+// verification described in this bead's implementation notes for a true
+// positive/negative proof of the matching logic itself (not committed
+// here, per this suite's established practice -- built and torn down
+// locally instead).
 
 import { expect, test } from '@playwright/test'
 import path from 'node:path'
@@ -50,7 +49,7 @@ const FIXTURE_PHOTO_PATH = path.join(
 // --- Pure, separately-testable "unambiguous brand-new" text matcher ---
 //
 // Deliberately mirrors, but is a SEPARATE implementation from,
-// backend/app/pricing.py's `_is_new_condition` (see that function's own
+// backend/app/pricing.py's `is_new_condition` (see that function's own
 // docstring/comment for the reasoning behind its exact marker/exclusion
 // sets). This function operates on a comparable listing's full RENDERED
 // <li> text (title + price + condition + location all concatenated by
@@ -146,7 +145,7 @@ test('no rendered comparable listing shows an unambiguous "brand new" condition 
     // the title (which precedes "EUR") is real, uncontrolled Kleinanzeigen
     // listing text and very commonly contains marketing language like
     // "NEU" even when the actual scraped `condition` field is "gebraucht"
-    // (used) -- backend/app/pricing.py's `_is_new_condition` only ever
+    // (used) -- backend/app/pricing.py's `is_new_condition` only ever
     // looks at the structured `condition` field, never the title. Matching
     // against the full text would therefore false-positive on such
     // listings; matching only the post-"EUR" suffix (condition + location)

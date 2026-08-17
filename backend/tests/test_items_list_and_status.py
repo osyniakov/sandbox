@@ -439,6 +439,191 @@ def test_decided_valid_next_statuses_is_listed_given_away_disposed(
 
 
 # ---------------------------------------------------------------------------
+# ``comparable_listings`` -- new-condition listings hidden from the
+# serialized response (sandbox-yjz, follow-up to sandbox-igd.1's pricing-
+# only exclusion). Presentation-layer only: the underlying
+# ``ComparableListing`` DB rows (and the pricing/decision calculation,
+# already covered by test_pricing.py) must never be touched by this
+# filtering.
+# ---------------------------------------------------------------------------
+
+
+def test_get_item_excludes_new_condition_listing_from_comparable_listings(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
+    )
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Used Drill",
+                price=19.99,
+                url="https://example.com/listing/used",
+                condition="used",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Bosch Akkuschrauber NEU",
+                price=40.0,
+                url="https://example.com/listing/new",
+                condition="new",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    titles = [listing["title"] for listing in body["comparable_listings"]]
+    assert titles == ["Used Drill"]
+
+
+def test_get_item_does_not_exclude_wie_neu_or_neuwertig_listings(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    """"wie neu"/"neuwertig" is a used-but-excellent-condition tier, not
+    "brand new" -- it must remain in the serialized comparable_listings
+    (same negative case rigor as sandbox-igd.1's own pricing tests)."""
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
+    )
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Wie Neu Drill",
+                price=29.99,
+                url="https://example.com/listing/wie-neu",
+                condition="wie neu",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Neuwertig Drill",
+                price=27.5,
+                url="https://example.com/listing/neuwertig",
+                condition="neuwertig",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    titles = {listing["title"] for listing in body["comparable_listings"]}
+    assert titles == {"Wie Neu Drill", "Neuwertig Drill"}
+
+
+def test_get_item_falls_back_to_full_list_when_all_comparable_listings_are_new(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    """If literally every comparable listing found is new-condition,
+    filtering them all out would leave an empty array -- fall back to
+    showing the full unfiltered list instead (same graceful-degradation
+    philosophy as ``_median_price``'s own fallback in app/pricing.py)."""
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
+    )
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        item.comparable_listings.append(
+            ComparableListing(
+                title="New Drill One",
+                price=40.0,
+                url="https://example.com/listing/new1",
+                condition="neu",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="New Drill Two",
+                price=45.0,
+                url="https://example.com/listing/new2",
+                condition="brand new",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    titles = {listing["title"] for listing in body["comparable_listings"]}
+    assert titles == {"New Drill One", "New Drill Two"}
+
+
+def test_get_item_new_condition_filtering_does_not_delete_underlying_db_rows(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    """The most important negative case: filtering new-condition listings
+    out of the serialized response must NOT reassign/mutate
+    ``item.comparable_listings`` (which has
+    ``cascade="all, delete-orphan"`` -- reassigning it would actually
+    DELETE rows from the DB). Confirmed here by querying the DB directly,
+    via a fresh session, after the request that triggers the filtering."""
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
+    )
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Used Drill",
+                price=19.99,
+                url="https://example.com/listing/used",
+                condition="used",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Bosch Akkuschrauber NEU",
+                price=40.0,
+                url="https://example.com/listing/new",
+                condition="new",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+    assert response.status_code == 200
+    # Sanity: the response did indeed filter the new-condition listing out.
+    body = response.json()
+    assert len(body["comparable_listings"]) == 1
+
+    # But the underlying DB rows for BOTH listings (including the excluded
+    # new-condition one) must still exist untouched.
+    fresh_session = db_session_factory()
+    try:
+        remaining_listings = (
+            fresh_session.query(ComparableListing)
+            .filter(ComparableListing.item_id == item_id)
+            .all()
+        )
+        assert len(remaining_listings) == 2
+        titles = {listing.title for listing in remaining_listings}
+        assert titles == {"Used Drill", "Bosch Akkuschrauber NEU"}
+    finally:
+        fresh_session.close()
+
+
+# ---------------------------------------------------------------------------
 # PATCH /items/{id}/status -- valid transitions
 # ---------------------------------------------------------------------------
 
