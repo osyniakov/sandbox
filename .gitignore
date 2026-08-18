@@ -1,3 +1,14 @@
+# Loop harness transcripts
+loop/logs/
+
+# Comparison experiment: variant workspaces and bulky transcripts stay local
+experiments/workspaces/
+experiments/results/**/*.jsonl
+experiments/results/**/*.stderr
+
+# Maven build output
+target/
+
 # Compiled class file
 *.class
 

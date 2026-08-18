@@ -1,0 +1,16 @@
+{
+  "label": "iter-1",
+  "wall_clock_s": 97,
+  "exit_code": 0,
+  "started_at": "2026-07-11T18:37:28Z",
+  "num_turns": 16,
+  "duration_ms": 95719,
+  "duration_api_ms": 83363,
+  "total_cost_usd": 0.3844349,
+  "input_tokens": 28,
+  "output_tokens": 7419,
+  "cache_creation_input_tokens": 18687,
+  "cache_read_input_tokens": 533363,
+  "is_error": false,
+  "subtype": "success"
+}
