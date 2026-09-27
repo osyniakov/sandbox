@@ -39,6 +39,14 @@ from tests.eval.run_eval import evaluate, load_cases
 DECISION_ACCURACY_FLOOR = 1.0
 PRICE_RANGE_FLOOR = 0.90
 
+# Added by bead sandbox-8jm.6 (``Item.decision_confidence``, measured:
+# confidence_accuracy == 11/11 == 1.0 across the cases that carry an
+# ``expected_confidence`` label -- see ``cases.json``; cases documenting
+# other known weaknesses deliberately don't carry that label yet). Same
+# ratchet convention as the two floors above: later beads may raise this
+# (e.g. by labelling more cases) but must never lower it.
+CONFIDENCE_ACCURACY_FLOOR = 1.0
+
 
 def test_eval_accuracy_meets_baseline_floor():
     report = evaluate(load_cases())
@@ -50,4 +58,8 @@ def test_eval_accuracy_meets_baseline_floor():
     assert report.price_in_range_rate >= PRICE_RANGE_FLOOR, (
         f"Price-in-range rate {report.price_in_range_rate:.4f} dropped below the "
         f"baseline floor {PRICE_RANGE_FLOOR}"
+    )
+    assert report.confidence_accuracy >= CONFIDENCE_ACCURACY_FLOOR, (
+        f"Confidence accuracy {report.confidence_accuracy:.4f} dropped below the "
+        f"baseline floor {CONFIDENCE_ACCURACY_FLOOR}"
     )

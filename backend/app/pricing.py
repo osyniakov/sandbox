@@ -93,6 +93,27 @@ This is the precedence this module applies, evaluated top to bottom
 Condition matching is case-insensitive and whitespace-trimmed (mirroring
 how ``ItemIdentificationService`` normalizes raw provider strings), so
 ``"Broken"``/``" broken "``/``"BROKEN"`` are all treated the same.
+
+``decision_confidence`` (bead sandbox-8jm.6)
+---------------------------------------------
+Separate from the ``sell``/``give_away``/``throw_away`` classification
+itself, ``decide_item`` also sets ``Item.decision_confidence`` to
+``"high"`` or ``"low"`` -- a signal of how much comparable-listing
+evidence backs the decision, deliberately NOT folded into the
+``Decision`` enum (a per-bead USER DECISION: too few comparables should
+flag the decision as less trustworthy, not change what it recommends).
+Rules (see ``config.MIN_COMPARABLES_FOR_CONFIDENCE``):
+
+* A ``broken``-condition item is always ``"high"`` confidence -- its
+  decision is driven entirely by ``Item.condition``, not by comparables,
+  so a low comparable count says nothing about how trustworthy it is.
+* Otherwise, ``"low"`` iff the number of *usable* comparable listings
+  (``is_usable_comparable``) is below ``config.MIN_COMPARABLES_FOR_CONFIDENCE``
+  -- this already covers the zero-comparables case (0 is always below the
+  floor) and the "every comparable was unusable, so ``_median_price``
+  fell back to the unfiltered list" case (the usable count is still 0
+  there, even though a median was computed from the raw list).
+* ``"high"`` otherwise.
 """
 
 from __future__ import annotations
@@ -209,6 +230,19 @@ def is_usable_comparable(listing: ComparableListing) -> bool:
     return True
 
 
+def _usable_comparables(
+    comparable_listings: Sequence[ComparableListing],
+) -> list[ComparableListing]:
+    """Return the subset of ``comparable_listings`` that ``is_usable_comparable`` accepts.
+
+    Small shared helper so both ``_median_price`` (which needs the
+    filtered *prices*) and ``decide_item`` (which needs the filtered
+    *count*, for ``decision_confidence``) apply the exact same filter
+    without duplicating the list comprehension or drifting out of sync.
+    """
+    return [listing for listing in comparable_listings if is_usable_comparable(listing)]
+
+
 def _median_price(comparable_listings: Sequence[ComparableListing]) -> float | None:
     """Return the median ``price`` across ``comparable_listings``, or ``None`` if empty.
 
@@ -230,9 +264,7 @@ def _median_price(comparable_listings: Sequence[ComparableListing]) -> float | N
     median (-> ``give_away``), which is the correct signal rather than no
     signal at all.
     """
-    usable_listings = [
-        listing for listing in comparable_listings if is_usable_comparable(listing)
-    ]
+    usable_listings = _usable_comparables(comparable_listings)
     if usable_listings:
         listings_for_median = usable_listings
         logger.debug(
@@ -305,6 +337,7 @@ class PricingDecisionService:
         """
         median_price = _median_price(item.comparable_listings)
         broken = is_broken_condition(item.condition)
+        usable_count = len(_usable_comparables(item.comparable_listings))
 
         if broken:
             decision = Decision.THROW_AWAY
@@ -315,18 +348,40 @@ class PricingDecisionService:
         else:
             decision = Decision.GIVE_AWAY
 
+        # decision_confidence: a separate "how much evidence backs this
+        # decision" signal, deliberately NOT folded into ``Decision`` (see
+        # bead sandbox-8jm.6's USER DECISION). A broken item's decision is
+        # condition-driven, not comparable-driven, so it's always "high"
+        # regardless of how many (if any) comparables exist. Otherwise,
+        # zero comparable listings at all means zero usable ones too, so
+        # the general "< MIN_COMPARABLES_FOR_CONFIDENCE" rule below already
+        # covers that case ("low") without a separate branch -- including
+        # when ``_median_price`` fell back to the unfiltered list because
+        # every listing was unusable (``usable_count`` is 0 there).
+        if broken:
+            decision_confidence = "high"
+        elif usable_count < config.MIN_COMPARABLES_FOR_CONFIDENCE:
+            decision_confidence = "low"
+        else:
+            decision_confidence = "high"
+
         logger.info(
             "Decision for item id=%s: median_price=%r condition=%r broken=%s "
-            "sell_threshold=%r -> %s",
+            "sell_threshold=%r usable_comparables=%d min_comparables_for_confidence=%r "
+            "-> %s (confidence=%s)",
             getattr(item, "id", None),
             median_price,
             item.condition,
             broken,
             config.SELL_THRESHOLD,
+            usable_count,
+            config.MIN_COMPARABLES_FOR_CONFIDENCE,
             decision.value,
+            decision_confidence,
         )
 
         item.suggested_price = median_price
         item.decision = decision
+        item.decision_confidence = decision_confidence
         item.status = ItemStatus.DECIDED
         return decision

@@ -79,6 +79,9 @@ class CaseResult:
     actual_price: float | None
     decision_correct: bool
     price_in_range: bool | None
+    expected_confidence: str | None
+    actual_confidence: str | None
+    confidence_correct: bool | None
 
 
 @dataclass
@@ -104,6 +107,20 @@ class EvalReport:
         if not scored:
             return 0.0
         correct = sum(1 for r in scored if r.price_in_range)
+        return correct / len(scored)
+
+    @property
+    def confidence_accuracy(self) -> float:
+        """Fraction of cases with a non-null ``expected_confidence`` that passed.
+
+        Cases without an ``expected_confidence`` label (``confidence_correct``
+        is ``None``) are excluded from both numerator and denominator, same
+        convention as ``price_in_range_rate`` above.
+        """
+        scored = [r for r in self.results if r.confidence_correct is not None]
+        if not scored:
+            return 0.0
+        correct = sum(1 for r in scored if r.confidence_correct)
         return correct / len(scored)
 
 
@@ -146,6 +163,14 @@ def evaluate(cases: list[dict[str, Any]]) -> EvalReport:
             lo, hi = expected_price_range
             price_in_range = actual_price is not None and lo <= actual_price <= hi
 
+        expected_confidence = case.get("expected_confidence")
+        actual_confidence = item.decision_confidence
+        confidence_correct: bool | None
+        if expected_confidence is None:
+            confidence_correct = None
+        else:
+            confidence_correct = actual_confidence == expected_confidence
+
         report.results.append(
             CaseResult(
                 id=case["id"],
@@ -155,13 +180,19 @@ def evaluate(cases: list[dict[str, Any]]) -> EvalReport:
                 actual_price=actual_price,
                 decision_correct=decision_correct,
                 price_in_range=price_in_range,
+                expected_confidence=expected_confidence,
+                actual_confidence=actual_confidence,
+                confidence_correct=confidence_correct,
             )
         )
     return report
 
 
 def _print_report(report: EvalReport) -> None:
-    header = f"{'id':<35} {'expected':<12} {'actual':<12} {'median':>8}  {'pass?'}"
+    header = (
+        f"{'id':<35} {'expected':<12} {'actual':<12} {'median':>8}  "
+        f"{'conf(exp/act)':<15} {'pass?'}"
+    )
     print(header)
     print("-" * len(header))
     for r in report.results:
@@ -170,10 +201,16 @@ def _print_report(report: EvalReport) -> None:
             price_mark = "n/a"
         else:
             price_mark = "OK" if r.price_in_range else "FAIL"
+        if r.confidence_correct is None:
+            confidence_mark = "n/a"
+        else:
+            confidence_mark = "OK" if r.confidence_correct else "FAIL"
         median_str = f"{r.actual_price:.2f}" if r.actual_price is not None else "None"
+        conf_str = f"{r.expected_confidence or '-'}/{r.actual_confidence or '-'}"
         print(
             f"{r.id:<35} {r.expected_decision:<12} {r.actual_decision:<12} "
-            f"{median_str:>8}  decision={decision_mark} price={price_mark}"
+            f"{median_str:>8}  {conf_str:<15} "
+            f"decision={decision_mark} price={price_mark} confidence={confidence_mark}"
         )
     print("-" * len(header))
     print(f"Decision accuracy:   {report.decision_accuracy:.4f} ({sum(1 for r in report.results if r.decision_correct)}/{len(report.results)})")
@@ -181,6 +218,11 @@ def _print_report(report: EvalReport) -> None:
     print(
         f"Price-in-range rate: {report.price_in_range_rate:.4f} "
         f"({sum(1 for r in scored if r.price_in_range)}/{len(scored)})"
+    )
+    confidence_scored = [r for r in report.results if r.confidence_correct is not None]
+    print(
+        f"Confidence accuracy: {report.confidence_accuracy:.4f} "
+        f"({sum(1 for r in confidence_scored if r.confidence_correct)}/{len(confidence_scored)})"
     )
 
 

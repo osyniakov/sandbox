@@ -456,3 +456,109 @@ def test_median_falls_back_to_full_list_when_all_comparables_are_unusable() -> N
 
     assert item.suggested_price == 0.0
     assert decision == Decision.GIVE_AWAY
+
+
+# ---------------------------------------------------------------------------
+# decision_confidence (sandbox-8jm.6)
+# ---------------------------------------------------------------------------
+
+
+def test_confidence_is_low_with_zero_comparables() -> None:
+    # Zero comparables -> throw_away, and confidence is "low": there is no
+    # market evidence at all backing the decision.
+    item = _make_item(condition="good", prices=[])
+
+    decision = PricingDecisionService().decide_item(item)
+
+    assert decision == Decision.THROW_AWAY
+    assert item.decision_confidence == "low"
+
+
+def test_confidence_is_low_with_one_usable_comparable() -> None:
+    assert config.MIN_COMPARABLES_FOR_CONFIDENCE == 3
+    item = _make_item(condition="good", prices=[40.0])
+
+    PricingDecisionService().decide_item(item)
+
+    assert item.decision_confidence == "low"
+
+
+def test_confidence_is_low_with_two_usable_comparables() -> None:
+    assert config.MIN_COMPARABLES_FOR_CONFIDENCE == 3
+    item = _make_item(condition="good", prices=[20.0, 30.0])
+
+    PricingDecisionService().decide_item(item)
+
+    assert item.decision_confidence == "low"
+
+
+def test_confidence_is_high_with_exactly_the_minimum_usable_comparables() -> None:
+    # Exactly config.MIN_COMPARABLES_FOR_CONFIDENCE (3) usable comparables
+    # meets the floor -> "high" (< is strict, so == the floor is enough).
+    assert config.MIN_COMPARABLES_FOR_CONFIDENCE == 3
+    item = _make_item(condition="good", prices=[20.0, 25.0, 30.0])
+
+    PricingDecisionService().decide_item(item)
+
+    assert item.decision_confidence == "high"
+
+
+def test_confidence_is_high_with_more_than_the_minimum_usable_comparables() -> None:
+    item = _make_item(condition="good", prices=[20.0, 25.0, 30.0, 35.0, 40.0])
+
+    PricingDecisionService().decide_item(item)
+
+    assert item.decision_confidence == "high"
+
+
+def test_confidence_is_high_for_broken_item_regardless_of_comparable_count() -> None:
+    # Broken items are always "high" confidence -- the decision is driven
+    # entirely by item.condition, not by how many comparables exist, so a
+    # low comparable count doesn't make the throw_away call less trustworthy.
+    item = _make_item(condition="broken", prices=[])
+
+    decision = PricingDecisionService().decide_item(item)
+
+    assert decision == Decision.THROW_AWAY
+    assert item.decision_confidence == "high"
+
+    item_with_comps = _make_item(condition="broken", prices=[150.0, 160.0, 180.0])
+
+    decision_with_comps = PricingDecisionService().decide_item(item_with_comps)
+
+    assert decision_with_comps == Decision.THROW_AWAY
+    assert item_with_comps.decision_confidence == "high"
+
+
+def test_confidence_is_low_when_all_comparables_are_unusable_fallback_path() -> None:
+    # Every comparable is FREE, so is_usable_comparable excludes all of
+    # them and _median_price falls back to the full unfiltered list (see
+    # test_median_falls_back_to_full_list_when_all_comparables_are_unusable
+    # above) -- a median IS computed, but the *usable* count is 0, which is
+    # below MIN_COMPARABLES_FOR_CONFIDENCE, so confidence must still be
+    # "low" even though a decision and suggested_price were produced.
+    item = Item(
+        photo_path="/photos/item.jpg",
+        status=ItemStatus.PENDING_DECISION,
+        condition="good",
+    )
+    item.comparable_listings = [
+        ComparableListing(
+            title="Free Drill 1",
+            price=0.0,
+            url="https://example.com/0",
+            price_type="FREE",
+        ),
+        ComparableListing(
+            title="Free Drill 2",
+            price=0.0,
+            url="https://example.com/1",
+            price_type="FREE",
+        ),
+    ]
+
+    decision = PricingDecisionService().decide_item(item)
+
+    assert decision == Decision.GIVE_AWAY
+    assert item.suggested_price == 0.0
+    assert item.decision_confidence == "low"

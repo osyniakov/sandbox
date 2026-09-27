@@ -60,6 +60,7 @@ def _make_item(
     *,
     status: ItemStatus,
     decision: Decision = Decision.PENDING,
+    decision_confidence: str | None = None,
     identified_name: str | None = None,
     user_hint: str | None = None,
     suggested_title: str | None = None,
@@ -71,6 +72,7 @@ def _make_item(
             photo_path="/x/uploads/fake.jpg",
             status=status,
             decision=decision,
+            decision_confidence=decision_confidence,
             identified_name=identified_name,
             user_hint=user_hint,
             suggested_title=suggested_title,
@@ -159,6 +161,7 @@ def test_list_items_returns_all_items_with_full_serialized_shape(
         assert "photo_url" in item
         assert "comparable_listings" in item
         assert "decision" in item
+        assert "decision_confidence" in item
         assert "status" in item
         assert "hint" in item
         assert "suggested_title" in item
@@ -167,6 +170,35 @@ def test_list_items_returns_all_items_with_full_serialized_shape(
     by_id = {item["id"]: item for item in body}
     assert by_id[id1]["hint"] == "Bosch drill, orange casing"
     assert by_id[id2]["hint"] is None
+
+
+def test_get_item_decision_confidence_is_none_when_undecided(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.PENDING_SEARCH, decision=Decision.PENDING
+    )
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["decision_confidence"] is None
+
+
+def test_get_item_decision_confidence_reflects_stored_value(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    item_id = _make_item(
+        db_session_factory,
+        status=ItemStatus.DECIDED,
+        decision=Decision.SELL,
+        decision_confidence="low",
+    )
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["decision_confidence"] == "low"
 
 
 def test_list_items_empty_when_no_items(

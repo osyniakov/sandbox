@@ -742,6 +742,7 @@ def _serialize_item(item: Item) -> dict[str, object]:
         "suggested_title": item.suggested_title,
         "suggested_description": item.suggested_description,
         "decision": item.decision.value,
+        "decision_confidence": item.decision_confidence,
         "status": item.status.value,
         "valid_next_statuses": sorted(
             s.value for s in MANUAL_STATUS_TRANSITIONS.get(item.status, frozenset())
