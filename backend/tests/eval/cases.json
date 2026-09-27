@@ -341,6 +341,28 @@
       "expected_decision": "sell",
       "expected_price_range": [18, 42],
       "expected_confidence": "high"
+    },
+    {
+      "id": "negated_broken_terms_stay_included",
+      "description": "bead sandbox-0as: working item whose comparable listings mention broken-listing terms only in negated form ('nicht defekt', 'kein Bastlerartikel', 'defektfrei') -- these are genuine working comparables and must stay in the median, alongside one genuinely broken 'defekt' listing that must still be dropped. Documents the negation-aware _filter_broken_listing_titles fix (no exclude= forwarded to the provider any more).",
+      "item": {
+        "identified_name": "Bosch Bohrmaschine",
+        "brand": "Bosch",
+        "condition": "good",
+        "search_keywords": ["bosch bohrmaschine"]
+      },
+      "provider_results": {
+        "bosch bohrmaschine": [
+          {"title": "Bosch Bohrmaschine, nicht defekt", "price": 30, "url": "https://example.test/46", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Bohrmaschine Bosch kein Bastlerartikel", "price": 40, "url": "https://example.test/47", "condition": "gebraucht", "location": "Hamburg", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Bosch Schlagbohrmaschine defektfrei", "price": 45, "url": "https://example.test/48", "condition": "gebraucht", "location": "Muenchen", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Bosch Bohrmaschine ohne Defekt", "price": 35, "url": "https://example.test/49", "condition": "gebraucht", "location": "Koeln", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Bosch Bohrmaschine defekt", "price": 5, "url": "https://example.test/50", "condition": "gebraucht", "location": "Dresden", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [25, 55],
+      "expected_confidence": "high"
     }
   ]
 }

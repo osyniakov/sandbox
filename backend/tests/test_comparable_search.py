@@ -674,20 +674,14 @@ def test_end_to_end_through_service_with_fake_kleinanzeigen_client() -> None:
 
 @pytest.mark.parametrize(
     "condition",
-    ["good", "fair", "Good", " fair ", None],
+    ["good", "fair", "Good", " fair ", None, "broken", "Broken", " BROKEN "],
 )
-def test_search_item_passes_exclude_when_item_not_broken(condition: str | None) -> None:
-    item = _make_item(keywords=["lamp"], condition=condition)
-    provider = _StubProvider(responses=[[]])
-    service = ComparableListingSearchService(provider=provider)
-
-    service.search_item(item)
-
-    assert provider.exclude_calls == [list(_BROKEN_LISTING_TERMS)]
-
-
-@pytest.mark.parametrize("condition", ["broken", "Broken", " BROKEN "])
-def test_search_item_passes_no_exclude_when_item_broken(condition: str) -> None:
+def test_search_item_never_passes_exclude_to_provider(condition: str | None) -> None:
+    """bead sandbox-0as: the service never forwards `exclude=` to the
+    provider any more, regardless of the item's own condition -- see module
+    docstring "Excluding defekt/Bastler/Ersatzteile listings" for why
+    (the underlying library applies it as a substring match against title
+    AND description, silently dropping good negated listings)."""
     item = _make_item(keywords=["lamp"], condition=condition)
     provider = _StubProvider(responses=[[]])
     service = ComparableListingSearchService(provider=provider)
@@ -725,6 +719,36 @@ def test_filter_broken_listing_titles_ignores_missing_or_non_string_title() -> N
     ]
     filtered = _filter_broken_listing_titles(raw_results)
     assert filtered == raw_results
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Akkuschrauber defekt",
+        "Bastlerstück Bohrmaschine",
+        "Ersatzteile Rasenmäher",
+        "Nicht defekt, aber Ersatzteile fehlen",
+        "defekt? nicht wirklich",
+    ],
+)
+def test_filter_broken_listing_titles_drops_unnegated_terms(title: str) -> None:
+    raw_results = [{"title": title, "price": 5.0, "url": "https://x/1"}]
+    assert _filter_broken_listing_titles(raw_results) == []
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Akkuschrauber, nicht defekt",
+        "Kein Bastlerartikel – voll funktionsfähig",
+        "Bohrmaschine defektfrei",
+        "Ohne Defekt, top Zustand",
+        "nicht mal defekt",
+    ],
+)
+def test_filter_broken_listing_titles_keeps_negated_terms(title: str) -> None:
+    raw_results = [{"title": title, "price": 30.0, "url": "https://x/1"}]
+    assert _filter_broken_listing_titles(raw_results) == raw_results
 
 
 def test_all_results_dropped_by_broken_filter_triggers_query_loosening() -> None:
@@ -771,6 +795,26 @@ def test_kleinanzeigen_api_provider_omits_exclude_when_none() -> None:
 
     assert fake_client.last_kwargs is not None
     assert "exclude" not in fake_client.last_kwargs
+
+
+def test_search_item_end_to_end_keeps_negated_drops_unnegated() -> None:
+    """bead sandbox-0as end-to-end: a "nicht defekt" listing survives the
+    search while a genuinely "defekt" one is dropped, with no `exclude=`
+    ever reaching the provider."""
+    item = _make_item(keywords=["akkuschrauber"], condition="good")
+    raw_results = [
+        {"title": "Akkuschrauber, nicht defekt", "price": 35.0, "url": "https://x/1"},
+        {"title": "Akkuschrauber defekt", "price": 5.0, "url": "https://x/2"},
+    ]
+    provider = _StubProvider(responses=[raw_results])
+    service = ComparableListingSearchService(provider=provider)
+
+    ok = service.search_item(item)
+
+    assert ok is True
+    assert provider.exclude_calls == [None]
+    assert len(item.comparable_listings) == 1
+    assert item.comparable_listings[0].title == "Akkuschrauber, nicht defekt"
 
 
 # ---------------------------------------------------------------------------

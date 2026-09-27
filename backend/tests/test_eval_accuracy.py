@@ -19,25 +19,29 @@ from __future__ import annotations
 
 from tests.eval.run_eval import evaluate, load_cases
 
-# Raised by bead sandbox-8jm.5 (measured: decision_accuracy == 15/15 ==
-# 1.0, price_in_range_rate == 10/11 == 0.909090...), rounded down. This bead
-# added the brand-only-fallback-keyword skip and the token-overlap
-# relevance gate on single-keyword fallback results, which fixed the price
-# case formerly named ``brand_only_fallback_unrelated`` (renamed
-# ``brand_only_fallback_skipped_uses_relevant_keyword`` -- its search_keywords
-# now include a genuinely relevant fallback term, ``akkuschrauber``, so the
-# brand-only ``bosch`` keyword is skipped and the relevant one supplies the
-# evidence) and added a new case, ``only_unrelated_brand_results`` (no
-# relevant comparables at all -> throw_away), which the pre-8jm.5 code got
-# wrong (it would have priced the item off unrelated same-brand listings).
-# Previous baseline (bead sandbox-8jm.4): decision_accuracy == 14/14 ==
+# Raised by bead sandbox-0as (measured: decision_accuracy == 16/16 == 1.0,
+# price_in_range_rate == 11/12 == 0.916666...), rounded down. This bead
+# stopped forwarding `exclude=` to the kleinanzeigen-api provider (it was
+# applying a plain substring match against title+description, silently
+# dropping good negated listings like "nicht defekt") and made the local
+# `_filter_broken_listing_titles` negation-aware instead. Added a new case,
+# ``negated_broken_terms_stay_included`` (working item whose comparables use
+# "nicht defekt" / "kein Bastlerartikel" / "defektfrei" phrasing plus one
+# genuinely broken listing), which the pre-sandbox-0as code got wrong
+# (measured on the same cases.json against pre-sandbox-0as code:
+# decision_accuracy == 15/16 == 0.9375, price_in_range_rate == 10/12 ==
+# 0.833333... -- the negated listings were all dropped, leaving zero
+# comparables and a throw_away decision).
+# Previous baseline (bead sandbox-8jm.5): decision_accuracy == 15/15 ==
+# 1.0, price_in_range_rate == 10/11 == 0.909090... (1.0 / 0.90).
+# Earlier baseline (bead sandbox-8jm.4): decision_accuracy == 14/14 ==
 # 1.0, price_in_range_rate == 9/11 == 0.818181... (1.0 / 0.81).
 # Earlier baseline (bead sandbox-8jm.3): decision_accuracy == 13/14 ==
 # 0.928571..., price_in_range_rate == 8/11 == 0.727272... (0.92 / 0.72).
 # Earlier baseline (bead sandbox-8jm.1): decision_accuracy == 11/14 ==
 # 0.785714..., price_in_range_rate == 6/11 == 0.545454... (0.78 / 0.54).
 DECISION_ACCURACY_FLOOR = 1.0
-PRICE_RANGE_FLOOR = 0.90
+PRICE_RANGE_FLOOR = 0.91
 
 # Added by bead sandbox-8jm.6 (``Item.decision_confidence``, measured:
 # confidence_accuracy == 11/11 == 1.0 across the cases that carry an
@@ -45,6 +49,7 @@ PRICE_RANGE_FLOOR = 0.90
 # other known weaknesses deliberately don't carry that label yet). Same
 # ratchet convention as the two floors above: later beads may raise this
 # (e.g. by labelling more cases) but must never lower it.
+# Still 1.0 after bead sandbox-0as's new labelled case (measured: 12/12).
 CONFIDENCE_ACCURACY_FLOOR = 1.0
 
 
