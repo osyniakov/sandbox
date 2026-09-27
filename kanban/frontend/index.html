@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kanban Board</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="app-header">
+    <h1>Kanban Board</h1>
+    <form id="add-task-form" class="add-form" autocomplete="off">
+      <input
+        type="text"
+        id="new-task-title"
+        data-testid="new-task-title"
+        placeholder="Add a task to To Do…"
+        maxlength="200"
+        aria-label="New task title"
+      >
+      <button type="submit" data-testid="add-task">Add task</button>
+    </form>
+  </header>
+
+  <div id="error-banner" class="error-banner" hidden role="alert">
+    <span id="error-message"></span>
+    <button type="button" id="error-dismiss" class="error-dismiss" aria-label="Dismiss error">&times;</button>
+  </div>
+
+  <main class="board">
+    <section class="column" data-column="todo">
+      <header class="column-header">
+        <h2>To Do</h2>
+        <span class="count" data-testid="count-todo">0</span>
+      </header>
+      <div class="task-list" data-column="todo"></div>
+    </section>
+
+    <section class="column" data-column="doing">
+      <header class="column-header">
+        <h2>Doing</h2>
+        <span class="count" data-testid="count-doing">0</span>
+      </header>
+      <div class="task-list" data-column="doing"></div>
+    </section>
+
+    <section class="column" data-column="done">
+      <header class="column-header">
+        <h2>Done</h2>
+        <span class="count" data-testid="count-done">0</span>
+      </header>
+      <div class="task-list" data-column="done"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
