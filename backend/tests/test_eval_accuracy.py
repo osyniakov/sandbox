@@ -6,13 +6,18 @@ below the currently-measured baseline.
 
 DECISION_ACCURACY_FLOOR and PRICE_RANGE_FLOOR below are set to exactly the
 values measured at the time this test was written (rounded DOWN to 2
-decimal places), NOT to 1.0 -- several cases in cases.json intentionally
-document known weaknesses in app/comparable_search.py and app/pricing.py
-(see that file's per-case ``description`` fields) and are expected to fail
-today. This is a ratchet, not a target: later beads that fix one of those
-documented weaknesses MUST raise these floors to match the new, higher
-measured value -- never lower them. If a change legitimately regresses
-accuracy, that's a real bug to fix, not a floor to relax.
+decimal places), NOT to 1.0 -- cases.json originally included several
+cases that intentionally documented known weaknesses in
+app/comparable_search.py and app/pricing.py; most of those have since
+been fixed by later beads and now pass (see cases.json's per-case
+``description`` fields and this file's per-bead history comments below).
+Only one documented weakness remains expected to fail today: the
+all-new-condition fallback case's suggested price (``all_comparables_brand_new``
+in cases.json), which is why PRICE_RANGE_FLOOR is still below 1.0. This is
+a ratchet, not a target: later beads that fix a documented weakness MUST
+raise these floors to match the new, higher measured value -- never lower
+them. If a change legitimately regresses accuracy, that's a real bug to
+fix, not a floor to relax.
 """
 
 from __future__ import annotations
@@ -78,13 +83,20 @@ PRICE_RANGE_FLOOR = 0.93
 
 # Added by bead sandbox-8jm.6 (``Item.decision_confidence``, measured:
 # confidence_accuracy == 11/11 == 1.0 across the cases that carry an
-# ``expected_confidence`` label -- see ``cases.json``; cases documenting
-# other known weaknesses deliberately don't carry that label yet). Same
-# ratchet convention as the two floors above: later beads may raise this
-# (e.g. by labelling more cases) but must never lower it.
+# ``expected_confidence`` label -- see ``cases.json``; at the time, the
+# cases documenting other known weaknesses didn't carry that label yet).
+# Same ratchet convention as the two floors above: later beads may raise
+# this (e.g. by labelling more cases) but must never lower it.
 # Still 1.0 after bead sandbox-0as's new labelled case (measured: 12/12).
 # Still 1.0 after bead sandbox-182's two new labelled cases (measured: 14/14).
 # Still 1.0 after bead sandbox-3ht's new labelled case (measured: 15/15).
+# Still 1.0 after bead sandbox-4yg labelled the 4 remaining cases that had
+# no ``expected_confidence`` yet (``defekt_majority_for_working_item``,
+# ``suche_wanted_ads_at_1_euro``, ``placeholder_1_euro_prices``,
+# ``all_comparables_brand_new`` -- all "low", each with fewer than
+# ``MIN_COMPARABLES_FOR_CONFIDENCE`` usable comparables after search-side
+# filtering); every case in cases.json now carries the label (measured:
+# 19/19 == 1.0).
 CONFIDENCE_ACCURACY_FLOOR = 1.0
 
 

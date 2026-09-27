@@ -3,11 +3,15 @@
     "Labels in this file describe what a careful HUMAN would decide for each",
     "item, given the raw comparable-listing data provided -- NOT what the",
     "current app/comparable_search.py + app/pricing.py code actually",
-    "produces. Several cases are deliberately designed to document known",
-    "weaknesses in the current implementation (brand-only fallback noise,",
+    "produces. A few cases were originally designed to document known",
+    "weaknesses in the implementation (brand-only fallback noise,",
     "defekt/Bastler/Ersatzteile majorities, 'Suche ...' wanted ads and",
     "placeholder EUR1 prices polluting the median, and the all-new-condition",
-    "fallback overpricing used goods) and are EXPECTED to fail today -- see",
+    "fallback overpricing used goods) -- most of those have since been fixed",
+    "by later beads (see each case's own ``description`` field and",
+    "test_eval_accuracy.py's per-bead history comments) and now correctly",
+    "pass; only the all-new-condition fallback's suggested PRICE remains a",
+    "documented, EXPECTED-to-fail weakness today -- see",
     "backend/tests/test_eval_accuracy.py, which ratchets on the",
     "currently-measured baseline rather than requiring 100%.",
     "",
@@ -184,7 +188,7 @@
     },
     {
       "id": "defekt_majority_for_working_item",
-      "description": "The item itself works fine (condition good), but the comparable-listing search happens to surface mostly 'defekt/Bastler/Ersatzteile' (broken/for-tinkerers/spare-parts) listings at very low prices, plus one genuinely working comparable at a normal price. KNOWN WEAKNESS: code has no filter for defekt/Bastler/Ersatzteile listings (that's bead sandbox-8jm.4) so the low-priced junk listings dominate the median and drag the decision down to give_away; a careful human would recognize those as not-comparable and price off the one working listing instead -- expected to FAIL both decision_correct and price_in_range today.",
+      "description": "The item itself works fine (condition good), but the comparable-listing search happens to surface mostly 'defekt/Bastler/Ersatzteile' (broken/for-tinkerers/spare-parts) listings at very low prices, plus one genuinely working comparable at a normal price. Guards against defekt/Bastler/Ersatzteile listings polluting the median for a working item; bead sandbox-8jm.4 added the filter that excludes them, so code and a careful human now agree: the junk listings are dropped and the decision/price are based on the one working listing.",
       "item": {
         "identified_name": "Kaffeemaschine",
         "brand": null,
@@ -200,7 +204,8 @@
         ]
       },
       "expected_decision": "sell",
-      "expected_price_range": [15, 35]
+      "expected_price_range": [15, 35],
+      "expected_confidence": "low"
     },
     {
       "id": "zu_verschenken_free_listings",
@@ -224,7 +229,7 @@
     },
     {
       "id": "suche_wanted_ads_at_1_euro",
-      "description": "The search surfaces several 'Suche ...' (wanted/looking-to-buy) ads posted at a nominal EUR1, mixed with a couple of genuine sale listings. KNOWN WEAKNESS: code doesn't distinguish demand ('Suche') ads from supply (sale) ads, so the EUR1 wanted-ad prices dominate the median and the decision drops to give_away; a careful human would exclude the wanted ads and price off the two real sale listings -- expected to FAIL both decision_correct and price_in_range today.",
+      "description": "The search surfaces several 'Suche ...' (wanted/looking-to-buy) ads posted at a nominal EUR1, mixed with a couple of genuine sale listings. Guards against demand ('Suche') ads polluting the median; bead sandbox-8jm.3 added the wanted-ad title filter, so code and a careful human now agree: the wanted ads are excluded and the decision/price are based on the two real sale listings.",
       "item": {
         "identified_name": "Gitarre",
         "brand": null,
@@ -241,11 +246,12 @@
         ]
       },
       "expected_decision": "sell",
-      "expected_price_range": [44, 102]
+      "expected_price_range": [44, 102],
+      "expected_confidence": "low"
     },
     {
       "id": "placeholder_1_euro_prices",
-      "description": "Several genuine sale listings (not 'Suche' wanted ads) use EUR1 as a placeholder/negotiable-price marker rather than a real asking price, mixed with a couple of listings with real prices. KNOWN WEAKNESS: code takes every listed price at face value, so the EUR1 placeholders dominate the median and the decision drops to give_away; a careful human recognizes EUR1 + 'VB' as a placeholder and prices off the real listings instead -- expected to FAIL both decision_correct and price_in_range today.",
+      "description": "Several genuine sale listings (not 'Suche' wanted ads) use EUR1 as a placeholder/negotiable-price marker rather than a real asking price, mixed with a couple of listings with real prices. Guards against EUR1 placeholder prices polluting the median; bead sandbox-8jm.3 added the sub-MIN_COMPARABLE_PRICE filter, so code and a careful human now agree: the placeholders are excluded and the decision/price are based on the real listings.",
       "item": {
         "identified_name": "3-Sitzer Sofa",
         "brand": null,
@@ -263,7 +269,8 @@
         ]
       },
       "expected_decision": "sell",
-      "expected_price_range": [81, 189]
+      "expected_price_range": [81, 189],
+      "expected_confidence": "low"
     },
     {
       "id": "all_comparables_brand_new",
@@ -282,7 +289,8 @@
         ]
       },
       "expected_decision": "sell",
-      "expected_price_range": [33, 77]
+      "expected_price_range": [33, 77],
+      "expected_confidence": "low"
     },
     {
       "id": "single_comparable_only",
