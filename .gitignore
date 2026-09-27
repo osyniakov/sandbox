@@ -30,6 +30,7 @@ hs_err_pid*
 *.db
 .beads-credential-key
 .beads/proxieddb/
+.beads.gate.lock
 
 # Python
 __pycache__/
@@ -58,4 +59,3 @@ backend/uploads/
 # with isolation:"worktree").
 .claude/worktrees/
 
-.beads.gate.lock
