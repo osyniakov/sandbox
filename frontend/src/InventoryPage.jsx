@@ -339,6 +339,21 @@ function InventoryPage() {
                       >
                         {DECISION_LABELS[item.decision] || item.decision}
                       </span>
+                      {/* Low-confidence badge (sandbox-8jm.7) -- same
+                          decision_confidence field as ItemResultPage.jsx,
+                          fits inline right after the decision badge without
+                          restructuring this row's layout. */}
+                      {item.decision_confidence === 'low' && (
+                        <span
+                          className="ml-1 inline-block rounded-full border border-pending-border bg-pending-bg px-2 py-0.5 text-xs font-semibold text-pending-text"
+                          role="status"
+                        >
+                          {item.decision === 'throw_away' &&
+                          (item.comparable_listings || []).length === 0
+                            ? 'No comparable listings found — double-check'
+                            : 'Few comparable listings — double-check the price'}
+                        </span>
+                      )}
                     </p>
                     <p className="mt-1 text-sm text-text">
                       Status: {STATUS_LABELS[item.status] || item.status}

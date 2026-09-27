@@ -131,6 +131,16 @@ class Item(Base):
         nullable=False,
         default=Decision.PENDING,
     )
+
+    # Confidence in ``decision``/``suggested_price``, set by
+    # ``PricingDecisionService.decide_item`` (see ``app/pricing.py``).
+    # Deliberately a plain nullable string ("high"/"low"), NOT a member of
+    # the ``Decision`` enum -- see bead sandbox-8jm.6's USER DECISION: too
+    # few usable comparables must not change the sell/give_away/throw_away
+    # classification itself, only flag how much evidence backs it. ``None``
+    # for items that haven't been decided yet (mirrors ``suggested_price``/
+    # ``suggested_title`` staying ``None`` pre-decision).
+    decision_confidence: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[ItemStatus] = mapped_column(
         SAEnum(
             ItemStatus,
@@ -172,6 +182,7 @@ class ComparableListing(Base):
     url: Mapped[str] = mapped_column(String, nullable=False)
     condition: Mapped[str | None] = mapped_column(String, nullable=True)
     location: Mapped[str | None] = mapped_column(String, nullable=True)
+    price_type: Mapped[str | None] = mapped_column(String, nullable=True)
 
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow

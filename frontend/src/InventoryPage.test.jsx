@@ -143,6 +143,62 @@ describe('InventoryPage', () => {
     })
   })
 
+  it('shows the low-confidence badge only for items with decision_confidence "low"', async () => {
+    mockInventoryFetch({
+      itemsHandler: () =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [
+            { ...DECIDED_SELL_ITEM, decision_confidence: 'low' },
+            { ...LISTED_ITEM, decision_confidence: 'high' },
+            { ...PENDING_ITEM, decision_confidence: null },
+          ],
+        }),
+      patchHandler: () => Promise.reject(new Error('unexpected PATCH call')),
+    })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
+    })
+
+    expect(
+      screen.getByText(/few comparable listings — double-check the price/i),
+    ).toBeInTheDocument()
+    expect(screen.getAllByText(/double-check/i)).toHaveLength(1)
+  })
+
+  it('shows the zero-comparable low-confidence text for a low-confidence throw_away item', async () => {
+    mockInventoryFetch({
+      itemsHandler: () =>
+        Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              ...DECIDED_SELL_ITEM,
+              decision: 'throw_away',
+              decision_confidence: 'low',
+              comparable_listings: [],
+            },
+          ],
+        }),
+      patchHandler: () => Promise.reject(new Error('unexpected PATCH call')),
+    })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
+    })
+
+    expect(
+      screen.getByText(/no comparable listings found — double-check/i),
+    ).toBeInTheDocument()
+  })
+
   it('shows a per-item placeholder (not a broken-image icon) while an authenticated photo fetch is pending, then renders it', async () => {
     let resolvePhotoFetch
     const photoPromise = new Promise((resolve) => {

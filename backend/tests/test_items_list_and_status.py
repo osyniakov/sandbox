@@ -60,6 +60,7 @@ def _make_item(
     *,
     status: ItemStatus,
     decision: Decision = Decision.PENDING,
+    decision_confidence: str | None = None,
     identified_name: str | None = None,
     user_hint: str | None = None,
     suggested_title: str | None = None,
@@ -71,6 +72,7 @@ def _make_item(
             photo_path="/x/uploads/fake.jpg",
             status=status,
             decision=decision,
+            decision_confidence=decision_confidence,
             identified_name=identified_name,
             user_hint=user_hint,
             suggested_title=suggested_title,
@@ -159,6 +161,7 @@ def test_list_items_returns_all_items_with_full_serialized_shape(
         assert "photo_url" in item
         assert "comparable_listings" in item
         assert "decision" in item
+        assert "decision_confidence" in item
         assert "status" in item
         assert "hint" in item
         assert "suggested_title" in item
@@ -167,6 +170,35 @@ def test_list_items_returns_all_items_with_full_serialized_shape(
     by_id = {item["id"]: item for item in body}
     assert by_id[id1]["hint"] == "Bosch drill, orange casing"
     assert by_id[id2]["hint"] is None
+
+
+def test_get_item_decision_confidence_is_none_when_undecided(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.PENDING_SEARCH, decision=Decision.PENDING
+    )
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["decision_confidence"] is None
+
+
+def test_get_item_decision_confidence_reflects_stored_value(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    item_id = _make_item(
+        db_session_factory,
+        status=ItemStatus.DECIDED,
+        decision=Decision.SELL,
+        decision_confidence="low",
+    )
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    assert response.json()["decision_confidence"] == "low"
 
 
 def test_list_items_empty_when_no_items(
@@ -926,3 +958,277 @@ def test_delete_item_already_missing_photo_file_still_deletes_successfully(
         assert session.get(Item, item_id) is None
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# ``comparable_listings`` -- price_type serialization (sandbox-8jm.2)
+# ---------------------------------------------------------------------------
+
+
+def test_get_item_serializes_price_type_for_comparable_listings(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
+    )
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Used Drill",
+                price=19.99,
+                url="https://example.com/listing/priced",
+                price_type="SPECIFIED_AMOUNT",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                # price=15.0 (not 0.0) so this listing isn't excluded by the
+                # MIN_COMPARABLE_PRICE floor (app/pricing.py's
+                # is_usable_comparable) -- this test is only about
+                # price_type=None serializing as null, unrelated to that
+                # filter, which is covered separately in test_pricing.py.
+                title="Free Drill",
+                price=15.0,
+                url="https://example.com/listing/free",
+                price_type=None,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    by_title = {listing["title"]: listing for listing in body["comparable_listings"]}
+    assert by_title["Used Drill"]["price_type"] == "SPECIFIED_AMOUNT"
+    assert by_title["Free Drill"]["price_type"] is None
+
+
+# ---------------------------------------------------------------------------
+# ``comparable_listings`` -- FREE / wanted-ad / placeholder-price filtering
+# (sandbox-18u, follow-up to sandbox-8jm.3: ``is_usable_comparable`` is
+# unit-tested in test_pricing.py, but nothing at the API level asserted
+# GET /items/{id} (and GET /items) actually apply it.)
+# ---------------------------------------------------------------------------
+
+
+def test_get_item_hides_free_wanted_and_placeholder_comparables(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
+    )
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Bosch Akkuschrauber",
+                price=40.0,
+                url="https://example.com/listing/usable",
+                price_type="SPECIFIED_AMOUNT",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Free Drill",
+                price=0.0,
+                url="https://example.com/listing/free",
+                price_type="FREE",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Suche Akkuschrauber",
+                price=20.0,
+                url="https://example.com/listing/wanted",
+                price_type="SPECIFIED_AMOUNT",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Placeholder Drill",
+                price=1.0,
+                url="https://example.com/listing/placeholder",
+                price_type="PLEASE_CONTACT",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Neu Akkuschrauber",
+                price=80.0,
+                url="https://example.com/listing/new",
+                condition="Neu",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    urls = [listing["url"] for listing in body["comparable_listings"]]
+    assert urls == ["https://example.com/listing/usable"]
+
+
+def test_get_item_falls_back_to_full_list_when_all_comparables_are_unusable(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
+    )
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Free Drill One",
+                price=0.0,
+                url="https://example.com/listing/free1",
+                price_type="FREE",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Free Drill Two",
+                price=0.0,
+                url="https://example.com/listing/free2",
+                price_type="FREE",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Suche Akkuschrauber dringend",
+                price=15.0,
+                url="https://example.com/listing/wanted",
+                price_type="SPECIFIED_AMOUNT",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    urls = {listing["url"] for listing in body["comparable_listings"]}
+    assert urls == {
+        "https://example.com/listing/free1",
+        "https://example.com/listing/free2",
+        "https://example.com/listing/wanted",
+    }
+
+
+def test_list_items_also_hides_free_wanted_and_placeholder_comparables(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    """Same filter must apply on GET /items (list endpoint), not just
+    GET /items/{id} -- both go through ``_serialize_item``."""
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
+    )
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Bosch Akkuschrauber",
+                price=40.0,
+                url="https://example.com/listing/usable",
+                price_type="SPECIFIED_AMOUNT",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Free Drill",
+                price=0.0,
+                url="https://example.com/listing/free",
+                price_type="FREE",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Suche Akkuschrauber",
+                price=20.0,
+                url="https://example.com/listing/wanted",
+                price_type="SPECIFIED_AMOUNT",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Placeholder Drill",
+                price=1.0,
+                url="https://example.com/listing/placeholder",
+                price_type="PLEASE_CONTACT",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Neu Akkuschrauber",
+                price=80.0,
+                url="https://example.com/listing/new",
+                condition="Neu",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get("/items", headers=auth_headers)
+
+    assert response.status_code == 200
+    (item,) = [i for i in response.json() if i["id"] == item_id]
+    urls = [listing["url"] for listing in item["comparable_listings"]]
+    assert urls == ["https://example.com/listing/usable"]
+
+
+def test_get_item_does_not_hide_wie_neu_condition_or_suchergebnis_title(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    """Guard against over-filtering: "wie neu" is a used-but-excellent
+    condition tier (not brand-new), and "Suchergebnis ..." merely contains
+    the substring "suche" without being a wanted-ad title -- neither
+    should be hidden."""
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
+    )
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Wie Neu Akkuschrauber",
+                price=35.0,
+                url="https://example.com/listing/wie-neu",
+                condition="wie neu",
+                price_type="SPECIFIED_AMOUNT",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Suchergebnis Akkuschrauber",
+                price=30.0,
+                url="https://example.com/listing/suchergebnis",
+                price_type="SPECIFIED_AMOUNT",
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    urls = {listing["url"] for listing in body["comparable_listings"]}
+    assert urls == {
+        "https://example.com/listing/wie-neu",
+        "https://example.com/listing/suchergebnis",
+    }

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app import config
 from app.models import ComparableListing, Decision, Item, ItemStatus
-from app.pricing import PricingDecisionService
+from app.pricing import PricingDecisionService, is_usable_comparable
 
 
 def _make_item(condition: str | None = "good", prices: list[float] | None = None) -> Item:
@@ -273,3 +273,292 @@ def test_broken_item_condition_still_throws_away_regardless_of_new_filtering() -
     # suggested_price is still recorded (median of the non-new [60, 70]
     # comparables) for informational purposes even though thrown away.
     assert item.suggested_price == 65.0
+
+
+# ---------------------------------------------------------------------------
+# is_usable_comparable -- one test per exclusion reason, plus the shared
+# fallback-to-full-list behavior driven through _median_price.
+# ---------------------------------------------------------------------------
+
+
+def _listing(
+    price: float = 20.0,
+    title: str = "Some Listing",
+    condition: str | None = None,
+    price_type: str | None = "SPECIFIED_AMOUNT",
+) -> ComparableListing:
+    return ComparableListing(
+        title=title,
+        price=price,
+        url="https://example.com/listing",
+        condition=condition,
+        price_type=price_type,
+    )
+
+
+def test_is_usable_comparable_true_for_ordinary_listing() -> None:
+    assert is_usable_comparable(_listing()) is True
+
+
+def test_is_usable_comparable_false_for_new_condition() -> None:
+    assert is_usable_comparable(_listing(condition="neu")) is False
+
+
+def test_is_usable_comparable_true_for_wie_neu_condition() -> None:
+    # "wie neu" is excellent-used, not brand-new -- must stay usable.
+    assert is_usable_comparable(_listing(condition="wie neu")) is True
+
+
+def test_is_usable_comparable_false_for_free_price_type() -> None:
+    assert is_usable_comparable(_listing(price_type="FREE")) is False
+
+
+def test_is_usable_comparable_false_for_free_price_type_case_insensitive_and_trimmed() -> None:
+    assert is_usable_comparable(_listing(price_type="  free  ")) is False
+
+
+def test_is_usable_comparable_true_for_please_contact_price_type_with_real_price() -> None:
+    # PLEASE_CONTACT ("VB") is not excluded by price_type alone.
+    assert is_usable_comparable(_listing(price_type="PLEASE_CONTACT", price=20.0)) is True
+
+
+def test_is_usable_comparable_false_for_please_contact_with_placeholder_price() -> None:
+    # A "VB" listing carrying a placeholder sub-floor price is caught by
+    # the minimum-price rule, not by price_type.
+    assert is_usable_comparable(_listing(price_type="PLEASE_CONTACT", price=1.0)) is False
+
+
+def test_is_usable_comparable_false_for_price_below_min_comparable_price() -> None:
+    assert is_usable_comparable(_listing(price=1.99)) is False
+
+
+def test_is_usable_comparable_true_for_price_at_min_comparable_price_boundary() -> None:
+    assert is_usable_comparable(_listing(price=config.MIN_COMPARABLE_PRICE)) is True
+
+
+def test_is_usable_comparable_reads_min_comparable_price_from_config(monkeypatch) -> None:
+    monkeypatch.setattr(config, "MIN_COMPARABLE_PRICE", 5.0)
+    assert is_usable_comparable(_listing(price=3.0)) is False
+    assert is_usable_comparable(_listing(price=5.0)) is True
+
+
+def test_is_usable_comparable_false_for_wanted_ad_title_suche_space() -> None:
+    assert is_usable_comparable(_listing(title="Suche Bohrmaschine")) is False
+
+
+def test_is_usable_comparable_false_for_wanted_ad_title_suche_colon() -> None:
+    assert is_usable_comparable(_listing(title="Suche: Bohrmaschine")) is False
+
+
+def test_is_usable_comparable_false_for_wanted_ad_title_exactly_suche() -> None:
+    assert is_usable_comparable(_listing(title="  Suche  ")) is False
+
+
+def test_is_usable_comparable_true_for_suchergebnis_title() -> None:
+    # Contains the word "suche" but doesn't START with it -- must not match.
+    assert is_usable_comparable(_listing(title="Suchergebnis Bohrmaschine")) is True
+
+
+def test_is_usable_comparable_true_for_tausche_suche_title() -> None:
+    # Same: "suche" appears mid-title, not as the leading word.
+    assert is_usable_comparable(_listing(title="Tausche/Suche Bohrmaschine")) is True
+
+
+def test_is_usable_comparable_true_for_none_condition_and_price_type() -> None:
+    assert is_usable_comparable(_listing(condition=None, price_type=None, price=20.0)) is True
+
+
+def test_is_usable_comparable_false_combines_multiple_reasons() -> None:
+    # Multiple independent exclusion reasons at once should still exclude.
+    listing = _listing(
+        title="Suche etwas",
+        price=0.5,
+        condition="neu",
+        price_type="FREE",
+    )
+    assert is_usable_comparable(listing) is False
+
+
+def test_median_excludes_free_wanted_and_placeholder_price_comparables() -> None:
+    # Mixed bag: a FREE listing, a wanted-ad-titled listing, a
+    # sub-MIN_COMPARABLE_PRICE placeholder, and two genuine listings.
+    # Only the two genuine listings should feed the median.
+    item = Item(
+        photo_path="/photos/item.jpg",
+        status=ItemStatus.PENDING_DECISION,
+        condition="good",
+    )
+    item.comparable_listings = [
+        ComparableListing(
+            title="Free Drill",
+            price=0.0,
+            url="https://example.com/0",
+            price_type="FREE",
+        ),
+        ComparableListing(
+            title="Suche Bohrmaschine",
+            price=15.0,
+            url="https://example.com/1",
+            price_type="SPECIFIED_AMOUNT",
+        ),
+        ComparableListing(
+            title="Cheap Drill VB",
+            price=1.0,
+            url="https://example.com/2",
+            price_type="PLEASE_CONTACT",
+        ),
+        ComparableListing(
+            title="Real Drill 1",
+            price=20.0,
+            url="https://example.com/3",
+            price_type="SPECIFIED_AMOUNT",
+        ),
+        ComparableListing(
+            title="Real Drill 2",
+            price=30.0,
+            url="https://example.com/4",
+            price_type="SPECIFIED_AMOUNT",
+        ),
+    ]
+
+    decision = PricingDecisionService().decide_item(item)
+
+    assert item.suggested_price == 25.0
+    assert decision == Decision.SELL
+
+
+def test_median_falls_back_to_full_list_when_all_comparables_are_unusable() -> None:
+    # Every comparable is FREE -- filtering would leave zero usable
+    # comparables, so _median_price falls back to the full unfiltered
+    # list, giving a ~EUR0 median -> give_away (the correct signal for an
+    # item whose only comparables are all free giveaways).
+    item = Item(
+        photo_path="/photos/item.jpg",
+        status=ItemStatus.PENDING_DECISION,
+        condition="good",
+    )
+    item.comparable_listings = [
+        ComparableListing(
+            title="Free Drill 1",
+            price=0.0,
+            url="https://example.com/0",
+            price_type="FREE",
+        ),
+        ComparableListing(
+            title="Free Drill 2",
+            price=0.0,
+            url="https://example.com/1",
+            price_type="FREE",
+        ),
+    ]
+
+    decision = PricingDecisionService().decide_item(item)
+
+    assert item.suggested_price == 0.0
+    assert decision == Decision.GIVE_AWAY
+
+
+# ---------------------------------------------------------------------------
+# decision_confidence (sandbox-8jm.6)
+# ---------------------------------------------------------------------------
+
+
+def test_confidence_is_low_with_zero_comparables() -> None:
+    # Zero comparables -> throw_away, and confidence is "low": there is no
+    # market evidence at all backing the decision.
+    item = _make_item(condition="good", prices=[])
+
+    decision = PricingDecisionService().decide_item(item)
+
+    assert decision == Decision.THROW_AWAY
+    assert item.decision_confidence == "low"
+
+
+def test_confidence_is_low_with_one_usable_comparable() -> None:
+    assert config.MIN_COMPARABLES_FOR_CONFIDENCE == 3
+    item = _make_item(condition="good", prices=[40.0])
+
+    PricingDecisionService().decide_item(item)
+
+    assert item.decision_confidence == "low"
+
+
+def test_confidence_is_low_with_two_usable_comparables() -> None:
+    assert config.MIN_COMPARABLES_FOR_CONFIDENCE == 3
+    item = _make_item(condition="good", prices=[20.0, 30.0])
+
+    PricingDecisionService().decide_item(item)
+
+    assert item.decision_confidence == "low"
+
+
+def test_confidence_is_high_with_exactly_the_minimum_usable_comparables() -> None:
+    # Exactly config.MIN_COMPARABLES_FOR_CONFIDENCE (3) usable comparables
+    # meets the floor -> "high" (< is strict, so == the floor is enough).
+    assert config.MIN_COMPARABLES_FOR_CONFIDENCE == 3
+    item = _make_item(condition="good", prices=[20.0, 25.0, 30.0])
+
+    PricingDecisionService().decide_item(item)
+
+    assert item.decision_confidence == "high"
+
+
+def test_confidence_is_high_with_more_than_the_minimum_usable_comparables() -> None:
+    item = _make_item(condition="good", prices=[20.0, 25.0, 30.0, 35.0, 40.0])
+
+    PricingDecisionService().decide_item(item)
+
+    assert item.decision_confidence == "high"
+
+
+def test_confidence_is_high_for_broken_item_regardless_of_comparable_count() -> None:
+    # Broken items are always "high" confidence -- the decision is driven
+    # entirely by item.condition, not by how many comparables exist, so a
+    # low comparable count doesn't make the throw_away call less trustworthy.
+    item = _make_item(condition="broken", prices=[])
+
+    decision = PricingDecisionService().decide_item(item)
+
+    assert decision == Decision.THROW_AWAY
+    assert item.decision_confidence == "high"
+
+    item_with_comps = _make_item(condition="broken", prices=[150.0, 160.0, 180.0])
+
+    decision_with_comps = PricingDecisionService().decide_item(item_with_comps)
+
+    assert decision_with_comps == Decision.THROW_AWAY
+    assert item_with_comps.decision_confidence == "high"
+
+
+def test_confidence_is_low_when_all_comparables_are_unusable_fallback_path() -> None:
+    # Every comparable is FREE, so is_usable_comparable excludes all of
+    # them and _median_price falls back to the full unfiltered list (see
+    # test_median_falls_back_to_full_list_when_all_comparables_are_unusable
+    # above) -- a median IS computed, but the *usable* count is 0, which is
+    # below MIN_COMPARABLES_FOR_CONFIDENCE, so confidence must still be
+    # "low" even though a decision and suggested_price were produced.
+    item = Item(
+        photo_path="/photos/item.jpg",
+        status=ItemStatus.PENDING_DECISION,
+        condition="good",
+    )
+    item.comparable_listings = [
+        ComparableListing(
+            title="Free Drill 1",
+            price=0.0,
+            url="https://example.com/0",
+            price_type="FREE",
+        ),
+        ComparableListing(
+            title="Free Drill 2",
+            price=0.0,
+            url="https://example.com/1",
+            price_type="FREE",
+        ),
+    ]
+
+    decision = PricingDecisionService().decide_item(item)
+
+    assert decision == Decision.GIVE_AWAY
+    assert item.suggested_price == 0.0
+    assert item.decision_confidence == "low"
