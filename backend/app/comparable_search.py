@@ -217,8 +217,8 @@ This module now implements the intent of that guardrail differently:
    negative cost documented above (see bead sandbox-0as for the full
    discussion and human sign-off).
 
-Relevance-gating single-keyword fallback results (bead sandbox-8jm.5)
------------------------------------------------------------------------
+Relevance-gating single-keyword fallback results (bead sandbox-8jm.5, extended sandbox-182)
+-----------------------------------------------------------------------------------------------
 The individual-keyword fallback queries described above (attempt 2+ in
 ``_build_query_attempts``) are independent single terms, which can be much
 less specific than the fully-joined query -- most notably when the
@@ -229,27 +229,66 @@ addresses that in two layers:
 
 1. ``_build_query_attempts`` now accepts an optional ``brand: str | None``
    (default ``None``, so existing call sites/tests are unaffected). Any
-   individual-keyword fallback candidate whose casefolded, stripped text
-   equals the casefolded, stripped ``brand`` is skipped entirely -- it is
-   never turned into a live search call. The fully-joined query (attempt
-   1) is always kept regardless of ``brand``, since AND-ing the brand
-   together with the rest of the identified name is exactly the specific,
-   on-topic query we want.
+   individual-keyword fallback candidate whose folded tokens (see
+   ``_fold``/``_brand_tokens`` below) are ALL also tokens of ``brand`` is
+   skipped entirely -- it is never turned into a live search call (e.g.
+   brand "Black & Decker" skips fallback keywords "black & decker" and
+   "Black+Decker", but keeps "black & decker akkuschrauber", which has a
+   non-brand token). The fully-joined query (attempt 1) is always kept
+   regardless of ``brand``, since AND-ing the brand together with the rest
+   of the identified name is exactly the specific, on-topic query we want.
 2. For fallback candidates that DO get searched (attempt 2+), ``search_item``
-   applies ``_is_relevant`` (see its docstring for the token-overlap
-   algorithm) to each raw result's ``title``, dropping any result judged
-   irrelevant to ``Item.identified_name``. This is applied AFTER the
-   broken-title post-filter and BEFORE the zero-results/loosening decision:
-   if every result for a fallback candidate is dropped, that candidate is
-   treated exactly like a genuine zero-result response and the existing
+   applies ``_is_relevant`` (see its docstring for the full algorithm) to
+   each raw result's ``title``, dropping any result judged irrelevant to
+   ``Item.identified_name``. This is applied AFTER the broken-title
+   post-filter and BEFORE the zero-results/loosening decision: if every
+   result for a fallback candidate is dropped, that candidate is treated
+   exactly like a genuine zero-result response and the existing
    query-loosening sequence continues to the next, looser candidate query.
    This gate is intentionally never applied to the fully-joined query's
    results (attempt 1) -- that query is specific enough (all identification
    keywords ANDed together) that we trust whatever it returns.
    ``_is_relevant`` is deliberately conservative: when ``Item.identified_name``
    is missing, or has no tokens left after dropping short (<3 char) and
-   brand-only tokens, it returns ``True`` (cannot judge -- do not filter)
-   rather than guessing.
+   brand-only tokens (in either fold mode), it returns ``True`` (cannot
+   judge -- do not filter) rather than guessing.
+
+**German spelling-variant tolerance (bead sandbox-182).** Kleinanzeigen
+sellers spell the same item inconsistently -- compound words split with a
+hyphen or space ("Akku-Schrauber" vs "Akkuschrauber"), plurals ("Laufschuhe"
+vs "Laufschuh"), and umlauts written out two different ASCII-safe ways
+("Kaffeemuehle"/digraph vs "Kaffeemuhle"/diaeresis-dropped) or not
+ASCII-safe at all ("Kaffeemühle"). A plain casefolded-substring check (the
+original bead sandbox-8jm.5 algorithm) missed all of these. ``_is_relevant``
+now handles them via three building blocks, applied per name token in each
+of two umlaut-fold modes (``_FOLD_MODES = ("digraph", "plain")`` -- see
+``_fold``'s docstring for exactly what each mode maps):
+
+* ``_compact`` folds *and* strips every remaining non-alphanumeric
+  character from the title being matched against, so hyphen/space-split
+  compounds collapse to one word (e.g. "Akku-Schrauber 18V" ->
+  "akkuschrauber18v") and still match a name token written as a single
+  word.
+* ``_destem`` strips a single trailing plural-ish German suffix
+  ("en"/"e"/"n"/"s", tried in that order) from name tokens of length >= 5,
+  when the resulting stem is still >= 4 characters, and that stem (not the
+  original token) becomes the matching unit -- e.g. "Schreibtischlampen"
+  matches "Schreibtischlampe" via shared stem "schreibtischlamp".
+* ``_brand_tokens`` splits ``brand`` into its own folded tokens (per fold
+  mode) rather than comparing it to the name as one string, so a
+  multi-word brand like "Black & Decker" is excluded from the name's
+  tokens (and from the keyword-skip check above) regardless of how either
+  string is punctuated.
+
+A title is relevant if ANY name token/stem matches (as a substring) the
+compacted title, in EITHER fold mode -- checked mode-consistently, never
+mixing a "digraph"-folded token against a "plain"-folded title. Known,
+accepted limitations (see ``_destem``'s docstring): this is a fixed-suffix
+heuristic, not real German morphology. It does not handle umlaut-vowel-
+change plurals ("Mutter"/"Mütter") or letter-insertion variants
+("Fön"/"Föhn" -- an "h"-insertion is neither an umlaut-fold nor a suffix
+difference, so that pair still does not match; see
+``test_is_relevant_umlaut_h_insertion_known_limitation``).
 
 Manual smoke test against the LIVE Kleinanzeigen site
 -------------------------------------------------------
@@ -570,18 +609,22 @@ def _build_query_attempts(keywords: list[str] | None, brand: str | None = None) 
     identical to a query already in the list (e.g. when there's only one
     keyword, so the joined query and that keyword alone are the same
     string -- retrying the identical query would be pointless), and (bead
-    sandbox-8jm.5) also skipping any keyword whose casefolded, stripped text
-    equals the casefolded, stripped ``brand`` -- a lone brand name (e.g.
-    "Bosch") as a fallback query is almost guaranteed to surface completely
-    unrelated same-brand products (a Bosch dishwasher, mixer, iron, ...)
-    rather than anything comparable to the actual item, so it's not worth
-    the live call. ``brand=None`` (the default, used by all existing call
-    sites) disables this skip entirely, leaving pre-sandbox-8jm.5 behavior
-    unchanged. Capped at ``_MAX_QUERY_ATTEMPTS`` total candidate queries
-    (brand-skipped keywords don't count against this cap, since they're
-    never added). See module docstring "Query-loosening on zero results"
-    for the full rationale, and "Relevance-gating single-keyword fallback
-    results" for the brand-skip rationale.
+    sandbox-8jm.5, extended by sandbox-182) also skipping any keyword whose
+    folded tokens (see ``_fold``/``_brand_tokens``) are ALL also tokens of
+    ``brand`` -- a lone brand name (e.g. "Bosch", or a multi-word brand
+    like "Black & Decker" typed as "black & decker" or "Black+Decker") as a
+    fallback query is almost guaranteed to surface completely unrelated
+    same-brand products (a Bosch dishwasher, mixer, iron, ...) rather than
+    anything comparable to the actual item, so it's not worth the live
+    call. A keyword that mixes in even one non-brand token (e.g. "black &
+    decker akkuschrauber") is kept, since it's no longer brand-only.
+    ``brand=None`` (the default, used by all existing call sites) disables
+    this skip entirely, leaving pre-sandbox-8jm.5 behavior unchanged.
+    Capped at ``_MAX_QUERY_ATTEMPTS`` total candidate queries (brand-skipped
+    keywords don't count against this cap, since they're never added). See
+    module docstring "Query-loosening on zero results" for the full
+    rationale, and "Relevance-gating single-keyword fallback results" for
+    the brand-skip rationale.
 
     Returns an empty list if there are no usable keywords at all (mirrors
     ``_build_query`` returning ``""`` in that case).
@@ -590,7 +633,10 @@ def _build_query_attempts(keywords: list[str] | None, brand: str | None = None) 
     if not cleaned:
         return []
 
-    casefolded_brand = brand.strip().casefold() if isinstance(brand, str) and brand.strip() else None
+    # Arbitrary but consistent fold mode: since both `kw` and `brand` below
+    # are folded the same way before comparing, the digraph/plain choice
+    # cannot itself change the outcome (see ``_fold`` docstring).
+    brand_tokens = _brand_tokens(brand, "digraph")
 
     attempts = [" ".join(cleaned)]
     for kw in cleaned:
@@ -598,13 +644,15 @@ def _build_query_attempts(keywords: list[str] | None, brand: str | None = None) 
             break
         if kw in attempts:
             continue
-        if casefolded_brand is not None and kw.casefold() == casefolded_brand:
-            logger.info(
-                "Skipping brand-only fallback keyword %r (matches item brand %r)",
-                kw,
-                brand,
-            )
-            continue
+        if brand_tokens:
+            kw_tokens = [token for token in re.split(r"[\W_]+", _fold(kw, "digraph")) if token]
+            if kw_tokens and all(token in brand_tokens for token in kw_tokens):
+                logger.info(
+                    "Skipping brand-only fallback keyword %r (all tokens match item brand %r)",
+                    kw,
+                    brand,
+                )
+                continue
         attempts.append(kw)
     return attempts
 
@@ -669,50 +717,162 @@ def _filter_broken_listing_titles(raw_results: list[dict[str, Any]]) -> list[dic
     return filtered
 
 
+# The two umlaut-folding conventions applied by ``_fold`` (see its
+# docstring) -- both are tried for every relevance check (bead
+# sandbox-182), since German sellers spell umlauts inconsistently and this
+# module has no way to know in advance which convention a given listing
+# title will use.
+_FOLD_MODES = ("digraph", "plain")
+
+
+def _fold(text: str, mode: str) -> str:
+    """Casefold ``text`` and normalize German umlauts per ``mode``.
+
+    ``str.casefold()`` already maps ``"ß"`` -> ``"ss"`` (handled once here,
+    identically for both modes -- see ``test_is_relevant_sharp_s_token_still_matches``).
+    The two umlaut conventions:
+
+    * ``"digraph"``: ae/oe/ue (the standard German transliteration used
+      e.g. in URLs and by keyboards without umlaut keys that spell them
+      out) -- ``"Mühle"`` -> ``"muehle"``.
+    * ``"plain"``: the diaeresis is simply dropped -- ``"Mühle"`` ->
+      ``"muhle"`` -- for sellers who type the base vowel instead.
+
+    Both conventions are common in real Kleinanzeigen listing titles, and
+    neither reliably predicts the other, so both are tried (see
+    ``_is_relevant``) rather than picking one.
+    """
+    folded = text.casefold()
+    if mode == "digraph":
+        return folded.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")
+    if mode == "plain":
+        return folded.replace("ä", "a").replace("ö", "o").replace("ü", "u")
+    raise ValueError(f"Unknown fold mode: {mode!r}")
+
+
+def _compact(text: str, mode: str) -> str:
+    """Fold ``text`` per ``mode`` (see ``_fold``) and strip all non-alphanumeric characters.
+
+    Collapses e.g. ``"Akku-Schrauber 18V"`` -> ``"akkuschrauber18v"``, so
+    hyphen/space-split compound spellings (``"Akku-Schrauber"`` vs
+    ``"Akkuschrauber"``) still match as a plain substring against a name
+    token that was written as one word. Uses the same Unicode-aware
+    ``[\\W_]+`` character class as the rest of this module's tokenizing
+    helpers.
+    """
+    return re.sub(r"[\W_]+", "", _fold(text, mode))
+
+
+def _brand_tokens(brand: str | None, mode: str) -> set[str]:
+    """Return the set of ``_fold``-ed, non-empty whitespace/punctuation-split tokens making up ``brand``.
+
+    E.g. ``brand="Black & Decker"`` -> ``{"black", "decker"}`` (the ``"&"``
+    contributes no token). Returns an empty set for a missing/blank
+    ``brand``.
+    """
+    if not isinstance(brand, str) or not brand.strip():
+        return set()
+    return {token for token in re.split(r"[\W_]+", _fold(brand, mode)) if token}
+
+
+def _destem(token: str) -> str | None:
+    """Strip a single trailing German plural-ish suffix from ``token``, if plausible.
+
+    Only ever called for tokens of length >= 5. Tries ``"en"``, then
+    ``"e"``, then ``"n"``, then ``"s"`` (the most common German
+    noun-plural/case endings), stopping at the first suffix whose removal
+    leaves a stem of length >= 4 (short stems are too noise-prone to trust
+    as a substring-match anchor). Returns ``None`` if no suffix qualifies,
+    in which case the caller falls back to matching the token unmodified.
+
+    The stem is, by construction, a substring of both the singular and
+    that suffix's plural spelling, so matching on it lets e.g. name token
+    "laufschuhe" match title word "laufschuh" and vice versa. This is a
+    crude heuristic, not real German morphology -- see the module docstring
+    "Relevance-gating single-keyword fallback results" for known
+    limitations (e.g. it does not handle umlaut-vowel-change plurals like
+    "Mutter"/"Mütter", or insertions like "Fön"/"Föhn").
+    """
+    for suffix in ("en", "e", "n", "s"):
+        if token.endswith(suffix):
+            stem = token[: -len(suffix)]
+            if len(stem) >= 4:
+                return stem
+    return None
+
+
 def _is_relevant(title: str, identified_name: str | None, brand: str | None) -> bool:
     r"""Return whether ``title`` plausibly refers to the same kind of item as ``identified_name``.
 
     See module docstring "Relevance-gating single-keyword fallback results"
-    (bead sandbox-8jm.5). Builds a set of "name tokens" from
-    ``identified_name``: casefolded, split on runs of non-alphanumeric
-    characters (Unicode-aware, via ``re.split(r"[\W_]+", ...)``, so umlauts
-    and ``ß`` stay inside a token instead of splitting it -- e.g.
-    "Kaffeemühle" tokenizes as ["kaffeemühle"], not ["kaffeem", "hle"]),
-    keeping only tokens of length >= 3 (drops short/noise
-    tokens like "gr", "18", "v") that are not equal to the casefolded,
-    stripped ``brand`` (a brand token alone tells us nothing about whether
-    a *specific* listing is relevant -- that's the whole reason this gate
-    exists).
+    (beads sandbox-8jm.5, sandbox-182). For each of the two umlaut-folding
+    modes in ``_FOLD_MODES`` (``"digraph"`` and ``"plain"`` -- see
+    ``_fold``):
 
-    A title is relevant if ANY name token is a substring of the casefolded
-    title -- checked in one direction only (name token inside title, e.g.
-    token "akkuschrauber" matches title "Akkuschrauber-Set 18V"); the
-    reverse (title token inside a name token) is deliberately NOT checked,
-    since a long, precise ``identified_name`` token should not be
-    considered "matched" merely because a short, generic title word happens
-    to be a substring of it.
+    1. ``identified_name`` is folded and split on runs of non-alphanumeric
+       characters (Unicode-aware, via ``re.split(r"[\W_]+", ...)``, so
+       umlauts and ``ß`` stay inside a token instead of splitting it),
+       keeping only tokens of length >= 3 (drops short/noise tokens like
+       "gr", "18", "v") that are not one of ``brand``'s own folded,
+       whitespace/punctuation-split tokens (see ``_brand_tokens`` -- a
+       brand token alone tells us nothing about whether a *specific*
+       listing is relevant, and this also lets a multi-word brand like
+       "Black & Decker" be excluded token-by-token regardless of how it's
+       punctuated in either string).
+    2. Each surviving token of length >= 5 is passed through ``_destem``
+       (see its docstring), which strips a single trailing German
+       plural-ish suffix when that leaves a still-substantial stem. When a
+       stem is produced, the stem (not the original token) is used as the
+       matching unit for that token -- this makes e.g. name token
+       "Laufschuhe" match title word "Laufschuh" and vice versa. Tokens
+       that don't qualify for stemming are matched as-is.
+    3. ``title`` is folded (same mode) and compacted (see ``_compact``,
+       which additionally strips all remaining non-alphanumeric
+       characters) so that e.g. "Akku-Schrauber 18V" becomes
+       "akkuschrauber18v" and still matches a one-word name token/stem.
 
-    If there are no usable name tokens at all (``identified_name`` is
-    ``None``/empty, or every token was dropped as too short or brand-only),
-    this returns ``True`` -- there's nothing to judge relevance against, so
-    the gate must not filter anything out in that case.
+    A title is relevant if ANY name token/stem, in EITHER fold mode
+    (checked mode-consistently -- a token/stem folded one way is only
+    checked against the title folded the *same* way), is a substring of
+    the compacted title -- checked in one direction only (name unit inside
+    title); the reverse (title token inside a name unit) is deliberately
+    NOT checked, since a long, precise ``identified_name`` token should not
+    be considered "matched" merely because a short, generic title word
+    happens to be a substring of it.
+
+    If there are no usable name tokens at all, in either mode
+    (``identified_name`` is ``None``/empty, or every token was dropped as
+    too short or brand-only), this returns ``True`` -- there's nothing to
+    judge relevance against, so the gate must not filter anything out in
+    that case.
+
+    Known limitations (accepted, not fixed by this gate): the plural
+    stemming in ``_destem`` is a crude fixed-suffix heuristic, not real
+    German morphology -- it does not handle umlaut-vowel-change plurals
+    (e.g. "Mutter"/"Mütter") or letter-insertion spelling variants (e.g.
+    "Fön"/"Föhn" -- an "h"-insertion, not an umlaut-folding or suffix
+    difference, so it is out of scope for both ``_fold`` and ``_destem``
+    and this pair still does not match).
     """
     if not identified_name:
         return True
 
-    casefolded_brand = brand.strip().casefold() if isinstance(brand, str) and brand.strip() else None
+    match_units: list[tuple[str, str]] = []
+    for mode in _FOLD_MODES:
+        folded_name = _fold(identified_name, mode)
+        raw_tokens = re.split(r"[\W_]+", folded_name)
+        brand_tokens = _brand_tokens(brand, mode)
+        for token in raw_tokens:
+            if len(token) < 3 or token in brand_tokens:
+                continue
+            stem = _destem(token) if len(token) >= 5 else None
+            match_units.append((mode, stem or token))
 
-    raw_tokens = re.split(r"[\W_]+", identified_name.casefold())
-    name_tokens = [
-        token
-        for token in raw_tokens
-        if len(token) >= 3 and token != casefolded_brand
-    ]
-    if not name_tokens:
+    if not match_units:
         return True
 
-    casefolded_title = title.casefold()
-    return any(token in casefolded_title for token in name_tokens)
+    compact_titles = {mode: _compact(title, mode) for mode in _FOLD_MODES}
+    return any(unit in compact_titles[mode] for mode, unit in match_units)
 
 
 def _parse_listings(raw_results: list[dict[str, Any]]) -> list[ComparableListing]:

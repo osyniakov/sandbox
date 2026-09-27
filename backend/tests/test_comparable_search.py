@@ -940,9 +940,89 @@ def test_is_relevant_sharp_s_token_still_matches() -> None:
     assert _is_relevant(
         "Neue Straße gepflastert", identified_name="Straße", brand=None
     ) is True
+    # sandbox-182: this used to assert False (plain casefolded-substring
+    # check couldn't see past the diaeresis). Now that "plain" fold mode
+    # (Größe -> "grosse" -- diaeresis dropped) is tried too, "Größe"
+    # legitimately matches "Grosse" as a substring -- flipped to True.
     assert _is_relevant(
         "Grosse Wohnung, viele Zimmer", identified_name="Größe", brand=None
+    ) is True
+
+
+# ---------------------------------------------------------------------------
+# German spelling-variant tolerance (bead sandbox-182): hyphen/space-split
+# compounds, plurals, and umlaut digraph/plain folding.
+# ---------------------------------------------------------------------------
+
+
+def test_is_relevant_hyphenated_compound_matches_one_word_name() -> None:
+    assert _is_relevant(
+        "Makita Akku-Schrauber 18V", identified_name="Akkuschrauber", brand=None
+    ) is True
+
+
+def test_is_relevant_plural_name_matches_singular_title_and_vice_versa() -> None:
+    assert _is_relevant(
+        "Nike Laufschuh Gr. 42", identified_name="Laufschuhe", brand=None
+    ) is True
+    assert _is_relevant(
+        "Laufschuhe Damen", identified_name="Laufschuh", brand=None
+    ) is True
+
+
+def test_is_relevant_umlaut_digraph_and_plain_spellings_both_match() -> None:
+    assert _is_relevant(
+        "Kaffeemuehle Zassenhaus", identified_name="Kaffeemühle", brand=None
+    ) is True
+    assert _is_relevant(
+        "Kaffeemuhle alt", identified_name="Kaffeemühle", brand=None
+    ) is True
+
+
+def test_is_relevant_plural_ikea_lamp_matches_singular_title() -> None:
+    assert _is_relevant(
+        "IKEA Schreibtischlampe", identified_name="Schreibtischlampen", brand=None
+    ) is True
+
+
+def test_is_relevant_umlaut_name_still_rejects_unrelated_title() -> None:
+    # Existing sandbox-8jm.5 regression must still hold with stemming added.
+    assert _is_relevant(
+        "Stühle 4 Stück", identified_name="Kaffeemühle", brand=None
     ) is False
+
+
+def test_is_relevant_multiword_brand_tokens_excluded() -> None:
+    brand = "Black & Decker"
+    name = "Black & Decker Akkuschrauber"
+    assert _is_relevant(
+        "Black & Decker Staubsauger", identified_name=name, brand=brand
+    ) is False
+    assert _is_relevant(
+        "Black+Decker Akkuschrauber 12V", identified_name=name, brand=brand
+    ) is True
+    # No usable tokens left once both brand words are excluded -> True.
+    assert _is_relevant(
+        "Totally unrelated title", identified_name="Black & Decker", brand=brand
+    ) is True
+
+
+def test_is_relevant_umlaut_h_insertion_known_limitation() -> None:
+    # Known, accepted limitation (see module docstring / _destem docstring):
+    # "Fön"/"Föhn" differ by an "h"-insertion, not an umlaut-fold or a
+    # plural suffix -- out of scope, so this stays False.
+    assert _is_relevant("Föhn", identified_name="Fön", brand=None) is False
+
+
+def test_build_query_attempts_skips_multiword_brand_keyword_variants() -> None:
+    brand = "Black & Decker"
+    attempts = _build_query_attempts(
+        ["black & decker", "Black+Decker", "black & decker akkuschrauber"],
+        brand=brand,
+    )
+    assert "black & decker" not in attempts
+    assert "Black+Decker" not in attempts
+    assert "black & decker akkuschrauber" in attempts
 
 
 def test_search_item_drops_irrelevant_fallback_results_and_continues_loosening() -> None:

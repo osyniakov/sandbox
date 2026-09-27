@@ -40,8 +40,26 @@ from tests.eval.run_eval import evaluate, load_cases
 # 0.928571..., price_in_range_rate == 8/11 == 0.727272... (0.92 / 0.72).
 # Earlier baseline (bead sandbox-8jm.1): decision_accuracy == 11/14 ==
 # 0.785714..., price_in_range_rate == 6/11 == 0.545454... (0.78 / 0.54).
+#
+# Raised by bead sandbox-182 (German spelling-variant tolerance in
+# ``_is_relevant``/``_build_query_attempts`` -- umlaut digraph/plain
+# folding, hyphen/space-split compound compaction, plural stemming, and
+# per-token multi-word brand exclusion). Added two new cases, both measured
+# WRONG on pre-sandbox-182 code (decision_accuracy 16/18 == 0.8889,
+# price_in_range_rate 11/14 == 0.7857..., confidence_accuracy 13/14 ==
+# 0.9286... on the same cases.json): ``fallback_spelling_variants_accepted``
+# (the plain casefolded-substring gate rejected all 4 differently-spelled
+# comparables, leaving zero comparables -> throw_away instead of sell) and
+# ``multiword_brand_fallback_skipped`` (the differently-punctuated
+# brand-only keyword "Black+Decker" isn't an exact string match of "Black &
+# Decker", so pre-sandbox-182's whole-string brand comparison neither
+# skipped it as a fallback query nor excluded its tokens from the relevance
+# gate, wrongly pricing the item off unrelated Black & Decker appliance
+# junk -> give_away instead of sell). Measured on sandbox-182 code:
+# decision_accuracy == 18/18 == 1.0, price_in_range_rate == 13/14 ==
+# 0.928571..., confidence_accuracy == 14/14 == 1.0.
 DECISION_ACCURACY_FLOOR = 1.0
-PRICE_RANGE_FLOOR = 0.91
+PRICE_RANGE_FLOOR = 0.92
 
 # Added by bead sandbox-8jm.6 (``Item.decision_confidence``, measured:
 # confidence_accuracy == 11/11 == 1.0 across the cases that carry an
@@ -50,6 +68,7 @@ PRICE_RANGE_FLOOR = 0.91
 # ratchet convention as the two floors above: later beads may raise this
 # (e.g. by labelling more cases) but must never lower it.
 # Still 1.0 after bead sandbox-0as's new labelled case (measured: 12/12).
+# Still 1.0 after bead sandbox-182's two new labelled cases (measured: 14/14).
 CONFIDENCE_ACCURACY_FLOOR = 1.0
 
 

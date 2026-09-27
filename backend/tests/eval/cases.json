@@ -363,6 +363,60 @@
       "expected_decision": "sell",
       "expected_price_range": [25, 55],
       "expected_confidence": "high"
+    },
+    {
+      "id": "fallback_spelling_variants_accepted",
+      "description": "bead sandbox-182: joined query 'makita akkuschrauber makita akku schrauber' and the individual keyword 'makita akkuschrauber' both return zero results, so the loosening logic reaches keyword 'akku schrauber' (the brand-only keyword 'makita' is skipped per sandbox-8jm.5). All 4 results genuinely refer to the item but are spelled differently from the identified_name 'Makita Akkuschrauber' -- hyphenated ('Akku-Schrauber') or space-split ('Akku Schrauber') compound spellings. Before sandbox-182, the plain casefolded-substring relevance gate required the literal one-word substring 'akkuschrauber' and rejected all 4 (no listing spelled it as one word), leaving zero comparables and (incorrectly) a throw_away decision; after sandbox-182, the compacted-title match (all non-alphanumeric characters stripped before comparing) accepts all 4 -- code and a careful human should now agree.",
+      "item": {
+        "identified_name": "Makita Akkuschrauber",
+        "brand": "Makita",
+        "condition": "good",
+        "search_keywords": ["makita akkuschrauber", "makita", "akku schrauber"]
+      },
+      "provider_results": {
+        "makita akkuschrauber makita akku schrauber": [],
+        "makita akkuschrauber": [],
+        "makita": [
+          {"title": "Makita Staubsauger, gebraucht", "price": 60, "url": "https://example.test/60", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Makita Akku-Bohrhammer", "price": 120, "url": "https://example.test/61", "condition": "gebraucht", "location": "Hamburg", "price_type": "SPECIFIED_AMOUNT"}
+        ],
+        "akku schrauber": [
+          {"title": "Makita Akku-Schrauber 18V", "price": 45, "url": "https://example.test/62", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Akku Schrauber Makita mit Koffer", "price": 50, "url": "https://example.test/63", "condition": "gebraucht", "location": "Hamburg", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Akku-Schrauber Makita, guter Zustand", "price": 55, "url": "https://example.test/64", "condition": "gebraucht", "location": "Muenchen", "price_type": "PLEASE_CONTACT"},
+          {"title": "Makita Akku Schrauber Set", "price": 65, "url": "https://example.test/65", "condition": "gebraucht", "location": "Koeln", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [40, 70],
+      "expected_confidence": "high"
+    },
+    {
+      "id": "multiword_brand_fallback_skipped",
+      "description": "bead sandbox-182: multi-word brand 'Black & Decker'. The joined query returns zero results. The loosening logic's next candidate would be the differently-punctuated brand-only keyword 'Black+Decker' -- an exact-string brand comparison (pre-sandbox-182) would NOT recognize this as brand-only (it doesn't equal 'Black & Decker' as a whole string), so old code queries it, and old code's relevance gate has the same whole-string bug (it never recognizes 'black'/'decker' as brand tokens either), so it wrongly treats the unrelated Black & Decker appliance results below as 'relevant' (their titles contain the words 'Black'/'Decker') and stops there -- pricing the item off junk appliances and reaching the wrong decision. sandbox-182's per-token brand comparison correctly recognizes 'Black+Decker' as brand-only (both its folded tokens, 'black' and 'decker', are brand tokens) and skips it, falling through to the generic keyword 'akkuschrauber', which returns genuinely relevant cordless-screwdriver listings -- code and a careful human should now agree.",
+      "item": {
+        "identified_name": "Black & Decker Akkuschrauber",
+        "brand": "Black & Decker",
+        "condition": "good",
+        "search_keywords": ["Black+Decker", "akkuschrauber"]
+      },
+      "provider_results": {
+        "Black+Decker akkuschrauber": [],
+        "Black+Decker": [
+          {"title": "Black & Decker Staubsauger, gebraucht", "price": 3, "url": "https://example.test/70", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Black & Decker Buegeleisen", "price": 4, "url": "https://example.test/71", "condition": "gebraucht", "location": "Hamburg", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Black & Decker Toaster", "price": 5, "url": "https://example.test/72", "condition": "gebraucht", "location": "Dresden", "price_type": "SPECIFIED_AMOUNT"}
+        ],
+        "akkuschrauber": [
+          {"title": "Black & Decker Akkuschrauber, gebraucht", "price": 18, "url": "https://example.test/73", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Akkuschrauber, guter Zustand", "price": 22, "url": "https://example.test/74", "condition": "gebraucht", "location": "Leipzig", "price_type": "PLEASE_CONTACT"},
+          {"title": "Akkuschrauber 12V mit Koffer", "price": 25, "url": "https://example.test/75", "condition": "gebraucht", "location": "Dresden", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Akkuschrauber Set gebraucht", "price": 28, "url": "https://example.test/76", "condition": "gebraucht", "location": "Koeln", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [15, 35],
+      "expected_confidence": "high"
     }
   ]
 }
