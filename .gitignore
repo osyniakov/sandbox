@@ -58,3 +58,4 @@ backend/uploads/
 # with isolation:"worktree").
 .claude/worktrees/
 
+.beads.gate.lock
