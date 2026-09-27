@@ -255,10 +255,22 @@ def _median_price(comparable_listings: Sequence[ComparableListing]) -> float | N
     return statistics.median(prices)
 
 
-def _is_broken(condition: str | None) -> bool:
+def is_broken_condition(condition: str | None) -> bool:
+    """Return ``True`` iff ``condition`` (case-insensitively, stripped) means "broken".
+
+    Public helper so other modules (e.g. ``app/comparable_search.py``) can
+    reuse this exact normalization without importing a private name across
+    modules. ``None`` is never treated as broken (mirrors module docstring
+    point 4: an unconfirmed condition is treated as usable).
+    """
     if condition is None:
         return False
     return condition.strip().lower() == _BROKEN_CONDITION
+
+
+# Backwards-compatible private alias -- kept identical to the old private
+# name so any existing internal callers/tests referencing it keep working.
+_is_broken = is_broken_condition
 
 
 class PricingDecisionService:
@@ -292,7 +304,7 @@ class PricingDecisionService:
         the *item's own* condition, never a comparable listing's.
         """
         median_price = _median_price(item.comparable_listings)
-        broken = _is_broken(item.condition)
+        broken = is_broken_condition(item.condition)
 
         if broken:
             decision = Decision.THROW_AWAY

@@ -138,6 +138,44 @@ results) -- never unbounded, and the module's existing rate limiting
 one of those calls, since they all still go through the same
 ``ComparableSearchProvider.search`` / ``_search_with_retry`` path.
 
+Excluding defekt/Bastler/Ersatzteile listings (bead sandbox-8jm.4)
+--------------------------------------------------------------------
+Per ``docs/kleinanzeigen-access.md`` section 4 step 2: "use ``exclude=[...]``
+to filter obvious noise terms (e.g. "defekt", "bastler", "ersatzteile") if
+the item is meant to be working." This module implements that as follows:
+
+1. ``search_item`` determines whether the item's OWN condition is broken,
+   reusing ``app.pricing.is_broken_condition`` (the same strip+lower ==
+   "broken" normalization ``PricingDecisionService`` uses) rather than
+   duplicating that logic or importing a private name across modules.
+2. When the item is **not** broken, every candidate query in this item's
+   query-loosening sequence is called with
+   ``exclude=list(_BROKEN_LISTING_TERMS)`` (``("defekt", "bastler",
+   "ersatzteile")``). When the item **is** broken, ``exclude=None`` is
+   passed instead -- a defekt/Bastler/Ersatzteile listing IS a genuine
+   comparable for a broken item, so it must not be excluded in that case.
+3. ``KleinanzeigenAPIProvider.search`` forwards ``exclude`` to the
+   underlying ``client.search`` call only when it's truthy, so calls made
+   without it (e.g. for a broken item, or by any caller that never passes
+   it) remain byte-identical to pre-sandbox-8jm.4 behavior. The installed
+   ``kleinanzeigen-api`` 0.4.0's ``client.search`` accepts ``exclude`` as
+   ``str | list[str] | None`` (normalized internally via its own
+   ``_as_terms`` helper into lowercased terms, matched against title AND
+   description) -- a ``list[str]`` is passed here.
+4. Because the underlying library's ``exclude=`` filtering behavior is
+   observed from the library's source but not independently verified
+   end-to-end against the live API from this sandbox (kleinanzeigen.de is
+   blocked by the sandbox's egress policy -- see "Manual smoke test"
+   below), this module does NOT rely on it alone: for non-broken items,
+   ``search_item`` also applies its own defensive post-filter
+   (``_filter_broken_listing_titles``) to every raw result, dropping any
+   listing whose ``title`` (casefolded) contains "defekt", "bastler", or
+   "ersatzteile" as a substring -- BEFORE deciding whether that candidate
+   query returned any usable results. If every result for a query is
+   dropped by this filter, that query is treated exactly like a genuine
+   zero-result response, and the existing query-loosening sequence (see
+   above) continues to the next, looser candidate query.
+
 Manual smoke test against the LIVE Kleinanzeigen site
 -------------------------------------------------------
 All automated tests in ``tests/test_comparable_search.py`` use fixtures /
@@ -200,6 +238,7 @@ import logging
 from typing import Any, Protocol, runtime_checkable
 
 from app.models import ComparableListing, Item, ItemStatus
+from app.pricing import is_broken_condition
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +270,16 @@ _MAX_QUERY_ATTEMPTS = 4
 # an exact key.
 _CONDITION_LABEL_MARKERS = ("zustand", "condition")
 
+# Kleinanzeigen listing-title terms that mark a listing as broken/for-parts
+# rather than a genuine working comparable -- "defekt" (defective/broken),
+# "Bastler" (tinkerer/fixer-upper -- i.e. sold as-is for someone to repair),
+# "Ersatzteile" (spare parts / parts-only). Per docs/kleinanzeigen-access.md
+# section 4 step 2, these are excluded from comparable searches for items
+# whose OWN condition is not itself broken, since a working item should not
+# have its price benchmarked against junk/for-parts listings. See "Excluding
+# defekt/Bastler/Ersatzteile listings" below for how this is used.
+_BROKEN_LISTING_TERMS = ("defekt", "bastler", "ersatzteile")
+
 
 class ComparableSearchError(Exception):
     """Raised by a ``ComparableSearchProvider`` when the underlying call fails.
@@ -252,8 +301,15 @@ class ComparableSearchProvider(Protocol):
     exception was raised (see module docstring).
     """
 
-    def search(self, query: str) -> list[dict[str, Any]]:
+    def search(self, query: str, exclude: list[str] | None = None) -> list[dict[str, Any]]:
         """Return raw listing dicts for ``query``, or raise on failure.
+
+        ``exclude``, when provided, is a list of terms the provider should
+        attempt to exclude from results (see "Excluding defekt/Bastler/
+        Ersatzteile listings" in the module docstring). Implementations are
+        not required to actually exclude anything -- ``search_item`` applies
+        its own defensive title-based post-filter regardless, since the
+        underlying provider's exclude semantics can't be relied on alone.
 
         Expected (but not strictly required) keys per dict: ``title``,
         ``price``, ``url``, ``condition``, ``location``. An empty list is a
@@ -300,16 +356,24 @@ class KleinanzeigenAPIProvider:
         self._client = KleinanzeigenAPI()
         return self._client
 
-    def search(self, query: str) -> list[dict[str, Any]]:
+    def search(self, query: str, exclude: list[str] | None = None) -> list[dict[str, Any]]:
         client = self._get_client()
+        search_kwargs: dict[str, Any] = dict(
+            location=self._location,
+            q=query,
+            sort_type=self._sort_type,
+            pages=self._pages,
+            distance_km=self._distance_km,
+        )
+        # Only pass `exclude` through when it's truthy, so calls without it
+        # remain byte-identical to pre-sandbox-8jm.4 behavior (verified
+        # against the installed kleinanzeigen-api 0.4.0: `client.search`
+        # accepts `exclude` as a `str | list[str] | None`, normalizing via
+        # its own `_as_terms` helper -- a list of str is passed here).
+        if exclude:
+            search_kwargs["exclude"] = exclude
         try:
-            listings = client.search(
-                location=self._location,
-                q=query,
-                sort_type=self._sort_type,
-                pages=self._pages,
-                distance_km=self._distance_km,
-            )
+            listings = client.search(**search_kwargs)
         except Exception as exc:
             # Covers, at minimum: ValueError (unresolvable location/bad
             # args -- see "location policy" in the module docstring) and
@@ -432,6 +496,35 @@ def _build_query_attempts(keywords: list[str] | None) -> list[str]:
     return attempts
 
 
+def _filter_broken_listing_titles(raw_results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Defensively drop raw results whose title contains a broken-listing term.
+
+    See module docstring "Excluding defekt/Bastler/Ersatzteile listings".
+    The underlying ``kleinanzeigen-api`` library's ``exclude=`` semantics
+    are unverified from the outside (we can't be sure it's actually being
+    applied server-side, or applied only to the title vs. also the
+    description, etc.), so this is applied unconditionally as a defensive
+    backstop for non-broken items, regardless of whether ``exclude`` was
+    also passed to the provider. Matching is a case-folded substring check
+    against the title only (not description -- raw dicts here don't carry
+    one), mirroring how ``_BROKEN_LISTING_TERMS`` terms actually appear in
+    real Kleinanzeigen titles (e.g. "Kaffeemaschine defekt, fuer Bastler").
+    A missing/non-string title is never dropped by this filter (existing
+    downstream skip-on-missing-title logic in ``_parse_listings`` already
+    handles that case).
+    """
+    filtered: list[dict[str, Any]] = []
+    for raw in raw_results:
+        title = raw.get("title")
+        if isinstance(title, str) and any(
+            term in title.casefold() for term in _BROKEN_LISTING_TERMS
+        ):
+            logger.debug("Dropping broken-listing-term title raw=%r", raw)
+            continue
+        filtered.append(raw)
+    return filtered
+
+
 def _parse_listings(raw_results: list[dict[str, Any]]) -> list[ComparableListing]:
     """Turn raw listing dicts into ``ComparableListing`` ORM objects.
 
@@ -516,6 +609,13 @@ class ComparableListingSearchService:
         """
         query_attempts = _build_query_attempts(item.search_keywords)
         item_id = getattr(item, "id", None)
+        # Reuse pricing's condition normalization (see module docstring
+        # "Excluding defekt/Bastler/Ersatzteile listings") -- an item whose
+        # own condition is NOT broken should not have junk/for-parts
+        # listings polluting its comparable search; a genuinely broken item
+        # should, since those listings ARE comparable to it.
+        broken = is_broken_condition(item.condition)
+        exclude = None if broken else list(_BROKEN_LISTING_TERMS)
 
         if not query_attempts:
             # No usable keywords to search with (e.g. identification fell
@@ -533,7 +633,7 @@ class ComparableListingSearchService:
 
         raw_results: list[dict[str, Any]] = []
         for attempt_num, query in enumerate(query_attempts, start=1):
-            raw_results = self._search_with_retry(query, item_id=item_id)
+            raw_results = self._search_with_retry(query, item_id=item_id, exclude=exclude)
             if raw_results is None:
                 # This candidate query failed outright (exhausted its own
                 # failure-retry) -- abort the whole search rather than
@@ -545,6 +645,15 @@ class ComparableListingSearchService:
                 item.search_query_used = query
                 item.status = ItemStatus.SEARCH_FAILED
                 return False
+            if not broken:
+                # Defensive backstop regardless of whether the provider
+                # actually honored `exclude` -- see module docstring
+                # "Excluding defekt/Bastler/Ersatzteile listings". Applied
+                # BEFORE deciding whether this query returned results, so an
+                # all-junk result set is treated as zero results and the
+                # loosening sequence continues, exactly like a genuine
+                # zero-result response.
+                raw_results = _filter_broken_listing_titles(raw_results)
             if raw_results:
                 # Found at least one result -- stop loosening immediately,
                 # don't keep searching for a "better" result set.
@@ -574,12 +683,14 @@ class ComparableListingSearchService:
         item.status = ItemStatus.PENDING_DECISION
         return True
 
-    def _search_with_retry(self, query: str, item_id: Any) -> list[dict[str, Any]] | None:
+    def _search_with_retry(
+        self, query: str, item_id: Any, exclude: list[str] | None = None
+    ) -> list[dict[str, Any]] | None:
         """Call the provider, retrying once on failure. Returns ``None`` if both attempts fail."""
         last_exc: Exception | None = None
         for attempt in range(1, _MAX_SEARCH_ATTEMPTS + 1):
             try:
-                return self._provider.search(query)
+                return self._provider.search(query, exclude=exclude)
             except Exception as exc:
                 last_exc = exc
                 logger.exception(

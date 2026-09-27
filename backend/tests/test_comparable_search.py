@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 from app.comparable_search import (
+    _BROKEN_LISTING_TERMS,
     ComparableListingSearchService,
     ComparableSearchError,
     KleinanzeigenAPIProvider,
@@ -21,6 +22,7 @@ from app.comparable_search import (
     _extract_condition,
     _extract_is_wanted,
     _extract_price_type,
+    _filter_broken_listing_titles,
     _listing_to_raw,
     _parse_listings,
 )
@@ -40,22 +42,25 @@ class _StubProvider:
     def __init__(self, responses: list[Any]) -> None:
         self._responses = list(responses)
         self.calls: list[str] = []
+        self.exclude_calls: list[list[str] | None] = []
 
-    def search(self, query: str) -> list[dict[str, Any]]:
+    def search(self, query: str, exclude: list[str] | None = None) -> list[dict[str, Any]]:
         self.calls.append(query)
+        self.exclude_calls.append(exclude)
         response = self._responses.pop(0)
         if isinstance(response, Exception):
             raise response
         return response
 
 
-def _make_item(keywords: list[str] | None = None) -> Item:
+def _make_item(keywords: list[str] | None = None, condition: str | None = None) -> Item:
     # Mirrors the identification tests: set status explicitly since column
     # defaults only apply on flush/insert, not bare construction.
     return Item(
         photo_path="/photos/item.jpg",
         status=ItemStatus.PENDING_SEARCH,
         search_keywords=keywords if keywords is not None else ["desk lamp", "ikea"],
+        condition=condition,
     )
 
 
@@ -652,3 +657,109 @@ def test_end_to_end_through_service_with_fake_kleinanzeigen_client() -> None:
     assert listing.condition == "Gut"
     assert listing.location == "Cologne"
     assert listing.price_type is None
+
+
+# ---------------------------------------------------------------------------
+# Excluding defekt/Bastler/Ersatzteile listings (bead sandbox-8jm.4)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "condition",
+    ["good", "fair", "Good", " fair ", None],
+)
+def test_search_item_passes_exclude_when_item_not_broken(condition: str | None) -> None:
+    item = _make_item(keywords=["lamp"], condition=condition)
+    provider = _StubProvider(responses=[[]])
+    service = ComparableListingSearchService(provider=provider)
+
+    service.search_item(item)
+
+    assert provider.exclude_calls == [list(_BROKEN_LISTING_TERMS)]
+
+
+@pytest.mark.parametrize("condition", ["broken", "Broken", " BROKEN "])
+def test_search_item_passes_no_exclude_when_item_broken(condition: str) -> None:
+    item = _make_item(keywords=["lamp"], condition=condition)
+    provider = _StubProvider(responses=[[]])
+    service = ComparableListingSearchService(provider=provider)
+
+    service.search_item(item)
+
+    assert provider.exclude_calls == [None]
+
+
+def test_filter_broken_listing_titles_drops_defekt_title() -> None:
+    raw_results = [
+        {"title": "Akkuschrauber DEFEKT", "price": 5.0, "url": "https://x/1"},
+        {"title": "Akkuschrauber, funktioniert einwandfrei", "price": 40.0, "url": "https://x/2"},
+    ]
+    filtered = _filter_broken_listing_titles(raw_results)
+    assert len(filtered) == 1
+    assert filtered[0]["title"] == "Akkuschrauber, funktioniert einwandfrei"
+
+
+def test_filter_broken_listing_titles_case_insensitive_for_all_terms() -> None:
+    raw_results = [
+        {"title": "Nur Bastler, keine Garantie", "price": 1.0, "url": "https://x/1"},
+        {"title": "Nur ERSATZTEILE, Restposten", "price": 2.0, "url": "https://x/2"},
+        {"title": "Gut erhalten, funktioniert", "price": 30.0, "url": "https://x/3"},
+    ]
+    filtered = _filter_broken_listing_titles(raw_results)
+    assert len(filtered) == 1
+    assert filtered[0]["title"] == "Gut erhalten, funktioniert"
+
+
+def test_filter_broken_listing_titles_ignores_missing_or_non_string_title() -> None:
+    raw_results = [
+        {"title": None, "price": 5.0, "url": "https://x/1"},
+        {"price": 5.0, "url": "https://x/2"},
+    ]
+    filtered = _filter_broken_listing_titles(raw_results)
+    assert filtered == raw_results
+
+
+def test_all_results_dropped_by_broken_filter_triggers_query_loosening() -> None:
+    """A non-broken item whose first (joined) query returns ONLY
+    defekt/Bastler/Ersatzteile-titled listings must be treated as a
+    zero-result query -- the service should keep loosening to the next
+    candidate query rather than accepting the (would-be-empty-after-filter)
+    result set as final.
+    """
+    item = _make_item(keywords=["akkuschrauber", "bosch"], condition="good")
+    junk_results = [
+        {"title": "Akkuschrauber DEFEKT", "price": 5.0, "url": "https://x/1"},
+        {"title": "Akkuschrauber Ersatzteile", "price": 3.0, "url": "https://x/2"},
+    ]
+    good_results = [
+        {"title": "Bosch Akkuschrauber, funktioniert", "price": 35.0, "url": "https://x/3"},
+    ]
+    provider = _StubProvider(responses=[junk_results, good_results])
+    service = ComparableListingSearchService(provider=provider)
+
+    ok = service.search_item(item)
+
+    assert ok is True
+    assert provider.calls == ["akkuschrauber bosch", "akkuschrauber"]
+    assert len(item.comparable_listings) == 1
+    assert item.comparable_listings[0].title == "Bosch Akkuschrauber, funktioniert"
+
+
+def test_kleinanzeigen_api_provider_forwards_exclude_to_client() -> None:
+    fake_client = _FakeKleinanzeigenClient(listings=[])
+    provider = KleinanzeigenAPIProvider(client=fake_client)
+
+    provider.search("desk lamp", exclude=list(_BROKEN_LISTING_TERMS))
+
+    assert fake_client.last_kwargs is not None
+    assert fake_client.last_kwargs["exclude"] == list(_BROKEN_LISTING_TERMS)
+
+
+def test_kleinanzeigen_api_provider_omits_exclude_when_none() -> None:
+    fake_client = _FakeKleinanzeigenClient(listings=[])
+    provider = KleinanzeigenAPIProvider(client=fake_client)
+
+    provider.search("desk lamp", exclude=None)
+
+    assert fake_client.last_kwargs is not None
+    assert "exclude" not in fake_client.last_kwargs
