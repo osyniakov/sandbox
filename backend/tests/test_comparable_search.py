@@ -19,6 +19,10 @@ from app.comparable_search import (
     _build_query,
     _build_query_attempts,
     _extract_condition,
+    _extract_is_wanted,
+    _extract_price_type,
+    _listing_to_raw,
+    _parse_listings,
 )
 from app.models import ComparableListing, Item, ItemStatus
 
@@ -96,6 +100,7 @@ def test_well_formed_results_produce_populated_comparable_listings() -> None:
     assert listing.url == "https://www.kleinanzeigen.de/s-anzeige/1"
     assert listing.condition == "Gebraucht"
     assert listing.location == "Berlin"
+    assert listing.price_type is None
 
     other = item.comparable_listings[1]
     assert other.title == "Desk lamp IKEA silver"
@@ -401,12 +406,14 @@ class _FakeListing:
         url: str,
         city: str | None = None,
         attributes: dict[str, Any] | None = None,
+        price_type: Any = None,
     ) -> None:
         self.title = title
         self.price = price
         self.url = url
         self.city = city
         self.attributes = attributes or {}
+        self.price_type = price_type
 
 
 class _FakeKleinanzeigenClient:
@@ -422,6 +429,127 @@ class _FakeKleinanzeigenClient:
         if self._error is not None:
             raise self._error
         return self._listings
+
+
+# ---------------------------------------------------------------------------
+# price_type / is_wanted extraction
+# ---------------------------------------------------------------------------
+
+
+class _ObjectWithoutPriceType:
+    """A listing-like object that has no ``price_type`` attribute at all."""
+
+
+class _EnumLikeValue:
+    """Stand-in for an enum member exposing ``.value`` (defensive case)."""
+
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+
+class _EnumLikeName:
+    """Stand-in for an enum member exposing only ``.name`` (defensive case)."""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+def test_extract_price_type_plain_string_is_stored_verbatim_stripped() -> None:
+    listing = _FakeListing(title="t", price=1.0, url="u", price_type="  SPECIFIED_AMOUNT  ")
+    assert _extract_price_type(listing) == "SPECIFIED_AMOUNT"
+
+
+def test_extract_price_type_handles_real_observed_values_verbatim() -> None:
+    # Real kleinanzeigen_api 0.4.0 values: SPECIFIED_AMOUNT, PLEASE_CONTACT (VB), FREE.
+    for value in ("SPECIFIED_AMOUNT", "PLEASE_CONTACT", "FREE"):
+        listing = _FakeListing(title="t", price=1.0, url="u", price_type=value)
+        assert _extract_price_type(listing) == value
+
+
+def test_extract_price_type_enum_like_object_uses_value() -> None:
+    listing = _FakeListing(title="t", price=1.0, url="u", price_type=_EnumLikeValue("FREE"))
+    assert _extract_price_type(listing) == "FREE"
+
+
+def test_extract_price_type_enum_like_object_falls_back_to_name() -> None:
+    listing = _FakeListing(title="t", price=1.0, url="u", price_type=_EnumLikeName("FREE"))
+    assert _extract_price_type(listing) == "FREE"
+
+
+def test_extract_price_type_missing_attribute_returns_none() -> None:
+    assert _extract_price_type(_ObjectWithoutPriceType()) is None
+
+
+def test_extract_price_type_none_returns_none() -> None:
+    listing = _FakeListing(title="t", price=1.0, url="u", price_type=None)
+    assert _extract_price_type(listing) is None
+
+
+def test_extract_price_type_empty_or_whitespace_returns_none() -> None:
+    for value in ("", "   "):
+        listing = _FakeListing(title="t", price=1.0, url="u", price_type=value)
+        assert _extract_price_type(listing) is None
+
+
+def test_extract_is_wanted_returns_none_when_no_ad_type_field() -> None:
+    # The real kleinanzeigen_api 0.4.0 Listing dataclass has no ad-type field
+    # on returned listings at all (only as a search/create parameter).
+    listing = _FakeListing(title="t", price=1.0, url="u")
+    assert _extract_is_wanted(listing) is None
+    assert _extract_is_wanted(_ObjectWithoutPriceType()) is None
+
+
+class _ListingWithAdType(_FakeListing):
+    def __init__(self, *args: Any, ad_type: Any = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.ad_type = ad_type
+
+
+def test_extract_is_wanted_true_when_ad_type_is_wanted() -> None:
+    listing = _ListingWithAdType(title="t", price=1.0, url="u", ad_type="WANTED")
+    assert _extract_is_wanted(listing) is True
+
+
+def test_extract_is_wanted_false_when_ad_type_is_offered() -> None:
+    listing = _ListingWithAdType(title="t", price=1.0, url="u", ad_type="OFFERED")
+    assert _extract_is_wanted(listing) is False
+
+
+def test_listing_to_raw_includes_price_type_and_is_wanted_keys() -> None:
+    listing = _FakeListing(title="t", price=1.0, url="u", price_type="FREE")
+    raw = _listing_to_raw(listing)
+    assert raw["price_type"] == "FREE"
+    assert raw["is_wanted"] is None
+
+
+# ---------------------------------------------------------------------------
+# _parse_listings -- price_type storage
+# ---------------------------------------------------------------------------
+
+
+def test_parse_listings_stores_stripped_price_type() -> None:
+    raw_results = [
+        {
+            "title": "Item",
+            "price": 5.0,
+            "url": "https://x/1",
+            "price_type": "  SPECIFIED_AMOUNT  ",
+        }
+    ]
+    listings = _parse_listings(raw_results)
+    assert len(listings) == 1
+    assert listings[0].price_type == "SPECIFIED_AMOUNT"
+
+
+def test_parse_listings_stores_none_price_type_when_missing_or_blank() -> None:
+    raw_results = [
+        {"title": "A", "price": 5.0, "url": "https://x/1"},
+        {"title": "B", "price": 5.0, "url": "https://x/2", "price_type": "   "},
+        {"title": "C", "price": 5.0, "url": "https://x/3", "price_type": None},
+    ]
+    listings = _parse_listings(raw_results)
+    assert len(listings) == 3
+    assert all(listing.price_type is None for listing in listings)
 
 
 def test_kleinanzeigen_api_provider_uses_date_descending_sort_and_nationwide_location() -> None:
@@ -446,6 +574,7 @@ def test_kleinanzeigen_api_provider_parses_listing_objects_into_raw_dicts() -> N
         url="https://www.kleinanzeigen.de/s-anzeige/1",
         city="Munich",
         attributes={"Zustand": "Gebraucht"},
+        price_type="SPECIFIED_AMOUNT",
     )
     fake_client = _FakeKleinanzeigenClient(listings=[fake_listing])
     provider = KleinanzeigenAPIProvider(client=fake_client)
@@ -459,6 +588,8 @@ def test_kleinanzeigen_api_provider_parses_listing_objects_into_raw_dicts() -> N
             "url": "https://www.kleinanzeigen.de/s-anzeige/1",
             "condition": "Gebraucht",
             "location": "Munich",
+            "price_type": "SPECIFIED_AMOUNT",
+            "is_wanted": None,
         }
     ]
 
@@ -520,3 +651,4 @@ def test_end_to_end_through_service_with_fake_kleinanzeigen_client() -> None:
     assert listing.price == 20.0
     assert listing.condition == "Gut"
     assert listing.location == "Cologne"
+    assert listing.price_type is None

@@ -68,7 +68,34 @@ def test_upgrade_to_head_fresh_db(tmp_path, monkeypatch) -> None:
     engine = sqlalchemy.create_engine(database_url)
     columns = _table_columns(engine, "items")
     assert "user_hint" in columns
+    assert "price_type" in _table_columns(engine, "comparable_listings")
     assert _alembic_version(engine) == _head_revision()
+    engine.dispose()
+
+
+def test_upgrade_head_then_downgrade_one_drops_price_type_column(tmp_path, monkeypatch) -> None:
+    """``price_type`` (sandbox-8jm.2) is added by the head migration and must
+    be cleanly removed by downgrading one step, exercising both directions
+    of that migration on a scratch SQLite DB."""
+    from alembic import command
+
+    from app.db_migrate import _build_config
+
+    database_url = _make_database_url(tmp_path, monkeypatch, "price_type.db")
+
+    upgrade_to_head(database_url)
+
+    engine = sqlalchemy.create_engine(database_url)
+    assert "price_type" in _table_columns(engine, "comparable_listings")
+    assert _alembic_version(engine) == _head_revision()
+    engine.dispose()
+
+    config = _build_config(database_url)
+    command.downgrade(config, "-1")
+
+    engine = sqlalchemy.create_engine(database_url)
+    assert "price_type" not in _table_columns(engine, "comparable_listings")
+    assert _alembic_version(engine) != _head_revision()
     engine.dispose()
 
 

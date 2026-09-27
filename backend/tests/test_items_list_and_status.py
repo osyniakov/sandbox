@@ -926,3 +926,46 @@ def test_delete_item_already_missing_photo_file_still_deletes_successfully(
         assert session.get(Item, item_id) is None
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# ``comparable_listings`` -- price_type serialization (sandbox-8jm.2)
+# ---------------------------------------------------------------------------
+
+
+def test_get_item_serializes_price_type_for_comparable_listings(
+    client: TestClient, db_session_factory, auth_headers: dict[str, str]
+) -> None:
+    item_id = _make_item(
+        db_session_factory, status=ItemStatus.DECIDED, decision=Decision.SELL
+    )
+    session = db_session_factory()
+    try:
+        item = session.get(Item, item_id)
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Used Drill",
+                price=19.99,
+                url="https://example.com/listing/priced",
+                price_type="SPECIFIED_AMOUNT",
+            )
+        )
+        item.comparable_listings.append(
+            ComparableListing(
+                title="Free Drill",
+                price=0.0,
+                url="https://example.com/listing/free",
+                price_type=None,
+            )
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    response = client.get(f"/items/{item_id}", headers=auth_headers)
+
+    assert response.status_code == 200
+    body = response.json()
+    by_title = {listing["title"]: listing for listing in body["comparable_listings"]}
+    assert by_title["Used Drill"]["price_type"] == "SPECIFIED_AMOUNT"
+    assert by_title["Free Drill"]["price_type"] is None

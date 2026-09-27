@@ -333,7 +333,58 @@ def _listing_to_raw(listing: Any) -> dict[str, Any]:
         "url": getattr(listing, "url", None),
         "condition": _extract_condition(attributes),
         "location": getattr(listing, "city", None),
+        "price_type": _extract_price_type(listing),
+        "is_wanted": _extract_is_wanted(listing),
     }
+
+
+def _extract_price_type(listing: Any) -> str | None:
+    """Extract ``price_type`` from a listing, verbatim (stripped), or ``None``.
+
+    The real ``kleinanzeigen_api.Listing.price_type`` (0.4.0) is a plain
+    string copied raw from the API's "price-type" field -- real observed
+    values are "SPECIFIED_AMOUNT", "PLEASE_CONTACT" (VB) and "FREE".
+    "FIXED"/"NEGOTIABLE"/"GIVE_AWAY" are only create-ad *input* aliases and
+    are never expected here. Handled defensively anyway: a plain str, an
+    object exposing ``.value`` (enum-like), missing/None, or an
+    empty/whitespace-only string all fall back to (or resolve into) verbatim
+    stripped text, or ``None``. Aliases are never translated -- stored as-is.
+    """
+    raw_value = getattr(listing, "price_type", None)
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, str):
+        stripped = raw_value.strip()
+        return stripped or None
+    value = getattr(raw_value, "value", None)
+    if value is None:
+        value = getattr(raw_value, "name", None)
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped or None
+    return None
+
+
+def _extract_is_wanted(listing: Any) -> bool | None:
+    """Extract a wanted-ad signal from a listing, if the library exposes one.
+
+    The installed ``kleinanzeigen_api`` 0.4.0 ``Listing`` dataclass has no
+    ad-type field at all (``ad_type``/``adType`` only exist as *search/create*
+    parameters, never as an attribute on a returned ``Listing`` instance).
+    Defensively checked anyway in case a future version (or a listing-like
+    object from elsewhere) adds one; returns ``None`` when no such field is
+    present, so downstream code cannot mistake "unknown" for "not wanted".
+    """
+    for attr_name in ("ad_type", "adType"):
+        if hasattr(listing, attr_name):
+            raw_value = getattr(listing, attr_name)
+            if raw_value is None:
+                return None
+            value = getattr(raw_value, "value", raw_value)
+            if isinstance(value, str):
+                return value.strip().upper() == "WANTED"
+            return None
+    return None
 
 
 def _extract_condition(attributes: dict[str, Any]) -> str | None:
@@ -415,6 +466,10 @@ def _parse_listings(raw_results: list[dict[str, Any]]) -> list[ComparableListing
         location = (
             raw_location.strip() if isinstance(raw_location, str) and raw_location.strip() else None
         )
+        raw_price_type = raw.get("price_type")
+        price_type = (
+            raw_price_type.strip() if isinstance(raw_price_type, str) and raw_price_type.strip() else None
+        )
 
         listings.append(
             ComparableListing(
@@ -423,6 +478,7 @@ def _parse_listings(raw_results: list[dict[str, Any]]) -> list[ComparableListing
                 url=url,
                 condition=condition,
                 location=location,
+                price_type=price_type,
             )
         )
     return listings

@@ -172,6 +172,7 @@ class ComparableListing(Base):
     url: Mapped[str] = mapped_column(String, nullable=False)
     condition: Mapped[str | None] = mapped_column(String, nullable=True)
     location: Mapped[str | None] = mapped_column(String, nullable=True)
+    price_type: Mapped[str | None] = mapped_column(String, nullable=True)
 
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow

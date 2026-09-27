@@ -671,6 +671,7 @@ def _serialize_comparable_listing(listing: ComparableListing) -> dict[str, objec
         "url": listing.url,
         "condition": listing.condition,
         "location": listing.location,
+        "price_type": listing.price_type,
     }
 
 
