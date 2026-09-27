@@ -417,6 +417,31 @@
       "expected_decision": "sell",
       "expected_price_range": [15, 35],
       "expected_confidence": "high"
+    },
+    {
+      "id": "short_umlaut_word_no_false_match",
+      "description": "bead sandbox-3ht: identified_name is 'Tür' (NOT the more specific 'Holztür' from the item's own keywords below -- 'Holztür' digraph-folds/compacts to 'holztuer', which is NOT a substring of 'zimmertuer'/'innentuer', so it would wrongly reject the two relevant compound-title listings below; 'Tür' is used instead so the new short-token word-boundary rule -- title word ends with the (stemmed) unit -- can do its job). The joined query and the 'holztür' fallback both return zero results, so the loosening logic reaches the single-token fallback 'tür'. Before sandbox-3ht, 'tür' plain-folds to 'tur' and matches as a bare substring inside unrelated words ('Tastatur', 'Turnschuhe', 'Natur'), so those 3 unrelated, oddly-priced listings would pollute the median. After sandbox-3ht: 'tür' is too short (len 3 plain-folded) to participate in 'plain' mode at all, and in 'digraph' mode ('tuer', len 4) it now requires a title WORD to end with 'tuer' -- which 'tastatur'/'turnschuhe'/'natur' do not, but 'zimmertuer'/'innentuer'/the standalone word 'tuer' (from 'Holz-Tür') do -- so only the 3 genuinely relevant door listings survive the relevance gate and the unrelated ones (all priced well below the relevant cluster, EUR6-9, to make median contamination obvious -- unfiltered, they'd drag the median from ~55 down to ~27) are correctly excluded.",
+      "item": {
+        "identified_name": "Tür",
+        "brand": null,
+        "condition": "good",
+        "search_keywords": ["holztür innen", "holztür", "tür"]
+      },
+      "provider_results": {
+        "holztür innen": [],
+        "holztür": [],
+        "tür": [
+          {"title": "Tastatur Logitech K120", "price": 8, "url": "https://example.test/80", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Turnschuhe Gr. 40", "price": 6, "url": "https://example.test/81", "condition": "gebraucht", "location": "Hamburg", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Natur Wandbild", "price": 9, "url": "https://example.test/82", "condition": "gebraucht", "location": "Koeln", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Zimmertür Holz weiß", "price": 45, "url": "https://example.test/83", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Innentür Buche mit Zarge", "price": 60, "url": "https://example.test/84", "condition": "gebraucht", "location": "Muenchen", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Holz-Tür 86 cm", "price": 55, "url": "https://example.test/85", "condition": "gebraucht", "location": "Stuttgart", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [30, 80],
+      "expected_confidence": "high"
     }
   ]
 }

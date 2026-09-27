@@ -58,8 +58,23 @@ from tests.eval.run_eval import evaluate, load_cases
 # junk -> give_away instead of sell). Measured on sandbox-182 code:
 # decision_accuracy == 18/18 == 1.0, price_in_range_rate == 13/14 ==
 # 0.928571..., confidence_accuracy == 14/14 == 1.0.
+#
+# Raised by bead sandbox-3ht (relevance gate: plain-mode length floor for
+# umlaut-folded tokens, plus a word-boundary rule -- title word must END
+# with the matching unit -- for short (< 5 char) matching units, instead of
+# a bare compact-title substring check). Added one new case,
+# ``short_umlaut_word_no_false_match`` (name "Tür" against a mix of 3
+# unrelated titles that merely contain "tur"/"tuer" as a substring and 3
+# genuinely relevant door listings), measured WRONG on pre-sandbox-3ht code
+# (on the same cases.json: decision_accuracy 19/19 == 1.0 unaffected --
+# "sell" was still the right call either way -- but price_in_range_rate
+# 13/15 == 0.8667, since the 3 unrelated, low-priced listings weren't
+# filtered out and dragged the median from ~55 down to 27, outside the
+# expected [30, 80] range). Measured on sandbox-3ht code: decision_accuracy
+# == 19/19 == 1.0, price_in_range_rate == 14/15 == 0.933333...,
+# confidence_accuracy == 15/15 == 1.0.
 DECISION_ACCURACY_FLOOR = 1.0
-PRICE_RANGE_FLOOR = 0.92
+PRICE_RANGE_FLOOR = 0.93
 
 # Added by bead sandbox-8jm.6 (``Item.decision_confidence``, measured:
 # confidence_accuracy == 11/11 == 1.0 across the cases that carry an
@@ -69,6 +84,7 @@ PRICE_RANGE_FLOOR = 0.92
 # (e.g. by labelling more cases) but must never lower it.
 # Still 1.0 after bead sandbox-0as's new labelled case (measured: 12/12).
 # Still 1.0 after bead sandbox-182's two new labelled cases (measured: 14/14).
+# Still 1.0 after bead sandbox-3ht's new labelled case (measured: 15/15).
 CONFIDENCE_ACCURACY_FLOOR = 1.0
 
 

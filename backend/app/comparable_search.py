@@ -280,15 +280,49 @@ of two umlaut-fold modes (``_FOLD_MODES = ("digraph", "plain")`` -- see
   tokens (and from the keyword-skip check above) regardless of how either
   string is punctuated.
 
-A title is relevant if ANY name token/stem matches (as a substring) the
-compacted title, in EITHER fold mode -- checked mode-consistently, never
-mixing a "digraph"-folded token against a "plain"-folded title. Known,
-accepted limitations (see ``_destem``'s docstring): this is a fixed-suffix
-heuristic, not real German morphology. It does not handle umlaut-vowel-
-change plurals ("Mutter"/"Mütter") or letter-insertion variants
-("Fön"/"Föhn" -- an "h"-insertion is neither an umlaut-fold nor a suffix
-difference, so that pair still does not match; see
-``test_is_relevant_umlaut_h_insertion_known_limitation``).
+A title is relevant if ANY name token/stem matches the title, in EITHER
+fold mode -- checked mode-consistently, never mixing a "digraph"-folded
+token against a "plain"-folded title. Two further guards (bead
+sandbox-3ht) curb false positives from short units and from dropping
+umlauts too aggressively:
+
+* **Plain-mode length floor.** A token only participates in "plain"
+  (diaeresis-dropped) fold-mode matching if its plain-folded length is
+  >= ``_MIN_PLAIN_MODE_TOKEN_LEN`` (5). Below that, dropping the umlaut
+  collides with unrelated words too often (e.g. "Tür" -> "tur" would
+  otherwise match "Turnschuhe"/"Natur"; "Bär" -> "bar" would match
+  "Barhocker"; "Säge" -> "sage" would match "Massage"). Such short tokens
+  are still checked in "digraph" mode, where the umlaut is spelled out
+  (e.g. "Tür" -> "tuer") rather than dropped, so this collision problem
+  does not arise there.
+* **Word-boundary rule for short units.** The matching unit (stem, if
+  ``_destem`` produced one, else the token) is checked against the title
+  differently depending on its length. Units of length >=
+  ``_MIN_SUBSTRING_UNIT_LEN`` (5) keep the original rule: matched as a
+  substring of the title after ``_compact`` folds it and strips all
+  remaining non-alphanumeric characters (e.g. "Akku-Schrauber 18V" ->
+  "akkuschrauber18v"). Units shorter than that are instead checked as a
+  whole word: the title is folded but NOT compacted, split into words the
+  same way ``identified_name`` is, and the unit must match a word's END --
+  the word equals the unit, or the unit plus one of ``_PLURAL_SUFFIXES``
+  ("e"/"en"/"n"/"s"). This is what makes "Tür" match "Haustür" (word
+  "haustuer" ends with "tuer") and "Karten" match "Spielkarten" (stem
+  "kart" + "en"), while rejecting "Tür" against "Tastatur" and "Karten"
+  against "Kartoffelschäler" -- neither of which has a title *word ending
+  in* the unit.
+
+Known, accepted limitations (see ``_destem``'s docstring): this is a
+fixed-suffix heuristic, not real German morphology. It does not handle
+umlaut-vowel-change plurals ("Mutter"/"Mütter") or letter-insertion
+variants ("Fön"/"Föhn" -- an "h"-insertion is neither an umlaut-fold nor a
+suffix difference, so that pair still does not match; see
+``test_is_relevant_umlaut_h_insertion_known_limitation``). For units of
+length >= ``_MIN_SUBSTRING_UNIT_LEN``, the compact-title substring rule
+can still cross word boundaries after compaction (e.g. "Reifen" ~ "Reife
+Tomaten" once space-stripped). For units shorter than that, only a
+word-END match counts, so a short unit that is merely a compound-START
+match in the title (e.g. "Hose" vs "Hosenträger") is no longer accepted --
+an intentional trade for far fewer false positives.
 
 Manual smoke test against the LIVE Kleinanzeigen site
 -------------------------------------------------------
@@ -724,6 +758,29 @@ def _filter_broken_listing_titles(raw_results: list[dict[str, Any]]) -> list[dic
 # title will use.
 _FOLD_MODES = ("digraph", "plain")
 
+# Minimum length (of the whole, un-stemmed, folded token) for that token to
+# participate in "plain" (diaeresis-dropped) fold-mode matching at all (bead
+# sandbox-3ht). Below this length, dropping the umlaut collides with too
+# many unrelated German words (e.g. "Tür" -> "tur", "Bär" -> "bar", "Säge"
+# -> "sage") to be trustworthy as a match signal. Short tokens are still
+# checked in "digraph" mode, where the umlaut is spelled out instead of
+# dropped, which does not have the same collision problem.
+_MIN_PLAIN_MODE_TOKEN_LEN = 5
+
+# Minimum length of the matching unit (stem, if one was derived, else the
+# raw token) for the compact-title substring rule to apply (bead
+# sandbox-3ht). Below this length, a bare substring check is too prone to
+# matching inside an unrelated, longer word (e.g. "karten" ~ "Kartoffel"),
+# so short units instead require a whole-word match (see
+# ``_PLURAL_SUFFIXES`` and ``_is_relevant``).
+_MIN_SUBSTRING_UNIT_LEN = 5
+
+# Suffixes tried, in addition to the bare needle, when word-boundary
+# matching a short (< ``_MIN_SUBSTRING_UNIT_LEN``) matching unit against a
+# title word (bead sandbox-3ht). Mirrors the plural-ish suffixes
+# ``_destem`` strips, plus the empty string for an exact match.
+_PLURAL_SUFFIXES = ("", "e", "en", "n", "s")
+
 
 def _fold(text: str, mode: str) -> str:
     """Casefold ``text`` and normalize German umlauts per ``mode``.
@@ -819,6 +876,14 @@ def _is_relevant(title: str, identified_name: str | None, brand: str | None) -> 
        listing is relevant, and this also lets a multi-word brand like
        "Black & Decker" be excluded token-by-token regardless of how it's
        punctuated in either string).
+    1b. A surviving token only participates in "plain" fold-mode matching
+       if its plain-folded length is >= ``_MIN_PLAIN_MODE_TOKEN_LEN`` (bead
+       sandbox-3ht). Below that length, dropping the umlaut diaeresis
+       collides with too many unrelated words (e.g. "Tür" -> "tur", "Bär"
+       -> "bar", "Säge" -> "sage") to trust as a match signal. The token is
+       unaffected in "digraph" mode, where the umlaut is spelled out
+       rather than dropped and this collision problem does not arise, so
+       short tokens are still checked there.
     2. Each surviving token of length >= 5 is passed through ``_destem``
        (see its docstring), which strips a single trailing German
        plural-ish suffix when that leaves a still-substantial stem. When a
@@ -826,25 +891,47 @@ def _is_relevant(title: str, identified_name: str | None, brand: str | None) -> 
        matching unit for that token -- this makes e.g. name token
        "Laufschuhe" match title word "Laufschuh" and vice versa. Tokens
        that don't qualify for stemming are matched as-is.
-    3. ``title`` is folded (same mode) and compacted (see ``_compact``,
-       which additionally strips all remaining non-alphanumeric
-       characters) so that e.g. "Akku-Schrauber 18V" becomes
-       "akkuschrauber18v" and still matches a one-word name token/stem.
+    3. ``title`` is folded (same mode). Two different rules are then used
+       to check the matching unit (stem, if one was derived, else the
+       token) against ``title``, depending on the unit's length (bead
+       sandbox-3ht):
+
+       * If the unit is >= ``_MIN_SUBSTRING_UNIT_LEN`` characters, ``title``
+         is additionally compacted (see ``_compact``, which strips all
+         remaining non-alphanumeric characters) so that e.g.
+         "Akku-Schrauber 18V" becomes "akkuschrauber18v" and still matches
+         a one-word name unit -- and the unit is checked as a substring of
+         that compacted title.
+       * If the unit is shorter than ``_MIN_SUBSTRING_UNIT_LEN``, a bare
+         substring check is too easy to satisfy by accident inside an
+         unrelated, longer word (e.g. "karten" ~ "Kartoffelschäler",
+         "rollen" ~ "Roller"). Instead, ``title`` is folded but NOT
+         compacted, split into words the same way ``identified_name`` was
+         (``re.split(r"[\W_]+", ...)``), and the unit must match a whole
+         word: some word must equal the unit, or equal the unit plus one
+         of ``_PLURAL_SUFFIXES`` ("e"/"en"/"n"/"s") -- checked via
+         ``word.endswith(unit + suffix)``, which also covers exact
+         equality (empty suffix). Only a word-END match counts, so a short
+         unit matching merely the START of a longer compound (e.g. "Hose"
+         at the start of "Hosenträger") is deliberately NOT accepted.
 
     A title is relevant if ANY name token/stem, in EITHER fold mode
     (checked mode-consistently -- a token/stem folded one way is only
-    checked against the title folded the *same* way), is a substring of
-    the compacted title -- checked in one direction only (name unit inside
-    title); the reverse (title token inside a name unit) is deliberately
-    NOT checked, since a long, precise ``identified_name`` token should not
-    be considered "matched" merely because a short, generic title word
-    happens to be a substring of it.
+    checked against the title folded the *same* way), matches per the
+    length-appropriate rule above -- checked in one direction only (name
+    unit matched against title); the reverse (title word matched against a
+    name unit) is deliberately NOT checked, since a long, precise
+    ``identified_name`` token should not be considered "matched" merely
+    because a short, generic title word happens to be a substring of it.
 
     If there are no usable name tokens at all, in either mode
     (``identified_name`` is ``None``/empty, or every token was dropped as
-    too short or brand-only), this returns ``True`` -- there's nothing to
+    too short, brand-only, or -- in "plain" mode only -- too short to
+    trust umlaut-dropping for), this returns ``True`` -- there's nothing to
     judge relevance against, so the gate must not filter anything out in
-    that case.
+    that case. Note a token that is too short only for "plain" mode still
+    has its "digraph"-mode entry, so this fallback only triggers when a
+    token has no usable entry in either mode.
 
     Known limitations (accepted, not fixed by this gate): the plural
     stemming in ``_destem`` is a crude fixed-suffix heuristic, not real
@@ -852,7 +939,15 @@ def _is_relevant(title: str, identified_name: str | None, brand: str | None) -> 
     (e.g. "Mutter"/"Mütter") or letter-insertion spelling variants (e.g.
     "Fön"/"Föhn" -- an "h"-insertion, not an umlaut-folding or suffix
     difference, so it is out of scope for both ``_fold`` and ``_destem``
-    and this pair still does not match).
+    and this pair still does not match). For matching units of length >=
+    ``_MIN_SUBSTRING_UNIT_LEN``, the compact-title substring rule can still
+    cross word boundaries after compaction (e.g. "Reifen" ~ "Reife
+    Tomaten" once space-stripped) -- this is unchanged/accepted. For units
+    shorter than that, the word-boundary rule only accepts a match at the
+    END of a title word, so a short unit that is only a compound-START
+    match in the title (e.g. "Hose" vs "Hosenträger") is no longer
+    accepted -- this is an intentional new limitation traded for far fewer
+    false positives (bead sandbox-3ht).
     """
     if not identified_name:
         return True
@@ -865,6 +960,8 @@ def _is_relevant(title: str, identified_name: str | None, brand: str | None) -> 
         for token in raw_tokens:
             if len(token) < 3 or token in brand_tokens:
                 continue
+            if mode == "plain" and len(token) < _MIN_PLAIN_MODE_TOKEN_LEN:
+                continue
             stem = _destem(token) if len(token) >= 5 else None
             match_units.append((mode, stem or token))
 
@@ -872,7 +969,17 @@ def _is_relevant(title: str, identified_name: str | None, brand: str | None) -> 
         return True
 
     compact_titles = {mode: _compact(title, mode) for mode in _FOLD_MODES}
-    return any(unit in compact_titles[mode] for mode, unit in match_units)
+    title_words = {mode: re.split(r"[\W_]+", _fold(title, mode)) for mode in _FOLD_MODES}
+
+    for mode, unit in match_units:
+        if len(unit) >= _MIN_SUBSTRING_UNIT_LEN:
+            if unit in compact_titles[mode]:
+                return True
+        else:
+            for word in title_words[mode]:
+                if any(word.endswith(unit + suffix) for suffix in _PLURAL_SUFFIXES):
+                    return True
+    return False
 
 
 def _parse_listings(raw_results: list[dict[str, Any]]) -> list[ComparableListing]:

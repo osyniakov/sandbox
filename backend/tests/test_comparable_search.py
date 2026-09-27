@@ -1014,6 +1014,63 @@ def test_is_relevant_umlaut_h_insertion_known_limitation() -> None:
     assert _is_relevant("Föhn", identified_name="Fön", brand=None) is False
 
 
+# ---------------------------------------------------------------------------
+# Plain-mode length floor and short-unit word-boundary matching
+# (bead sandbox-3ht).
+# ---------------------------------------------------------------------------
+
+
+def test_is_relevant_short_umlaut_token_rejects_plain_fold_collisions() -> None:
+    # "Tür" plain-folds to "tur" (len 3) -- too short to trust in "plain"
+    # mode, so it must not match unrelated words that merely contain "tur".
+    assert _is_relevant("Tastatur Logitech", identified_name="Tür", brand=None) is False
+    assert _is_relevant("Turnschuhe Nike", identified_name="Tür", brand=None) is False
+    assert _is_relevant("Natur Bild", identified_name="Tür", brand=None) is False
+    # "Bär" plain-folds to "bar" (len 3).
+    assert _is_relevant("Barbie Puppe", identified_name="Bär", brand=None) is False
+    assert _is_relevant("Barhocker 2x", identified_name="Bär", brand=None) is False
+    # "Säge" plain-folds to "sage" (len 4) and digraph-folds/stems to "saeg".
+    assert _is_relevant("Massageliege", identified_name="Säge", brand=None) is False
+
+
+def test_is_relevant_short_stem_requires_word_boundary() -> None:
+    # "Karten" stems to "kart" (len 4) -- too short for the substring rule,
+    # so it must not match merely because "kart" appears inside a longer,
+    # unrelated word.
+    assert _is_relevant("Kartoffelschäler", identified_name="Karten", brand=None) is False
+    # "Rollen" stems to "roll" (len 4).
+    assert _is_relevant("Roller Kinder", identified_name="Rollen", brand=None) is False
+    # "Zähne" digraph-stems to "zaehn" (len 5, substring rule) and
+    # plain-stems to "zahn" (len 4, word-boundary rule); neither matches.
+    assert _is_relevant(
+        "Zahnbürste elektrisch", identified_name="Zähne", brand=None
+    ) is False
+    # "Hose" (len 4, no stem derived since it's < 5 chars) must not match a
+    # word it is merely the START of.
+    assert _is_relevant("Hosenträger", identified_name="Hose", brand=None) is False
+
+
+def test_is_relevant_short_umlaut_token_matches_via_digraph_word_boundary() -> None:
+    # "Tür" still matches via "digraph" mode ("tuer"), word-boundary rule.
+    assert _is_relevant("Haustür weiß", identified_name="Tür", brand=None) is True
+    assert _is_relevant("Tür mit Zarge", identified_name="Tür", brand=None) is True
+    assert _is_relevant("Haus-Tür", identified_name="Tür", brand=None) is True
+    assert _is_relevant("Teddybär groß", identified_name="Bär", brand=None) is True
+
+
+def test_is_relevant_short_stem_word_boundary_matches_plural_and_compound_end() -> None:
+    assert _is_relevant("Stichsäge Bosch", identified_name="Säge", brand=None) is True
+    assert _is_relevant("Handsaege alt", identified_name="Säge", brand=None) is True
+    assert _is_relevant("Spielkarten Set", identified_name="Karten", brand=None) is True
+    assert _is_relevant("Karte Deutschland", identified_name="Karten", brand=None) is True
+    assert _is_relevant("Rolle Klebeband", identified_name="Rollen", brand=None) is True
+    assert _is_relevant(
+        "Möbelrollen 4 Stück", identified_name="Rollen", brand=None
+    ) is True
+    assert _is_relevant("Jeanshose blau", identified_name="Hose", brand=None) is True
+    assert _is_relevant("Hosen Damen", identified_name="Hose", brand=None) is True
+
+
 def test_build_query_attempts_skips_multiword_brand_keyword_variants() -> None:
     brand = "Black & Decker"
     attempts = _build_query_attempts(
