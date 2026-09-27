@@ -135,6 +135,24 @@ _NEW_CONDITION_VALUES = frozenset(
 )
 
 
+# Kleinanzeigen listing titles that mean "I'm looking to buy/receive this"
+# rather than "I'm offering this for sale/give-away" -- i.e. a wanted ad,
+# not a real comparable. The library exposes no dedicated ad-type field,
+# so detection is title-based only: the stripped+lowercased title must
+# START with the word "suche" (as its own word, i.e. followed by a space
+# or colon, or be exactly "suche") -- a prefix check, not a substring
+# check, so titles like "Suchergebnis..." or "Tausche/Suche ..." (which
+# contain the word but aren't wanted ads) are correctly NOT matched.
+_WANTED_TITLE_PREFIXES = ("suche ", "suche:")
+
+
+def _is_wanted_ad_title(title: str | None) -> bool:
+    if not title:
+        return False
+    normalized = title.strip().lower()
+    return normalized == "suche" or normalized.startswith(_WANTED_TITLE_PREFIXES)
+
+
 def is_new_condition(condition: str | None) -> bool:
     """Return ``True`` only if ``condition`` unambiguously means "brand new / unopened".
 
@@ -151,38 +169,82 @@ def is_new_condition(condition: str | None) -> bool:
     return condition.strip().lower() in _NEW_CONDITION_VALUES
 
 
+def is_usable_comparable(listing: ComparableListing) -> bool:
+    """Return ``True`` if ``listing`` should feed the pricing median.
+
+    A comparable listing is excluded (returns ``False``) when ANY of the
+    following hold:
+
+    * ``is_new_condition(listing.condition)`` -- brand-new retail listings
+      bias the price signal for an inherently used/secondhand good (see
+      module docstring "suggested_price formula").
+    * ``listing.price_type`` (case-insensitive, stripped) equals
+      ``"FREE"``. Verified against ``kleinanzeigen-api`` 0.4.0: listings
+      carry raw API values ``SPECIFIED_AMOUNT`` / ``PLEASE_CONTACT`` /
+      ``FREE`` -- ``FIXED``/``NEGOTIABLE``/``GIVE_AWAY`` are only
+      create-ad-request aliases, never values a scraped listing carries
+      (see ``client.py:472,1215-1219`` and ``cli.py:240-241`` in that
+      library). ``PLEASE_CONTACT`` ("VB") listings are deliberately NOT
+      excluded by ``price_type`` alone -- they're caught below by the
+      minimum-price rule when they carry a placeholder price.
+    * ``listing.price`` is below ``config.MIN_COMPARABLE_PRICE`` -- catches
+      placeholder/typo prices (including "VB" listings that still had to
+      put some nonzero number in the price field).
+    * ``listing.title``, stripped and lowercased, starts with the word
+      "suche" (a wanted ad, not a for-sale/give-away listing) -- see
+      ``_is_wanted_ad_title``.
+
+    ``None`` ``condition``/``price_type``/``title`` are treated as absent
+    data, never as a reason to exclude on their own.
+    """
+    if is_new_condition(listing.condition):
+        return False
+    price_type = (listing.price_type or "").strip().upper()
+    if price_type == "FREE":
+        return False
+    if listing.price < config.MIN_COMPARABLE_PRICE:
+        return False
+    if _is_wanted_ad_title(listing.title):
+        return False
+    return True
+
+
 def _median_price(comparable_listings: Sequence[ComparableListing]) -> float | None:
     """Return the median ``price`` across ``comparable_listings``, or ``None`` if empty.
 
     See module docstring "suggested_price formula" for why median (not
     mean) is used.
 
-    Before computing the median, listings whose ``condition`` is
-    unambiguously "brand new" (per ``is_new_condition``) are excluded --
-    every item this app prices is an inherently used/secondhand basement
-    good, so comparing it against a brand-new retail listing would bias
-    the price signal. If every single comparable happens to be "new"-
-    labeled (filtering would leave zero comparables), this falls back to
-    computing the median from the full, unfiltered list rather than
-    losing pricing data entirely -- the same graceful-degradation
-    philosophy used elsewhere in this codebase (e.g. query-loosening in
-    ``app/comparable_search.py``).
+    Before computing the median, listings that aren't a usable comparable
+    (per ``is_usable_comparable`` -- brand-new condition, ``FREE``
+    price_type, sub-``MIN_COMPARABLE_PRICE`` placeholder prices, or
+    wanted-ad titles) are excluded, since every item this app prices is an
+    inherently used/secondhand good being offered for sale, and none of
+    those listing types are a genuine "what would a buyer pay for this"
+    signal. If every single comparable happens to be unusable (filtering
+    would leave zero comparables), this falls back to computing the
+    median from the full, unfiltered list rather than losing pricing data
+    entirely -- the same graceful-degradation philosophy used elsewhere in
+    this codebase (e.g. query-loosening in ``app/comparable_search.py``).
+    Notably, this means an all-``FREE`` result set still yields a ~EUR0
+    median (-> ``give_away``), which is the correct signal rather than no
+    signal at all.
     """
-    used_listings = [
-        listing for listing in comparable_listings if not is_new_condition(listing.condition)
+    usable_listings = [
+        listing for listing in comparable_listings if is_usable_comparable(listing)
     ]
-    if used_listings:
-        listings_for_median = used_listings
+    if usable_listings:
+        listings_for_median = usable_listings
         logger.debug(
-            "_median_price: excluded %d new-condition listing(s) out of %d total",
-            len(comparable_listings) - len(used_listings),
+            "_median_price: excluded %d unusable comparable listing(s) out of %d total",
+            len(comparable_listings) - len(usable_listings),
             len(comparable_listings),
         )
     else:
         listings_for_median = comparable_listings
         if comparable_listings:
             logger.info(
-                "_median_price: all %d comparable listing(s) were new-condition; "
+                "_median_price: all %d comparable listing(s) were unusable; "
                 "falling back to the full unfiltered list rather than losing pricing data",
                 len(comparable_listings),
             )
@@ -219,13 +281,15 @@ class PricingDecisionService:
         Returns the computed ``Decision`` for convenience.
 
         Before the median is computed, ``item.comparable_listings`` entries
-        whose own ``condition`` is unambiguously "brand new" (see
-        ``is_new_condition``) are excluded, since every item this app
-        prices is an inherently used/secondhand good -- with a graceful
+        that aren't a usable comparable (see ``is_usable_comparable`` --
+        brand-new condition, ``FREE`` price_type, sub-
+        ``MIN_COMPARABLE_PRICE`` placeholder prices, or wanted-ad titles)
+        are excluded, since every item this app prices is an inherently
+        used/secondhand good being offered for sale -- with a graceful
         fallback to the full, unfiltered list if every single comparable
-        turns out to be "new"-labeled (see ``_median_price``). This is
-        separate from ``item.condition``/``_is_broken``, which only ever
-        looks at the *item's own* condition, never a comparable listing's.
+        turns out to be unusable (see ``_median_price``). This is separate
+        from ``item.condition``/``_is_broken``, which only ever looks at
+        the *item's own* condition, never a comparable listing's.
         """
         median_price = _median_price(item.comparable_listings)
         broken = _is_broken(item.condition)

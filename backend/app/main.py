@@ -58,7 +58,7 @@ from app.auth import AuthError, issue_session_token, verify_google_id_token, ver
 from app.db import engine, get_session, init_db
 from app.models import ComparableListing, Decision, Item, ItemStatus
 from app.pipeline import run_pipeline_with_new_session
-from app.pricing import is_new_condition
+from app.pricing import is_usable_comparable
 
 def _default_upload_dir() -> Path:
     """Compute the default uploads directory.
@@ -693,15 +693,16 @@ def _displayable_comparable_listings(
 ) -> list[ComparableListing]:
     """Return the subset of ``comparable_listings`` to show in the API response.
 
-    Presentation-layer filter only: excludes listings whose ``condition``
-    is unambiguously "brand new" (per ``app.pricing.is_new_condition``),
-    since every item this app helps sell/give-away/throw-away is an
-    inherently used/secondhand good, so surfacing a brand-new retail
-    listing next to it as a "comparable" is misleading to the user (this
-    mirrors ``_median_price``'s own new-condition exclusion in
-    ``app/pricing.py``, but is otherwise completely independent of it --
-    this function only affects what gets serialized into the HTTP
-    response, never the pricing calculation).
+    Presentation-layer filter only: excludes listings that aren't a usable
+    comparable (per ``app.pricing.is_usable_comparable`` -- brand-new
+    condition, ``FREE`` price_type, sub-``MIN_COMPARABLE_PRICE``
+    placeholder prices, or wanted-ad titles), since every item this app
+    helps sell/give-away/throw-away is an inherently used/secondhand good
+    being offered for sale, so surfacing e.g. a brand-new retail listing,
+    a free giveaway, or someone else's "wanted" post next to it as a
+    "comparable" is misleading to the user (this mirrors ``_median_price``'s
+    own filtering in ``app/pricing.py`` exactly, so the API shows precisely
+    the listings that fed the median).
 
     Does NOT mutate or reassign ``item.comparable_listings`` (the ORM
     relationship) -- that relationship is configured with
@@ -713,16 +714,15 @@ def _displayable_comparable_listings(
 
     If filtering would leave the result empty while
     ``comparable_listings`` is non-empty (i.e. every single comparable
-    happens to be new-condition), falls back to returning the full,
-    unfiltered list instead -- same graceful "still show something
-    rather than nothing" fallback philosophy as ``_median_price`` in
-    ``app/pricing.py``.
+    is unusable), falls back to returning the full, unfiltered list
+    instead -- same graceful "still show something rather than nothing"
+    fallback philosophy as ``_median_price`` in ``app/pricing.py``.
     """
-    used_listings = [
-        listing for listing in comparable_listings if not is_new_condition(listing.condition)
+    usable_listings = [
+        listing for listing in comparable_listings if is_usable_comparable(listing)
     ]
-    if used_listings:
-        return used_listings
+    if usable_listings:
+        return usable_listings
     return list(comparable_listings)
 
 

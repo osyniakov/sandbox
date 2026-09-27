@@ -952,8 +952,13 @@ def test_get_item_serializes_price_type_for_comparable_listings(
         )
         item.comparable_listings.append(
             ComparableListing(
+                # price=15.0 (not 0.0) so this listing isn't excluded by the
+                # MIN_COMPARABLE_PRICE floor (app/pricing.py's
+                # is_usable_comparable) -- this test is only about
+                # price_type=None serializing as null, unrelated to that
+                # filter, which is covered separately in test_pricing.py.
                 title="Free Drill",
-                price=0.0,
+                price=15.0,
                 url="https://example.com/listing/free",
                 price_type=None,
             )

@@ -19,10 +19,12 @@ from __future__ import annotations
 
 from tests.eval.run_eval import evaluate, load_cases
 
-# Baseline as of bead sandbox-8jm.1 (measured: decision_accuracy == 11/14 ==
-# 0.785714..., price_in_range_rate == 6/11 == 0.545454...), rounded down.
-DECISION_ACCURACY_FLOOR = 0.78
-PRICE_RANGE_FLOOR = 0.54
+# Raised by bead sandbox-8jm.3 (measured: decision_accuracy == 13/14 ==
+# 0.928571..., price_in_range_rate == 8/11 == 0.727272...), rounded down.
+# Previous baseline (bead sandbox-8jm.1): decision_accuracy == 11/14 ==
+# 0.785714..., price_in_range_rate == 6/11 == 0.545454... (0.78 / 0.54).
+DECISION_ACCURACY_FLOOR = 0.92
+PRICE_RANGE_FLOOR = 0.72
 
 
 def test_eval_accuracy_meets_baseline_floor():

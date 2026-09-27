@@ -26,3 +26,14 @@ from __future__ import annotations
 # meeting a buyer for less than this" cutoff, not from any real data.
 # Expect to revisit/tune this once the app has been used for a while.
 SELL_THRESHOLD: float = 10.0
+
+# Minimum comparable-listing price (EUR) below which a listing is excluded
+# from the pricing median (see ``app.pricing.is_usable_comparable``).
+#
+# THIS IS A PLACEHOLDER, same convention as ``SELL_THRESHOLD`` above: EUR2
+# was picked as a plausible floor below which a listed price is almost
+# certainly a placeholder/typo (e.g. a "VB" listing that still had to put
+# some nonzero number in the price field) rather than a genuine asking
+# price, not derived from any real data. Expect to revisit/tune this once
+# the app has been used for a while.
+MIN_COMPARABLE_PRICE: float = 2.0
