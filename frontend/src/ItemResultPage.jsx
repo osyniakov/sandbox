@@ -267,6 +267,10 @@ function ItemResultPage() {
   const isTerminal = TERMINAL_STATUSES.includes(item.status)
   const isFailed = FAILED_STATUSES.includes(item.status)
   const decisionInfo = DECISION_INFO[item.decision] || DECISION_INFO.pending
+  // Backend always sends an array today, but guard against `undefined`/
+  // `null` (e.g. an older item, or a future backend change) so this page
+  // never crashes on `.length`/`.map` below.
+  const comparableListings = item.comparable_listings ?? []
 
   return (
     <div className="max-w-md mx-auto my-16 px-4 text-center">
@@ -369,7 +373,7 @@ function ItemResultPage() {
               className="inline-block my-2 ml-2 rounded-full border border-pending-border bg-pending-bg px-3 py-1 text-sm text-pending-text"
               role="status"
             >
-              {item.decision === 'throw_away' && item.comparable_listings.length === 0
+              {item.decision === 'throw_away' && comparableListings.length === 0
                 ? 'No comparable listings found — double-check'
                 : 'Few comparable listings — double-check the price'}
             </div>
@@ -433,11 +437,11 @@ function ItemResultPage() {
 
           <div className="mt-6 text-left">
             <h3 className="mb-2">Comparable listings</h3>
-            {item.comparable_listings.length === 0 ? (
+            {comparableListings.length === 0 ? (
               <p>No comparable listings found.</p>
             ) : (
               <ul className="list-disc pl-5">
-                {item.comparable_listings.map((listing) => (
+                {comparableListings.map((listing) => (
                   <li key={listing.id} className="mb-2">
                     <a href={listing.url} target="_blank" rel="noopener noreferrer" className="link">
                       {listing.title}

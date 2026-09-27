@@ -513,6 +513,52 @@ describe('ItemResultPage', () => {
     ).toBeInTheDocument()
   })
 
+  // sandbox-zvr: `comparable_listings` should never actually be missing
+  // (the backend always sends an array today), but this guards against a
+  // future/older payload shape without crashing the page.
+  it('renders without crashing and shows the empty-comparables state when comparable_listings is omitted entirely', async () => {
+    const { comparable_listings: _comparable_listings, ...itemWithoutComparableListings } = {
+      ...THROW_AWAY_ITEM,
+      decision_confidence: 'low',
+    }
+
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => itemWithoutComparableListings,
+    })
+
+    renderAtItem(3)
+
+    await waitFor(() => {
+      expect(screen.getByText(/broken lamp/i)).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/no comparable listings found\./i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/no comparable listings found — double-check/i),
+    ).toBeInTheDocument()
+  })
+
+  it('renders without crashing and shows the empty-comparables state when comparable_listings is null', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ...THROW_AWAY_ITEM, comparable_listings: null, decision_confidence: 'low' }),
+    })
+
+    renderAtItem(3)
+
+    await waitFor(() => {
+      expect(screen.getByText(/broken lamp/i)).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/no comparable listings found\./i)).toBeInTheDocument()
+    expect(
+      screen.getByText(/no comparable listings found — double-check/i),
+    ).toBeInTheDocument()
+  })
+
   it('renders the throw_away decision with no comparable listings and no suggested price', async () => {
     fetch.mockResolvedValue({ ok: true, status: 200, json: async () => THROW_AWAY_ITEM })
 
