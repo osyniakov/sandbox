@@ -356,6 +356,25 @@ function ItemResultPage() {
             <span aria-hidden="true">{decisionInfo.icon}</span> {decisionInfo.label}
           </div>
 
+          {/* Low-confidence badge (sandbox-8jm.6/.7) -- `decision_confidence`
+              is only ever "low" once a decision has actually been reached
+              (this block is already gated on isTerminal && !isFailed above),
+              and is "high" or null/undefined (older items predating this
+              field) otherwise, in which case nothing renders here. Uses a
+              distinct visible text span (not just a color) plus role="status"
+              so screen readers announce it, matching the decision badge's
+              own accessibility pattern above. */}
+          {item.decision_confidence === 'low' && (
+            <div
+              className="inline-block my-2 ml-2 rounded-full border border-pending-border bg-pending-bg px-3 py-1 text-sm text-pending-text"
+              role="status"
+            >
+              {item.decision === 'throw_away' && item.comparable_listings.length === 0
+                ? 'No comparable listings found — double-check'
+                : 'Few comparable listings — double-check the price'}
+            </div>
+          )}
+
           {item.decision === 'sell' && item.suggested_price != null && (
             <p className="font-semibold">
               Suggested price: {item.suggested_price.toFixed(2)} EUR
