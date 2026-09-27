@@ -1,0 +1,304 @@
+{
+  "notes": [
+    "Labels in this file describe what a careful HUMAN would decide for each",
+    "item, given the raw comparable-listing data provided -- NOT what the",
+    "current app/comparable_search.py + app/pricing.py code actually",
+    "produces. Several cases are deliberately designed to document known",
+    "weaknesses in the current implementation (brand-only fallback noise,",
+    "defekt/Bastler/Ersatzteile majorities, 'Suche ...' wanted ads and",
+    "placeholder EUR1 prices polluting the median, and the all-new-condition",
+    "fallback overpricing used goods) and are EXPECTED to fail today -- see",
+    "backend/tests/test_eval_accuracy.py, which ratchets on the",
+    "currently-measured baseline rather than requiring 100%.",
+    "",
+    "price_type ambiguity note (see bead sandbox-8jm.1 AMBIGUITY section):",
+    "kleinanzeigen-api 0.4.0 WAS installed and inspected directly (not",
+    "assumed). Listing.price_type is copied RAW from the live API's",
+    "'price-type' field (kleinanzeigen_api/client.py:472) -- i.e. listings",
+    "returned by search() carry the API's own internal values, not the",
+    "library's easy-to-type create-ad input aliases. client.py's",
+    "_PRICE_TYPE_MAP (client.py:1215-1219) shows the mapping from those",
+    "input aliases to the actual API values: 'FIXED' -> 'SPECIFIED_AMOUNT',",
+    "'NEGOTIABLE'/'VB' -> 'PLEASE_CONTACT', 'FREE'/'GIVE_AWAY' -> 'FREE'.",
+    "cli.py:240-241 confirms the same three real values are what search",
+    "filtering matches against ('SPECIFIED_AMOUNT', 'PLEASE_CONTACT',",
+    "'FREE'). So the three price_type strings used in this fixture data are",
+    "'SPECIFIED_AMOUNT', 'PLEASE_CONTACT', and 'FREE' (the actual value used",
+    "for 'Zu verschenken' listings) -- 'FIXED', 'NEGOTIABLE', and",
+    "'GIVE_AWAY' are only create-ad input aliases and never appear on a",
+    "real Listing. current app code ignores price_type entirely (see",
+    "comparable_search.py's _listing_to_raw), so this is included in the",
+    "raw dicts for future-proofing only and has no effect on today's",
+    "decisions."
+  ],
+  "cases": [
+    {
+      "id": "clean_sellable_item",
+      "description": "Straightforward working item with several closely-clustered comparable prices; the joined query matches on the first attempt. Documents the happy path -- code and human should agree.",
+      "item": {
+        "identified_name": "IKEA Schreibtischlampe",
+        "brand": "IKEA",
+        "condition": "good",
+        "search_keywords": ["ikea schreibtischlampe"]
+      },
+      "provider_results": {
+        "ikea schreibtischlampe": [
+          {"title": "IKEA Schreibtischlampe, gebraucht", "price": 25, "url": "https://example.test/1", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Schreibtischlampe IKEA FORSA", "price": 30, "url": "https://example.test/2", "condition": "gebraucht", "location": "Hamburg", "price_type": "PLEASE_CONTACT"},
+          {"title": "IKEA Tischlampe schwarz", "price": 28, "url": "https://example.test/3", "condition": "gut erhalten", "location": "Muenchen", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Schreibtischlampe IKEA, funktioniert", "price": 32, "url": "https://example.test/4", "condition": "gebraucht", "location": "Koeln", "price_type": "PLEASE_CONTACT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [17, 41]
+    },
+    {
+      "id": "clean_give_away_item",
+      "description": "Working but low-value item; comparables cluster well below EUR10, so the human agrees the item should be given away rather than sold.",
+      "item": {
+        "identified_name": "Alter Kochtopf",
+        "brand": null,
+        "condition": "good",
+        "search_keywords": ["alter kochtopf"]
+      },
+      "provider_results": {
+        "alter kochtopf": [
+          {"title": "Alter Kochtopf, gebraucht", "price": 3, "url": "https://example.test/5", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Kochtopf gebraucht, funktioniert", "price": 4, "url": "https://example.test/6", "condition": "gebraucht", "location": "Bremen", "price_type": "PLEASE_CONTACT"},
+          {"title": "Alter Topf, guter Zustand", "price": 5, "url": "https://example.test/7", "condition": "gebraucht", "location": "Essen", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "give_away",
+      "expected_price_range": [2, 6]
+    },
+    {
+      "id": "broken_item",
+      "description": "Item is broken/unusable. Even though comparable *working* units sell for real money, a careful human would not try to sell or give away a broken TV -- throw_away wins regardless of comparables. price_type/price data is irrelevant here so expected_price_range is null.",
+      "item": {
+        "identified_name": "Fernseher",
+        "brand": "Samsung",
+        "condition": "broken",
+        "search_keywords": ["fernseher samsung"]
+      },
+      "provider_results": {
+        "fernseher samsung": [
+          {"title": "Samsung Fernseher, funktioniert einwandfrei", "price": 150, "url": "https://example.test/8", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Samsung TV 42 Zoll, gebraucht", "price": 180, "url": "https://example.test/9", "condition": "gebraucht", "location": "Stuttgart", "price_type": "PLEASE_CONTACT"},
+          {"title": "Fernseher Samsung, top Zustand", "price": 160, "url": "https://example.test/10", "condition": "gebraucht", "location": "Leipzig", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "throw_away",
+      "expected_price_range": null
+    },
+    {
+      "id": "zero_results_everywhere",
+      "description": "Obscure item; every candidate query (there is only one, since the joined query equals the single keyword) returns a valid, empty result set. Label follows the documented rule in app/pricing.py's module docstring (point 2): 'no comparables found at all -> throw_away', a deliberate design choice (no market signal at all to act on) rather than a bug -- so throw_away is the correct expected label here, not a documented weakness.",
+      "item": {
+        "identified_name": "Quietscheentchen Limitierte Sammleredition",
+        "brand": null,
+        "condition": "good",
+        "search_keywords": ["quietscheentchen limitierte sammleredition"]
+      },
+      "provider_results": {},
+      "expected_decision": "throw_away",
+      "expected_price_range": null
+    },
+    {
+      "id": "brand_only_fallback_unrelated",
+      "description": "Joined query 'bosch akkuschrauber' returns zero results, so the loosening logic falls back to the individual keyword 'bosch', which matches completely unrelated Bosch-branded products (dishwasher, mixer, iron). KNOWN WEAKNESS: code prices the item off these unrelated listings (median ~45 EUR) whereas a careful human evaluating an actual used cordless screwdriver would price it around EUR20 -- expected to FAIL price_in_range today (decision itself still happens to be 'sell' both ways).",
+      "item": {
+        "identified_name": "Bosch Akkuschrauber",
+        "brand": "Bosch",
+        "condition": "good",
+        "search_keywords": ["bosch akkuschrauber", "bosch"]
+      },
+      "provider_results": {
+        "bosch akkuschrauber": [],
+        "bosch": [
+          {"title": "Bosch Geschirrspueler, gebraucht", "price": 180, "url": "https://example.test/11", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Bosch Standmixer, funktioniert", "price": 45, "url": "https://example.test/12", "condition": "gebraucht", "location": "Duesseldorf", "price_type": "PLEASE_CONTACT"},
+          {"title": "Bosch Buegeleisen, gebraucht", "price": 25, "url": "https://example.test/13", "condition": "gebraucht", "location": "Dortmund", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [12, 28]
+    },
+    {
+      "id": "relevant_generic_keyword_fallback",
+      "description": "Joined query 'nike laufschuhe gr 42' returns zero results, so the loosening logic falls back to the individual keyword 'laufschuhe', which returns genuinely relevant running-shoe listings. This is the loosening mechanism working as intended -- code and human should agree.",
+      "item": {
+        "identified_name": "Nike Laufschuhe Gr. 42",
+        "brand": "Nike",
+        "condition": "good",
+        "search_keywords": ["nike laufschuhe gr 42", "laufschuhe"]
+      },
+      "provider_results": {
+        "nike laufschuhe gr 42": [],
+        "laufschuhe": [
+          {"title": "Laufschuhe Gr. 42, gebraucht", "price": 20, "url": "https://example.test/14", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Nike Laufschuhe, guter Zustand", "price": 25, "url": "https://example.test/15", "condition": "gebraucht", "location": "Hannover", "price_type": "PLEASE_CONTACT"},
+          {"title": "Laufschuhe gebraucht", "price": 18, "url": "https://example.test/16", "condition": "gebraucht", "location": "Bremen", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Nike Laufschuhe Gr. 42, wenig getragen", "price": 22, "url": "https://example.test/17", "condition": "gebraucht", "location": "Nuernberg", "price_type": "PLEASE_CONTACT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [13, 29]
+    },
+    {
+      "id": "defekt_majority_for_working_item",
+      "description": "The item itself works fine (condition good), but the comparable-listing search happens to surface mostly 'defekt/Bastler/Ersatzteile' (broken/for-tinkerers/spare-parts) listings at very low prices, plus one genuinely working comparable at a normal price. KNOWN WEAKNESS: code has no filter for defekt/Bastler/Ersatzteile listings (that's bead sandbox-8jm.4) so the low-priced junk listings dominate the median and drag the decision down to give_away; a careful human would recognize those as not-comparable and price off the one working listing instead -- expected to FAIL both decision_correct and price_in_range today.",
+      "item": {
+        "identified_name": "Kaffeemaschine",
+        "brand": null,
+        "condition": "good",
+        "search_keywords": ["kaffeemaschine"]
+      },
+      "provider_results": {
+        "kaffeemaschine": [
+          {"title": "Kaffeemaschine defekt, fuer Bastler", "price": 5, "url": "https://example.test/18", "condition": "defekt", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Kaffeemaschine Ersatzteile", "price": 3, "url": "https://example.test/19", "condition": "defekt", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Kaffeemaschine defekt", "price": 4, "url": "https://example.test/20", "condition": "defekt", "location": "Berlin", "price_type": "PLEASE_CONTACT"},
+          {"title": "Kaffeemaschine, funktioniert einwandfrei", "price": 25, "url": "https://example.test/21", "condition": "gebraucht", "location": "Hamburg", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [15, 35]
+    },
+    {
+      "id": "zu_verschenken_free_listings",
+      "description": "All comparables are genuine 'Zu verschenken' (give-away) listings at EUR0, with price_type set to the give-away value ('FREE' -- see top-level notes). Both code and human agree: this item is only worth giving away, so expected_price_range is null (a concrete price isn't meaningful for a free item).",
+      "item": {
+        "identified_name": "Buecherstapel Romane",
+        "brand": null,
+        "condition": "good",
+        "search_keywords": ["buecherstapel romane"]
+      },
+      "provider_results": {
+        "buecherstapel romane": [
+          {"title": "Buecherstapel Romane, zu verschenken", "price": 0, "url": "https://example.test/22", "condition": "gebraucht", "location": "Berlin", "price_type": "FREE"},
+          {"title": "Romane Buecherstapel zu verschenken", "price": 0, "url": "https://example.test/23", "condition": "gebraucht", "location": "Potsdam", "price_type": "FREE"},
+          {"title": "Buecher zu verschenken", "price": 0, "url": "https://example.test/24", "condition": "gebraucht", "location": "Berlin", "price_type": "FREE"}
+        ]
+      },
+      "expected_decision": "give_away",
+      "expected_price_range": null
+    },
+    {
+      "id": "suche_wanted_ads_at_1_euro",
+      "description": "The search surfaces several 'Suche ...' (wanted/looking-to-buy) ads posted at a nominal EUR1, mixed with a couple of genuine sale listings. KNOWN WEAKNESS: code doesn't distinguish demand ('Suche') ads from supply (sale) ads, so the EUR1 wanted-ad prices dominate the median and the decision drops to give_away; a careful human would exclude the wanted ads and price off the two real sale listings -- expected to FAIL both decision_correct and price_in_range today.",
+      "item": {
+        "identified_name": "Gitarre",
+        "brand": null,
+        "condition": "good",
+        "search_keywords": ["gitarre"]
+      },
+      "provider_results": {
+        "gitarre": [
+          {"title": "Suche gebrauchte Gitarre", "price": 1, "url": "https://example.test/25", "condition": null, "location": "Berlin", "price_type": "PLEASE_CONTACT"},
+          {"title": "Suche Gitarre, zahle bar", "price": 1, "url": "https://example.test/26", "condition": null, "location": "Hamburg", "price_type": "PLEASE_CONTACT"},
+          {"title": "Suche guenstige Gitarre fuer Anfaenger", "price": 1, "url": "https://example.test/27", "condition": null, "location": "Koeln", "price_type": "PLEASE_CONTACT"},
+          {"title": "E-Gitarre Fender Style, gebraucht", "price": 80, "url": "https://example.test/28", "condition": "gebraucht", "location": "Muenchen", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Akustikgitarre, gebraucht, guter Zustand", "price": 65, "url": "https://example.test/29", "condition": "gebraucht", "location": "Bremen", "price_type": "PLEASE_CONTACT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [44, 102]
+    },
+    {
+      "id": "placeholder_1_euro_prices",
+      "description": "Several genuine sale listings (not 'Suche' wanted ads) use EUR1 as a placeholder/negotiable-price marker rather than a real asking price, mixed with a couple of listings with real prices. KNOWN WEAKNESS: code takes every listed price at face value, so the EUR1 placeholders dominate the median and the decision drops to give_away; a careful human recognizes EUR1 + 'VB' as a placeholder and prices off the real listings instead -- expected to FAIL both decision_correct and price_in_range today.",
+      "item": {
+        "identified_name": "3-Sitzer Sofa",
+        "brand": null,
+        "condition": "good",
+        "search_keywords": ["sofa 3-sitzer"]
+      },
+      "provider_results": {
+        "sofa 3-sitzer": [
+          {"title": "3-Sitzer Sofa grau, VB", "price": 1, "url": "https://example.test/30", "condition": "gebraucht", "location": "Berlin", "price_type": "PLEASE_CONTACT"},
+          {"title": "Sofa 3-Sitzer, Preis VB", "price": 1, "url": "https://example.test/31", "condition": "gebraucht", "location": "Bremen", "price_type": "PLEASE_CONTACT"},
+          {"title": "3-Sitzer Couch, VB", "price": 1, "url": "https://example.test/32", "condition": "gebraucht", "location": "Kiel", "price_type": "PLEASE_CONTACT"},
+          {"title": "Sofa 3-Sitzer VB", "price": 1, "url": "https://example.test/33", "condition": "gebraucht", "location": "Essen", "price_type": "PLEASE_CONTACT"},
+          {"title": "3-Sitzer Sofa, gebraucht, guter Zustand", "price": 130, "url": "https://example.test/34", "condition": "gebraucht", "location": "Muenchen", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Sofa 3-Sitzer, wenig genutzt", "price": 140, "url": "https://example.test/35", "condition": "gebraucht", "location": "Stuttgart", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [81, 189]
+    },
+    {
+      "id": "all_comparables_brand_new",
+      "description": "Every comparable listing is condition 'Neu' (brand new/retail). Code's new-condition filter would normally exclude 'Neu' listings, but since that would leave zero comparables it falls back to the full unfiltered (new-priced) list -- overpricing a used item. KNOWN WEAKNESS: decision (sell) still happens to match, but the suggested price (~95 EUR, retail-level) is well above what a careful human would price a used version at (~55 EUR, applying a typical used-goods discount) -- expected to FAIL price_in_range today.",
+      "item": {
+        "identified_name": "Kopfhoerer Sony",
+        "brand": "Sony",
+        "condition": "good",
+        "search_keywords": ["kopfhoerer sony"]
+      },
+      "provider_results": {
+        "kopfhoerer sony": [
+          {"title": "Sony Kopfhoerer, Neu, originalverpackt", "price": 90, "url": "https://example.test/36", "condition": "Neu", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Kopfhoerer Sony, Neu", "price": 100, "url": "https://example.test/37", "condition": "Neu", "location": "Hamburg", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Sony Kopfhoerer Neu, ungeoeffnet", "price": 95, "url": "https://example.test/38", "condition": "Neu", "location": "Koeln", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [33, 77]
+    },
+    {
+      "id": "single_comparable_only",
+      "description": "Only one comparable listing was found. NOTE: the label below (sell, ~EUR40) is a defensible human call given the single relevant, on-topic match, but the real issue this case documents is confidence, not correctness -- a decision built on exactly one data point should ideally be flagged as low-confidence rather than treated the same as a decision backed by many listings. A later bead (decision_confidence) is expected to address this; until then this case just pins today's (reasonable) point-estimate behavior.",
+      "item": {
+        "identified_name": "IKEA Kallax Regal",
+        "brand": "IKEA",
+        "condition": "good",
+        "search_keywords": ["ikea kallax regal"]
+      },
+      "provider_results": {
+        "ikea kallax regal": [
+          {"title": "IKEA Kallax Regal, gebraucht", "price": 40, "url": "https://example.test/39", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [24, 56]
+    },
+    {
+      "id": "wie_neu_listings_stay_included",
+      "description": "All comparables are condition 'wie neu' (like new / excellent used condition) -- a distinct, common tier from 'Neu' (brand new) that must NOT be excluded by the new-condition filter. Code and human should agree here: this documents correct current behavior.",
+      "item": {
+        "identified_name": "Staubsauger Dyson",
+        "brand": "Dyson",
+        "condition": "good",
+        "search_keywords": ["staubsauger dyson"]
+      },
+      "provider_results": {
+        "staubsauger dyson": [
+          {"title": "Dyson Staubsauger, wie neu", "price": 80, "url": "https://example.test/40", "condition": "wie neu", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Staubsauger Dyson, wie neu, kaum benutzt", "price": 85, "url": "https://example.test/41", "condition": "wie neu", "location": "Frankfurt", "price_type": "PLEASE_CONTACT"},
+          {"title": "Dyson Staubsauger wie neu", "price": 90, "url": "https://example.test/42", "condition": "wie neu", "location": "Muenchen", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [51, 119]
+    },
+    {
+      "id": "unknown_condition_treated_as_usable",
+      "description": "Item condition is 'unknown' (identification wasn't sure what the item even is, not that it's broken). Code treats unknown as usable/not-broken and proceeds normally; a careful human, seeing a physically-present item with decent comparables, agrees. Documents correct current behavior.",
+      "item": {
+        "identified_name": "Drucker HP",
+        "brand": "HP",
+        "condition": "unknown",
+        "search_keywords": ["drucker hp"]
+      },
+      "provider_results": {
+        "drucker hp": [
+          {"title": "HP Drucker, gebraucht, funktioniert", "price": 30, "url": "https://example.test/43", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Drucker HP, guter Zustand", "price": 35, "url": "https://example.test/44", "condition": "gebraucht", "location": "Leipzig", "price_type": "PLEASE_CONTACT"},
+          {"title": "HP Drucker gebraucht", "price": 25, "url": "https://example.test/45", "condition": "gebraucht", "location": "Dresden", "price_type": "SPECIFIED_AMOUNT"}
+        ]
+      },
+      "expected_decision": "sell",
+      "expected_price_range": [18, 42]
+    }
+  ]
+}
