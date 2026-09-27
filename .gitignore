@@ -30,6 +30,7 @@ hs_err_pid*
 *.db
 .beads-credential-key
 .beads/proxieddb/
+.beads.gate.lock
 
 # Python
 __pycache__/

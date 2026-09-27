@@ -37,6 +37,7 @@ redirect
 export-state/
 export-state.json
 last_pull
+.auto-import-issues.jsonl
 
 # Ephemeral store (SQLite - wisps/molecules, intentionally not versioned)
 ephemeral.sqlite3
