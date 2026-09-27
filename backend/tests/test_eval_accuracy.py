@@ -19,17 +19,25 @@ from __future__ import annotations
 
 from tests.eval.run_eval import evaluate, load_cases
 
-# Raised by bead sandbox-8jm.4 (measured: decision_accuracy == 14/14 ==
-# 1.0, price_in_range_rate == 9/11 == 0.818181...), rounded down. This bead
-# added defekt/Bastler/Ersatzteile exclusion, which fixed
-# ``defekt_majority_for_working_item`` (previously the sole decision
-# failure and a price failure too).
-# Previous baseline (bead sandbox-8jm.3): decision_accuracy == 13/14 ==
+# Raised by bead sandbox-8jm.5 (measured: decision_accuracy == 15/15 ==
+# 1.0, price_in_range_rate == 10/11 == 0.909090...), rounded down. This bead
+# added the brand-only-fallback-keyword skip and the token-overlap
+# relevance gate on single-keyword fallback results, which fixed the price
+# case formerly named ``brand_only_fallback_unrelated`` (renamed
+# ``brand_only_fallback_skipped_uses_relevant_keyword`` -- its search_keywords
+# now include a genuinely relevant fallback term, ``akkuschrauber``, so the
+# brand-only ``bosch`` keyword is skipped and the relevant one supplies the
+# evidence) and added a new case, ``only_unrelated_brand_results`` (no
+# relevant comparables at all -> throw_away), which the pre-8jm.5 code got
+# wrong (it would have priced the item off unrelated same-brand listings).
+# Previous baseline (bead sandbox-8jm.4): decision_accuracy == 14/14 ==
+# 1.0, price_in_range_rate == 9/11 == 0.818181... (1.0 / 0.81).
+# Earlier baseline (bead sandbox-8jm.3): decision_accuracy == 13/14 ==
 # 0.928571..., price_in_range_rate == 8/11 == 0.727272... (0.92 / 0.72).
 # Earlier baseline (bead sandbox-8jm.1): decision_accuracy == 11/14 ==
 # 0.785714..., price_in_range_rate == 6/11 == 0.545454... (0.78 / 0.54).
 DECISION_ACCURACY_FLOOR = 1.0
-PRICE_RANGE_FLOOR = 0.81
+PRICE_RANGE_FLOOR = 0.90
 
 
 def test_eval_accuracy_meets_baseline_floor():

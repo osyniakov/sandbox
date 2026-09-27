@@ -104,13 +104,13 @@
       "expected_price_range": null
     },
     {
-      "id": "brand_only_fallback_unrelated",
-      "description": "Joined query 'bosch akkuschrauber' returns zero results, so the loosening logic falls back to the individual keyword 'bosch', which matches completely unrelated Bosch-branded products (dishwasher, mixer, iron). KNOWN WEAKNESS: code prices the item off these unrelated listings (median ~45 EUR) whereas a careful human evaluating an actual used cordless screwdriver would price it around EUR20 -- expected to FAIL price_in_range today (decision itself still happens to be 'sell' both ways).",
+      "id": "brand_only_fallback_skipped_uses_relevant_keyword",
+      "description": "Joined query 'bosch akkuschrauber' returns zero results. The loosening logic's next candidate would normally be the brand-only keyword 'bosch', but bead sandbox-8jm.5 skips that candidate entirely (a lone brand name as a fallback query mostly surfaces unrelated same-brand products, e.g. the dishwasher/mixer/iron below), and instead falls back to the next, genuinely relevant keyword 'akkuschrauber'. Before sandbox-8jm.5, the code would have queried 'bosch' and priced the item off those unrelated listings (median ~45 EUR); after sandbox-8jm.5 it prices off the relevant used-drill listings instead (~EUR20) -- code and a careful human should now agree.",
       "item": {
         "identified_name": "Bosch Akkuschrauber",
         "brand": "Bosch",
         "condition": "good",
-        "search_keywords": ["bosch akkuschrauber", "bosch"]
+        "search_keywords": ["bosch akkuschrauber", "bosch", "akkuschrauber"]
       },
       "provider_results": {
         "bosch akkuschrauber": [],
@@ -118,10 +118,41 @@
           {"title": "Bosch Geschirrspueler, gebraucht", "price": 180, "url": "https://example.test/11", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
           {"title": "Bosch Standmixer, funktioniert", "price": 45, "url": "https://example.test/12", "condition": "gebraucht", "location": "Duesseldorf", "price_type": "PLEASE_CONTACT"},
           {"title": "Bosch Buegeleisen, gebraucht", "price": 25, "url": "https://example.test/13", "condition": "gebraucht", "location": "Dortmund", "price_type": "SPECIFIED_AMOUNT"}
+        ],
+        "akkuschrauber": [
+          {"title": "Bosch PSR 18 Akkuschrauber gebraucht", "price": 20, "url": "https://example.test/11a", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Akkuschrauber, guter Zustand", "price": 18, "url": "https://example.test/11b", "condition": "gebraucht", "location": "Hamburg", "price_type": "PLEASE_CONTACT"},
+          {"title": "Akkuschrauber 18V, funktioniert einwandfrei", "price": 22, "url": "https://example.test/11c", "condition": "gebraucht", "location": "Koeln", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Bosch Akkuschrauber, wenig genutzt", "price": 25, "url": "https://example.test/11d", "condition": "gebraucht", "location": "Muenchen", "price_type": "PLEASE_CONTACT"},
+          {"title": "Akkuschrauber Set mit Koffer", "price": 15, "url": "https://example.test/11e", "condition": "gebraucht", "location": "Bremen", "price_type": "SPECIFIED_AMOUNT"}
         ]
       },
       "expected_decision": "sell",
       "expected_price_range": [12, 28]
+    },
+    {
+      "id": "only_unrelated_brand_results",
+      "description": "Joined query 'bosch akkuschrauber' returns zero results. The brand-only keyword 'bosch' is skipped by sandbox-8jm.5's relevance gate, and the remaining fallback keyword 'werkzeug bosch' returns other Bosch-branded tools whose titles share no token with the identified name 'Bosch Akkuschrauber' (no 'akkuschrauber' overlap) -- e.g. a jigsaw and an angle grinder, not a cordless screwdriver. With no relevant comparables found at all, the documented pricing rule (app/pricing.py docstring point 2: no comparables -> throw_away) applies -- code and a careful human should agree there's no market signal to price off here.",
+      "item": {
+        "identified_name": "Bosch Akkuschrauber",
+        "brand": "Bosch",
+        "condition": "good",
+        "search_keywords": ["bosch akkuschrauber", "bosch", "werkzeug bosch"]
+      },
+      "provider_results": {
+        "bosch akkuschrauber": [],
+        "bosch": [
+          {"title": "Bosch Geschirrspueler, gebraucht", "price": 180, "url": "https://example.test/11f", "condition": "gebraucht", "location": "Berlin", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Bosch Standmixer, funktioniert", "price": 45, "url": "https://example.test/11g", "condition": "gebraucht", "location": "Duesseldorf", "price_type": "PLEASE_CONTACT"},
+          {"title": "Bosch Buegeleisen, gebraucht", "price": 25, "url": "https://example.test/11h", "condition": "gebraucht", "location": "Dortmund", "price_type": "SPECIFIED_AMOUNT"}
+        ],
+        "werkzeug bosch": [
+          {"title": "Bosch Stichsaege, gebraucht", "price": 30, "url": "https://example.test/11i", "condition": "gebraucht", "location": "Stuttgart", "price_type": "SPECIFIED_AMOUNT"},
+          {"title": "Bosch Winkelschleifer, funktioniert", "price": 35, "url": "https://example.test/11j", "condition": "gebraucht", "location": "Essen", "price_type": "PLEASE_CONTACT"}
+        ]
+      },
+      "expected_decision": "throw_away",
+      "expected_price_range": null
     },
     {
       "id": "relevant_generic_keyword_fallback",

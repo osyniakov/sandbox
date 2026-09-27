@@ -176,6 +176,40 @@ the item is meant to be working." This module implements that as follows:
    zero-result response, and the existing query-loosening sequence (see
    above) continues to the next, looser candidate query.
 
+Relevance-gating single-keyword fallback results (bead sandbox-8jm.5)
+-----------------------------------------------------------------------
+The individual-keyword fallback queries described above (attempt 2+ in
+``_build_query_attempts``) are independent single terms, which can be much
+less specific than the fully-joined query -- most notably when the
+fallback keyword is just the item's brand name (e.g. "Bosch"), which
+surfaces every Bosch-branded listing on the site (a dishwasher, a mixer,
+an iron, ...) with no relationship to the actual item at all. This module
+addresses that in two layers:
+
+1. ``_build_query_attempts`` now accepts an optional ``brand: str | None``
+   (default ``None``, so existing call sites/tests are unaffected). Any
+   individual-keyword fallback candidate whose casefolded, stripped text
+   equals the casefolded, stripped ``brand`` is skipped entirely -- it is
+   never turned into a live search call. The fully-joined query (attempt
+   1) is always kept regardless of ``brand``, since AND-ing the brand
+   together with the rest of the identified name is exactly the specific,
+   on-topic query we want.
+2. For fallback candidates that DO get searched (attempt 2+), ``search_item``
+   applies ``_is_relevant`` (see its docstring for the token-overlap
+   algorithm) to each raw result's ``title``, dropping any result judged
+   irrelevant to ``Item.identified_name``. This is applied AFTER the
+   broken-title post-filter and BEFORE the zero-results/loosening decision:
+   if every result for a fallback candidate is dropped, that candidate is
+   treated exactly like a genuine zero-result response and the existing
+   query-loosening sequence continues to the next, looser candidate query.
+   This gate is intentionally never applied to the fully-joined query's
+   results (attempt 1) -- that query is specific enough (all identification
+   keywords ANDed together) that we trust whatever it returns.
+   ``_is_relevant`` is deliberately conservative: when ``Item.identified_name``
+   is missing, or has no tokens left after dropping short (<3 char) and
+   brand-only tokens, it returns ``True`` (cannot judge -- do not filter)
+   rather than guessing.
+
 Manual smoke test against the LIVE Kleinanzeigen site
 -------------------------------------------------------
 All automated tests in ``tests/test_comparable_search.py`` use fixtures /
@@ -235,6 +269,7 @@ environment by whoever picks this up):
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Protocol, runtime_checkable
 
 from app.models import ComparableListing, Item, ItemStatus
@@ -468,17 +503,28 @@ def _build_query(keywords: list[str] | None) -> str:
     return " ".join(cleaned)
 
 
-def _build_query_attempts(keywords: list[str] | None) -> list[str]:
+def _build_query_attempts(keywords: list[str] | None, brand: str | None = None) -> list[str]:
     """Return the ordered list of candidate queries to try, most specific first.
 
     Attempt 1 is the fully-joined query (identical to ``_build_query`` --
-    all keywords ANDed together, the pre-sandbox-yqf.15 behavior). Attempts
-    2+ are each remaining keyword tried *individually*, in order, skipping
-    any keyword that's identical to a query already in the list (e.g. when
-    there's only one keyword, so the joined query and that keyword alone
-    are the same string -- retrying the identical query would be pointless).
-    Capped at ``_MAX_QUERY_ATTEMPTS`` total candidate queries. See module
-    docstring "Query-loosening on zero results" for the full rationale.
+    all keywords ANDed together, the pre-sandbox-yqf.15 behavior) -- this is
+    always kept, regardless of ``brand``. Attempts 2+ are each remaining
+    keyword tried *individually*, in order, skipping any keyword that's
+    identical to a query already in the list (e.g. when there's only one
+    keyword, so the joined query and that keyword alone are the same
+    string -- retrying the identical query would be pointless), and (bead
+    sandbox-8jm.5) also skipping any keyword whose casefolded, stripped text
+    equals the casefolded, stripped ``brand`` -- a lone brand name (e.g.
+    "Bosch") as a fallback query is almost guaranteed to surface completely
+    unrelated same-brand products (a Bosch dishwasher, mixer, iron, ...)
+    rather than anything comparable to the actual item, so it's not worth
+    the live call. ``brand=None`` (the default, used by all existing call
+    sites) disables this skip entirely, leaving pre-sandbox-8jm.5 behavior
+    unchanged. Capped at ``_MAX_QUERY_ATTEMPTS`` total candidate queries
+    (brand-skipped keywords don't count against this cap, since they're
+    never added). See module docstring "Query-loosening on zero results"
+    for the full rationale, and "Relevance-gating single-keyword fallback
+    results" for the brand-skip rationale.
 
     Returns an empty list if there are no usable keywords at all (mirrors
     ``_build_query`` returning ``""`` in that case).
@@ -487,12 +533,22 @@ def _build_query_attempts(keywords: list[str] | None) -> list[str]:
     if not cleaned:
         return []
 
+    casefolded_brand = brand.strip().casefold() if isinstance(brand, str) and brand.strip() else None
+
     attempts = [" ".join(cleaned)]
     for kw in cleaned:
         if len(attempts) >= _MAX_QUERY_ATTEMPTS:
             break
-        if kw not in attempts:
-            attempts.append(kw)
+        if kw in attempts:
+            continue
+        if casefolded_brand is not None and kw.casefold() == casefolded_brand:
+            logger.info(
+                "Skipping brand-only fallback keyword %r (matches item brand %r)",
+                kw,
+                brand,
+            )
+            continue
+        attempts.append(kw)
     return attempts
 
 
@@ -523,6 +579,52 @@ def _filter_broken_listing_titles(raw_results: list[dict[str, Any]]) -> list[dic
             continue
         filtered.append(raw)
     return filtered
+
+
+def _is_relevant(title: str, identified_name: str | None, brand: str | None) -> bool:
+    r"""Return whether ``title`` plausibly refers to the same kind of item as ``identified_name``.
+
+    See module docstring "Relevance-gating single-keyword fallback results"
+    (bead sandbox-8jm.5). Builds a set of "name tokens" from
+    ``identified_name``: casefolded, split on runs of non-alphanumeric
+    characters (Unicode-aware, via ``re.split(r"[\W_]+", ...)``, so umlauts
+    and ``ß`` stay inside a token instead of splitting it -- e.g.
+    "Kaffeemühle" tokenizes as ["kaffeemühle"], not ["kaffeem", "hle"]),
+    keeping only tokens of length >= 3 (drops short/noise
+    tokens like "gr", "18", "v") that are not equal to the casefolded,
+    stripped ``brand`` (a brand token alone tells us nothing about whether
+    a *specific* listing is relevant -- that's the whole reason this gate
+    exists).
+
+    A title is relevant if ANY name token is a substring of the casefolded
+    title -- checked in one direction only (name token inside title, e.g.
+    token "akkuschrauber" matches title "Akkuschrauber-Set 18V"); the
+    reverse (title token inside a name token) is deliberately NOT checked,
+    since a long, precise ``identified_name`` token should not be
+    considered "matched" merely because a short, generic title word happens
+    to be a substring of it.
+
+    If there are no usable name tokens at all (``identified_name`` is
+    ``None``/empty, or every token was dropped as too short or brand-only),
+    this returns ``True`` -- there's nothing to judge relevance against, so
+    the gate must not filter anything out in that case.
+    """
+    if not identified_name:
+        return True
+
+    casefolded_brand = brand.strip().casefold() if isinstance(brand, str) and brand.strip() else None
+
+    raw_tokens = re.split(r"[\W_]+", identified_name.casefold())
+    name_tokens = [
+        token
+        for token in raw_tokens
+        if len(token) >= 3 and token != casefolded_brand
+    ]
+    if not name_tokens:
+        return True
+
+    casefolded_title = title.casefold()
+    return any(token in casefolded_title for token in name_tokens)
 
 
 def _parse_listings(raw_results: list[dict[str, Any]]) -> list[ComparableListing]:
@@ -607,7 +709,7 @@ class ComparableListingSearchService:
         standard ``logging`` module, and reported through the return value
         rather than propagating.
         """
-        query_attempts = _build_query_attempts(item.search_keywords)
+        query_attempts = _build_query_attempts(item.search_keywords, brand=item.brand)
         item_id = getattr(item, "id", None)
         # Reuse pricing's condition normalization (see module docstring
         # "Excluding defekt/Bastler/Ersatzteile listings") -- an item whose
@@ -654,6 +756,35 @@ class ComparableListingSearchService:
                 # loosening sequence continues, exactly like a genuine
                 # zero-result response.
                 raw_results = _filter_broken_listing_titles(raw_results)
+            if attempt_num >= 2:
+                # Relevance-gate individual-keyword fallback candidates only
+                # (never the fully-joined query's results) -- see module
+                # docstring "Relevance-gating single-keyword fallback
+                # results". Applied AFTER the broken-title post-filter and
+                # BEFORE the zero-results/loosening decision below, so an
+                # all-irrelevant result set is treated exactly like a
+                # genuine zero-result response and the loosening sequence
+                # continues to the next, looser candidate query.
+                before_count = len(raw_results)
+                raw_results = [
+                    raw
+                    for raw in raw_results
+                    if not isinstance(raw.get("title"), str)
+                    or _is_relevant(raw["title"], item.identified_name, item.brand)
+                ]
+                dropped_count = before_count - len(raw_results)
+                if dropped_count:
+                    logger.info(
+                        "Dropped %d/%d fallback result(s) for item id=%s query=%r "
+                        "(attempt %d/%d) as irrelevant to identified_name=%r",
+                        dropped_count,
+                        before_count,
+                        item_id,
+                        query,
+                        attempt_num,
+                        len(query_attempts),
+                        item.identified_name,
+                    )
             if raw_results:
                 # Found at least one result -- stop loosening immediately,
                 # don't keep searching for a "better" result set.

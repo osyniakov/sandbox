@@ -23,6 +23,7 @@ from app.comparable_search import (
     _extract_is_wanted,
     _extract_price_type,
     _filter_broken_listing_titles,
+    _is_relevant,
     _listing_to_raw,
     _parse_listings,
 )
@@ -53,7 +54,12 @@ class _StubProvider:
         return response
 
 
-def _make_item(keywords: list[str] | None = None, condition: str | None = None) -> Item:
+def _make_item(
+    keywords: list[str] | None = None,
+    condition: str | None = None,
+    identified_name: str | None = None,
+    brand: str | None = None,
+) -> Item:
     # Mirrors the identification tests: set status explicitly since column
     # defaults only apply on flush/insert, not bare construction.
     return Item(
@@ -61,6 +67,8 @@ def _make_item(keywords: list[str] | None = None, condition: str | None = None) 
         status=ItemStatus.PENDING_SEARCH,
         search_keywords=keywords if keywords is not None else ["desk lamp", "ikea"],
         condition=condition,
+        identified_name=identified_name,
+        brand=brand,
     )
 
 
@@ -763,3 +771,205 @@ def test_kleinanzeigen_api_provider_omits_exclude_when_none() -> None:
 
     assert fake_client.last_kwargs is not None
     assert "exclude" not in fake_client.last_kwargs
+
+
+# ---------------------------------------------------------------------------
+# Relevance-gating single-keyword fallback results (bead sandbox-8jm.5)
+# ---------------------------------------------------------------------------
+
+
+def test_build_query_attempts_skips_brand_only_keyword_case_insensitively() -> None:
+    assert _build_query_attempts(
+        ["bosch akkuschrauber", "bosch"], brand="Bosch"
+    ) == ["bosch akkuschrauber bosch", "bosch akkuschrauber"]
+    assert _build_query_attempts(
+        ["bosch akkuschrauber", "BOSCH"], brand="  bosch  "
+    ) == ["bosch akkuschrauber BOSCH", "bosch akkuschrauber"]
+
+
+def test_build_query_attempts_without_brand_keeps_brand_named_keyword() -> None:
+    # No `brand` passed -> existing pre-sandbox-8jm.5 behavior, unchanged.
+    assert _build_query_attempts(["bosch akkuschrauber", "bosch"]) == [
+        "bosch akkuschrauber bosch",
+        "bosch akkuschrauber",
+        "bosch",
+    ]
+
+
+def test_build_query_attempts_brand_none_does_not_filter_anything() -> None:
+    assert _build_query_attempts(["lamp", "ikea"], brand=None) == [
+        "lamp ikea",
+        "lamp",
+        "ikea",
+    ]
+
+
+def test_is_relevant_matches_name_token_substring_in_title() -> None:
+    assert _is_relevant(
+        "Akkuschrauber-Set 18V", identified_name="Bosch Akkuschrauber", brand="Bosch"
+    ) is True
+
+
+def test_is_relevant_rejects_title_with_no_matching_token() -> None:
+    assert _is_relevant(
+        "Bosch Geschirrspueler, gebraucht",
+        identified_name="Bosch Akkuschrauber",
+        brand="Bosch",
+    ) is False
+
+
+def test_is_relevant_ignores_brand_token() -> None:
+    # Title contains "Bosch" (the brand) but nothing else from the name --
+    # should NOT be considered relevant just because the brand matches.
+    assert _is_relevant(
+        "Bosch Buegeleisen", identified_name="Bosch Akkuschrauber", brand="Bosch"
+    ) is False
+
+
+def test_is_relevant_ignores_tokens_shorter_than_3_chars() -> None:
+    # "42" (numeric) and "gr" are both < 3 or dropped as too short; only
+    # "nike" and "laufschuhe" survive as usable tokens.
+    assert _is_relevant(
+        "Nike Laufschuhe, guter Zustand",
+        identified_name="Nike Laufschuhe Gr. 42",
+        brand=None,
+    ) is True
+    assert _is_relevant(
+        "Voellig unrelated title ohne Marke",
+        identified_name="Nike Laufschuhe Gr. 42",
+        brand=None,
+    ) is False
+
+
+def test_is_relevant_no_identified_name_does_not_filter() -> None:
+    assert _is_relevant("Anything at all", identified_name=None, brand="Bosch") is True
+    assert _is_relevant("Anything at all", identified_name="", brand="Bosch") is True
+
+
+def test_is_relevant_only_brand_token_does_not_filter() -> None:
+    # identified_name is just the brand -> no usable tokens left -> cannot
+    # judge -> must not filter.
+    assert _is_relevant(
+        "Totally unrelated title", identified_name="Bosch", brand="Bosch"
+    ) is True
+
+
+def test_is_relevant_umlaut_brand_only_name_does_not_filter() -> None:
+    # Regression: re.split must be Unicode-aware, so "Märklin" tokenizes as
+    # a single token (not split at "ä"), which then equals the casefolded
+    # brand and is dropped -> no usable tokens -> cannot judge -> True.
+    assert _is_relevant("Bohrer", identified_name="Märklin", brand="Märklin") is True
+
+
+def test_is_relevant_umlaut_name_does_not_spuriously_match_via_split_fragment() -> None:
+    # Regression: with the old ASCII-only split, "Kaffeemühle" would split
+    # into ["kaffeem", "hle"], and "hle" would spuriously match inside
+    # "Stühle". With a Unicode-aware split, "kaffeemühle" stays one token
+    # and does not appear in "stühle 4 stück" at all.
+    assert _is_relevant(
+        "Stühle 4 Stück", identified_name="Kaffeemühle", brand=None
+    ) is False
+
+
+def test_is_relevant_umlaut_name_matches_genuine_title_substring() -> None:
+    assert _is_relevant(
+        "Alte Kaffeemühle Holz", identified_name="Kaffeemühle", brand=None
+    ) is True
+
+
+def test_is_relevant_umlaut_brand_excluded_but_other_token_still_checked() -> None:
+    name = "Märklin Lokomotive"
+    brand = "Märklin"
+    # Title only echoes the brand ("Märklin"), not "Lokomotive" -> the
+    # brand token is excluded, leaving only "lokomotive" as a usable token,
+    # which is not present here -> irrelevant.
+    assert _is_relevant("Märklin Schienen", identified_name=name, brand=brand) is False
+    # Title contains "Lokomotive" -> relevant.
+    assert _is_relevant(
+        "Märklin Lokomotive BR 01", identified_name=name, brand=brand
+    ) is True
+
+
+def test_is_relevant_sharp_s_token_still_matches() -> None:
+    # "ß" must stay inside its token (Unicode-aware split), not be treated
+    # as a separator.
+    assert _is_relevant(
+        "Neue Straße gepflastert", identified_name="Straße", brand=None
+    ) is True
+    assert _is_relevant(
+        "Grosse Wohnung, viele Zimmer", identified_name="Größe", brand=None
+    ) is False
+
+
+def test_search_item_drops_irrelevant_fallback_results_and_continues_loosening() -> None:
+    item = _make_item(
+        keywords=["akkuschrauber", "werkzeug"],
+        condition="good",
+        identified_name="Bosch Akkuschrauber",
+        brand="Bosch",
+    )
+    irrelevant_results = [
+        {"title": "Bosch Geschirrspueler, gebraucht", "price": 180.0, "url": "https://x/1"},
+        {"title": "Bosch Standmixer, funktioniert", "price": 45.0, "url": "https://x/2"},
+    ]
+    relevant_results = [
+        {"title": "Akkuschrauber, kompatibel mit Bosch", "price": 20.0, "url": "https://x/3"},
+    ]
+    provider = _StubProvider(responses=[[], irrelevant_results, relevant_results])
+    service = ComparableListingSearchService(provider=provider)
+
+    ok = service.search_item(item)
+
+    assert ok is True
+    # Three candidate queries tried: joined (zero results), "akkuschrauber"
+    # (attempt 2, all irrelevant -> dropped), "werkzeug" (attempt 3, one
+    # relevant result kept).
+    assert provider.calls == [
+        "akkuschrauber werkzeug",
+        "akkuschrauber",
+        "werkzeug",
+    ]
+    assert len(item.comparable_listings) == 1
+    assert item.comparable_listings[0].title == "Akkuschrauber, kompatibel mit Bosch"
+
+
+def test_search_item_never_relevance_gates_the_joined_query() -> None:
+    # Attempt 1 (the fully-joined query) must never be relevance-filtered,
+    # even though none of its results share a token with identified_name.
+    item = _make_item(
+        keywords=["bosch akkuschrauber"],
+        condition="good",
+        identified_name="Bosch Akkuschrauber",
+        brand="Bosch",
+    )
+    unrelated_but_kept = [
+        {"title": "Voellig unrelated listing", "price": 15.0, "url": "https://x/1"},
+    ]
+    provider = _StubProvider(responses=[unrelated_but_kept])
+    service = ComparableListingSearchService(provider=provider)
+
+    ok = service.search_item(item)
+
+    assert ok is True
+    assert len(item.comparable_listings) == 1
+    assert item.comparable_listings[0].title == "Voellig unrelated listing"
+
+
+def test_search_item_no_identified_name_does_not_filter_fallback_results() -> None:
+    item = _make_item(
+        keywords=["akkuschrauber", "bosch"],
+        condition="good",
+        identified_name=None,
+        brand="Bosch akku",  # not equal to fallback keyword "bosch"
+    )
+    zero_results: list[dict[str, Any]] = []
+    kept_results = [
+        {"title": "Anything, no relevance check applied", "price": 20.0, "url": "https://x/1"},
+    ]
+    provider = _StubProvider(responses=[zero_results, kept_results])
+    service = ComparableListingSearchService(provider=provider)
+
+    ok = service.search_item(item)
+
+    assert ok is True
+    assert len(item.comparable_listings) == 1
