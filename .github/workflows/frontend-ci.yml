@@ -1,7 +1,10 @@
 name: Frontend CI
 
 on:
+  # push only for master; PR branches are covered by pull_request,
+  # so they don't run every job twice.
   push:
+    branches: [master]
     paths:
       - 'frontend/**'
       - '.github/workflows/frontend-ci.yml'
