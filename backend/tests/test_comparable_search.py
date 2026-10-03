@@ -1154,3 +1154,123 @@ def test_search_item_no_identified_name_does_not_filter_fallback_results() -> No
 
     assert ok is True
     assert len(item.comparable_listings) == 1
+
+
+# --- Kleinanzeigen credential resolution ---------------------------------
+
+_CRED_VARS = (
+    "APP_USER",
+    "APP_PASSWORD",
+    "APP_VERSION",
+    "KLEINANZEIGEN_BASIC_USER",
+    "KLEINANZEIGEN_BASIC_PW",
+)
+
+
+@pytest.fixture
+def fake_ka(monkeypatch):
+    import sys
+    import types
+
+    calls: list[dict[str, Any]] = []
+
+    class FakeKleinanzeigenAPI:
+        def __init__(self, **kwargs: Any) -> None:
+            calls.append(kwargs)
+
+    mod = types.ModuleType("kleinanzeigen_api")
+    mod.KleinanzeigenAPI = FakeKleinanzeigenAPI  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "kleinanzeigen_api", mod)
+    for var in _CRED_VARS:
+        monkeypatch.delenv(var, raising=False)
+    return calls
+
+
+def _build_kwargs(calls: list[dict[str, Any]]) -> dict[str, Any]:
+    from app.comparable_search import KleinanzeigenAPIProvider
+
+    KleinanzeigenAPIProvider()._get_client()
+    assert len(calls) == 1
+    return calls[0]
+
+
+def test_credentials_default_to_bundled_values(fake_ka) -> None:
+    from app import comparable_search as cs
+
+    assert _build_kwargs(fake_ka) == {
+        "basic_user": cs.DEFAULT_APP_USER,
+        "basic_pw": cs.DEFAULT_APP_PASSWORD,
+        "app_version": cs.DEFAULT_APP_VERSION,
+    }
+
+
+def test_credentials_from_app_env(fake_ka, monkeypatch) -> None:
+    monkeypatch.setenv("APP_USER", " u ")
+    monkeypatch.setenv("APP_PASSWORD", "p")
+    monkeypatch.setenv("APP_VERSION", "9.9.9")
+    monkeypatch.setenv("KLEINANZEIGEN_BASIC_USER", "ignored")
+    assert _build_kwargs(fake_ka) == {
+        "basic_user": "u",
+        "basic_pw": "p",
+        "app_version": "9.9.9",
+    }
+
+
+def test_blank_app_env_falls_back(fake_ka, monkeypatch) -> None:
+    from app import comparable_search as cs
+
+    monkeypatch.setenv("APP_USER", "")
+    monkeypatch.setenv("APP_PASSWORD", "   ")
+    monkeypatch.setenv("APP_VERSION", "\t")
+    assert _build_kwargs(fake_ka) == {
+        "basic_user": cs.DEFAULT_APP_USER,
+        "basic_pw": cs.DEFAULT_APP_PASSWORD,
+        "app_version": cs.DEFAULT_APP_VERSION,
+    }
+
+
+def test_library_basic_env_used_when_app_unset(fake_ka, monkeypatch) -> None:
+    from app import comparable_search as cs
+
+    monkeypatch.setenv("KLEINANZEIGEN_BASIC_USER", "lib_u")
+    monkeypatch.setenv("KLEINANZEIGEN_BASIC_PW", "lib_p")
+    assert _build_kwargs(fake_ka) == {
+        "basic_user": "lib_u",
+        "basic_pw": "lib_p",
+        "app_version": cs.DEFAULT_APP_VERSION,
+    }
+
+
+def test_no_rate_limit_kwarg_passed(fake_ka) -> None:
+    assert "rate_limit" not in _build_kwargs(fake_ka)
+
+
+class _RaisingClient:
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def search(self, **kwargs: Any) -> Any:
+        raise self._exc
+
+
+def test_401_403_error_adds_credential_hint() -> None:
+    from app.comparable_search import ComparableSearchError, KleinanzeigenAPIProvider
+
+    # The kleinanzeigen_api client raises this exact signature on 401/403.
+    exc = RuntimeError("403 from API — Basic-auth credentials likely rotated. Body: ...")
+    provider = KleinanzeigenAPIProvider(client=_RaisingClient(exc))
+    with pytest.raises(ComparableSearchError) as excinfo:
+        provider.search("vintage lamp")
+    msg = str(excinfo.value)
+    assert "APP_USER" in msg and "APP_PASSWORD" in msg and "APP_VERSION" in msg
+
+
+def test_unrelated_403_in_text_does_not_add_hint() -> None:
+    from app.comparable_search import ComparableSearchError, KleinanzeigenAPIProvider
+
+    # A bare "403" in a URL/query must NOT trip the credential hint.
+    exc = RuntimeError("GET failed after 3 tries: https://api/x?q=route+403 (timeout)")
+    provider = KleinanzeigenAPIProvider(client=_RaisingClient(exc))
+    with pytest.raises(ComparableSearchError) as excinfo:
+        provider.search("route 403")
+    assert "APP_USER" not in str(excinfo.value)

@@ -383,6 +383,7 @@ environment by whoever picks this up):
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any, Protocol, runtime_checkable
 
@@ -399,6 +400,36 @@ DEFAULT_LOCATION = None  # None == search all of Germany (nationwide policy)
 # Keep result volume modest per the spike doc's guardrails ("a handful of
 # searches per declutter session, not bulk/scheduled scraping").
 DEFAULT_PAGES = 1
+
+# Bundled Kleinanzeigen app-distribution Basic-auth values from the official
+# Android client (not personal secrets). Kleinanzeigen rotates these; when
+# requests start failing with 401/403, override via env / backend/.env:
+# APP_USER, APP_PASSWORD, APP_VERSION.
+DEFAULT_APP_USER = "android"
+DEFAULT_APP_PASSWORD = "TaR60pEttY"
+DEFAULT_APP_VERSION = "2026.23.1"
+
+
+def _env_value(*names: str) -> str | None:
+    """First non-blank env var among ``names`` (stripped), read at call time."""
+    for name in names:
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            return value
+    return None
+
+
+def _resolve_kleinanzeigen_credentials() -> tuple[str, str, str]:
+    """Return ``(user, password, app_version)`` for ``KleinanzeigenAPI``.
+
+    Order: ``APP_*`` env -> the library's ``KLEINANZEIGEN_BASIC_USER`` /
+    ``KLEINANZEIGEN_BASIC_PW`` (user/password only) -> bundled defaults.
+    Blank/whitespace-only values count as unset. Never log the password.
+    """
+    user = _env_value("APP_USER", "KLEINANZEIGEN_BASIC_USER") or DEFAULT_APP_USER
+    password = _env_value("APP_PASSWORD", "KLEINANZEIGEN_BASIC_PW") or DEFAULT_APP_PASSWORD
+    version = _env_value("APP_VERSION") or DEFAULT_APP_VERSION
+    return user, password, version
 
 # How many times the service will call the provider for a single *candidate
 # query* before giving up on that query (1 initial attempt + 1 retry == 2
@@ -513,7 +544,10 @@ class KleinanzeigenAPIProvider:
         # Deliberately use the library's own defaults for rate_limit /
         # max_retries -- see module docstring "Rate limiting". Do not pass
         # a lower rate_limit here.
-        self._client = KleinanzeigenAPI()
+        user, password, version = _resolve_kleinanzeigen_credentials()
+        self._client = KleinanzeigenAPI(
+            basic_user=user, basic_pw=password, app_version=version
+        )
         return self._client
 
     def search(self, query: str, exclude: list[str] | None = None) -> list[dict[str, Any]]:
@@ -546,9 +580,20 @@ class KleinanzeigenAPIProvider:
             # internal retries, as raised by kleinanzeigen_api.client).
             # Converted uniformly so callers never see a raw ValueError
             # escape from this method.
-            raise ComparableSearchError(
-                f"Kleinanzeigen search call failed for query={query!r}: {exc}"
-            ) from exc
+            message = f"Kleinanzeigen search call failed for query={query!r}: {exc}"
+            # Match the kleinanzeigen_api client's own 401/403 signature
+            # ("<status> from API — Basic-auth credentials likely rotated")
+            # rather than a bare "401"/"403" anywhere in the text, so a
+            # query/URL that merely contains those digits can't trip the hint.
+            if re.search(r"\b40[13] from API\b", str(exc)):
+                message += (
+                    " -- credentials may be rotated/rejected: set fresh APP_USER, "
+                    "APP_PASSWORD and APP_VERSION in the deployment env (Railway "
+                    "service variables, or backend/.env locally; see "
+                    "docs/kleinanzeigen-access.md)"
+                )
+                logger.warning(message)
+            raise ComparableSearchError(message) from exc
 
         return [_listing_to_raw(listing) for listing in listings]
 

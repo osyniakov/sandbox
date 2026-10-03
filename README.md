@@ -34,6 +34,11 @@ identification step (`status` stays `pending_identification`) rather
 than erroring — see "How the pipeline behaves without a working step"
 below.
 
+Kleinanzeigen API credentials (`APP_USER`, `APP_PASSWORD`, `APP_VERSION`) can
+be overridden via env or `backend/.env` (see `backend/.env.example`) if
+Kleinanzeigen rotates them and searches fail with 401/403 — see
+"Credential rotation" in `docs/kleinanzeigen-access.md`.
+
 Other environment variables, all optional with sensible defaults:
 
 | Variable | Where | Default | Purpose |

@@ -222,3 +222,21 @@ resolving it either direction by assumption:
 This table is provided so bead `sandbox-yqf.7`'s implementer and any
 reviewer can see exactly what was and wasn't independently verified, rather
 than treating this document as fully first-party-verified fact.
+
+## Credential rotation
+
+The Kleinanzeigen client uses app-distribution Basic-auth values (user,
+password, app version) that Kleinanzeigen occasionally rotates. Symptom:
+searches fail with HTTP 401/403 (the error message says so).
+
+Resolution order, read at call time (blank values count as unset):
+
+1. `APP_USER` / `APP_PASSWORD` / `APP_VERSION` from the environment or `.env`
+2. the library's own `KLEINANZEIGEN_BASIC_USER` / `KLEINANZEIGEN_BASIC_PW`
+   (user and password only)
+3. bundled defaults in `backend/app/comparable_search.py`
+
+To fix: put fresh values in `backend/.env` (copy `backend/.env.example`;
+docker compose loads it automatically) or set them as environment variables
+on the deployment (e.g. Railway service variables), then restart the backend.
+No code change is needed.
