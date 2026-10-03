@@ -47,6 +47,16 @@ Other environment variables, all optional with sensible defaults:
 | `ALLOWED_EMAILS` | backend | — (empty = nobody can sign in) | comma-separated whitelist of emails allowed to sign in; see [Access control](#access-control) |
 | `SESSION_SECRET` | backend | — (required) | secret key used to sign/verify this app's own session tokens issued after Google sign-in. Must be set to a real random secret in any real deployment — e.g. generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Leaving it unset is not silently insecure: token issuance raises rather than operating without a secret. |
 
+Kleinanzeigen client overrides (backend, runtime, leave unset normally; only
+needed if Kleinanzeigen rotates the app credentials). See
+[docs/kleinanzeigen-config-overrides.md](docs/kleinanzeigen-config-overrides.md):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `KLEINANZEIGEN_BASIC_USER` | library default (`android`) | Basic-auth user, read directly by `kleinanzeigen-api` |
+| `KLEINANZEIGEN_BASIC_PW` | library default | Basic-auth password, read directly by `kleinanzeigen-api` |
+| `KLEINANZEIGEN_APP_VERSION` | library default (`2026.25.0`) | app version spoofed in request headers; **not yet wired up**, needs the code change described in the doc |
+
 `backend/app/config.py` also has a `SELL_THRESHOLD` constant (currently
 a placeholder €10 cutoff between "sell" and "give away") if you want to
 tune the decision logic without touching env vars.
