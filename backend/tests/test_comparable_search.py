@@ -1154,3 +1154,149 @@ def test_search_item_no_identified_name_does_not_filter_fallback_results() -> No
 
     assert ok is True
     assert len(item.comparable_listings) == 1
+
+
+# ---------------------------------------------------------------------------
+# KLEINANZEIGEN_APP_VERSION env var -> KleinanzeigenAPI(app_version=...)
+# ---------------------------------------------------------------------------
+
+
+def _install_fake_kleinanzeigen_module(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Install a fake ``kleinanzeigen_api`` module; return recorded ctor kwargs."""
+    import sys
+    import types
+
+    calls: list[dict[str, Any]] = []
+
+    class _FakeKleinanzeigenAPI:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            assert not args
+            calls.append(kwargs)
+
+    fake_module = types.ModuleType("kleinanzeigen_api")
+    fake_module.KleinanzeigenAPI = _FakeKleinanzeigenAPI  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "kleinanzeigen_api", fake_module)
+    return calls
+
+
+def test_app_version_env_var_is_passed_to_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _install_fake_kleinanzeigen_module(monkeypatch)
+    monkeypatch.setenv("KLEINANZEIGEN_APP_VERSION", "2026.40.0")
+    KleinanzeigenAPIProvider()._get_client()
+    assert calls == [{"app_version": "2026.40.0"}]
+
+
+def test_app_version_env_var_is_stripped(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _install_fake_kleinanzeigen_module(monkeypatch)
+    monkeypatch.setenv("KLEINANZEIGEN_APP_VERSION", " 2026.40.0 ")
+    KleinanzeigenAPIProvider()._get_client()
+    assert calls == [{"app_version": "2026.40.0"}]
+
+
+def test_app_version_unset_passes_no_kwargs(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _install_fake_kleinanzeigen_module(monkeypatch)
+    monkeypatch.delenv("KLEINANZEIGEN_APP_VERSION", raising=False)
+    KleinanzeigenAPIProvider()._get_client()
+    assert calls == [{}]
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_app_version_blank_passes_no_kwargs(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    calls = _install_fake_kleinanzeigen_module(monkeypatch)
+    monkeypatch.setenv("KLEINANZEIGEN_APP_VERSION", value)
+    KleinanzeigenAPIProvider()._get_client()
+    assert calls == [{}]
+
+
+def test_client_is_cached_and_not_reconstructed(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _install_fake_kleinanzeigen_module(monkeypatch)
+    monkeypatch.setenv("KLEINANZEIGEN_APP_VERSION", "2026.40.0")
+    provider = KleinanzeigenAPIProvider()
+    first = provider._get_client()
+    second = provider._get_client()
+    assert first is second
+    assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# Real kleinanzeigen_api client: env-var overrides reach the request headers
+# (no network calls: constructing the client and building headers is local)
+# ---------------------------------------------------------------------------
+
+_KA_ENV_VARS = (
+    "KLEINANZEIGEN_BASIC_USER",
+    "KLEINANZEIGEN_BASIC_PW",
+    "KLEINANZEIGEN_APP_VERSION",
+)
+
+
+def _real_client_headers(monkeypatch: pytest.MonkeyPatch, **env: str) -> dict[str, str]:
+    """Build headers from the real library client with a clean, explicit env."""
+    pytest.importorskip("kleinanzeigen_api")
+    for name in _KA_ENV_VARS:
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    return KleinanzeigenAPIProvider()._get_client()._headers()
+
+
+def _basic(user: str, pw: str) -> str:
+    import base64
+
+    return "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
+
+
+def test_real_client_basic_auth_env_overrides_both(monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = _real_client_headers(
+        monkeypatch, KLEINANZEIGEN_BASIC_USER="test-user", KLEINANZEIGEN_BASIC_PW="test-pw"
+    )
+    assert headers["Authorization"] == _basic("test-user", "test-pw")
+
+
+def test_real_client_basic_auth_only_pw_overridden(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("kleinanzeigen_api")
+    from kleinanzeigen_api.client import DEFAULT_BASIC_USER
+
+    headers = _real_client_headers(monkeypatch, KLEINANZEIGEN_BASIC_PW="test-pw")
+    assert headers["Authorization"] == _basic(DEFAULT_BASIC_USER, "test-pw")
+
+
+def test_real_client_basic_auth_only_user_overridden(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("kleinanzeigen_api")
+    from kleinanzeigen_api.client import DEFAULT_BASIC_PW
+
+    headers = _real_client_headers(monkeypatch, KLEINANZEIGEN_BASIC_USER="test-user")
+    assert headers["Authorization"] == _basic("test-user", DEFAULT_BASIC_PW)
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_real_client_basic_auth_unset_or_empty_uses_defaults(
+    monkeypatch: pytest.MonkeyPatch, value: str | None
+) -> None:
+    pytest.importorskip("kleinanzeigen_api")
+    from kleinanzeigen_api.client import DEFAULT_BASIC_PW, DEFAULT_BASIC_USER
+
+    env = (
+        {}
+        if value is None
+        else {"KLEINANZEIGEN_BASIC_USER": value, "KLEINANZEIGEN_BASIC_PW": value}
+    )
+    headers = _real_client_headers(monkeypatch, **env)
+    assert headers["Authorization"] == _basic(DEFAULT_BASIC_USER, DEFAULT_BASIC_PW)
+
+
+def test_real_client_app_version_env_reaches_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    headers = _real_client_headers(monkeypatch, KLEINANZEIGEN_APP_VERSION="2026.40.0")
+    assert headers["X-ECG-USER-VERSION"] == "2026.40.0"
+    assert headers["X-ECG-USER-AGENT"] == "ebayk-android-app-2026.40.0"
+    assert headers["User-Agent"].startswith("Kleinanzeigen/2026.40.0")
+
+
+def test_real_client_app_version_unset_uses_library_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("kleinanzeigen_api")
+    from kleinanzeigen_api.client import APP_VERSION
+
+    headers = _real_client_headers(monkeypatch)
+    assert headers["X-ECG-USER-VERSION"] == APP_VERSION

@@ -47,6 +47,32 @@ Other environment variables, all optional with sensible defaults:
 | `ALLOWED_EMAILS` | backend | — (empty = nobody can sign in) | comma-separated whitelist of emails allowed to sign in; see [Access control](#access-control) |
 | `SESSION_SECRET` | backend | — (required) | secret key used to sign/verify this app's own session tokens issued after Google sign-in. Must be set to a real random secret in any real deployment — e.g. generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Leaving it unset is not silently insecure: token issuance raises rather than operating without a secret. |
 
+Kleinanzeigen client overrides (backend, runtime). Leave these unset
+normally: the `kleinanzeigen-api` library ships working defaults.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `KLEINANZEIGEN_BASIC_USER` | library default (`android`) | Basic-auth user, read directly by `kleinanzeigen-api` |
+| `KLEINANZEIGEN_BASIC_PW` | library default | Basic-auth password, read directly by `kleinanzeigen-api` |
+| `KLEINANZEIGEN_APP_VERSION` | library default | app version sent in the request headers; read by the backend (`KleinanzeigenAPIProvider._get_client`) and passed to the library |
+
+Use them only as a stop-gap when comparable-price searches start failing
+with 401/403 ("Basic-auth credentials likely rotated"). First check for a
+newer `kleinanzeigen-api` release, because bumping the pin is the preferred
+fix. See also the guardrails in
+[docs/kleinanzeigen-access.md](docs/kleinanzeigen-access.md) §4.
+
+- Set them as runtime service variables (on Railway: backend service →
+  Variables), not build args. Saving redeploys the service, which is
+  required: the client reads them once per process.
+- An empty value counts as unset. To revert to the defaults, delete the
+  variable.
+- Set the user and password together. Each one falls back to its default
+  on its own.
+- Keep the password in the platform's variables only, and never commit it.
+- Remove the overrides once the library catches up, so they don't shadow
+  newer defaults.
+
 `backend/app/config.py` also has a `SELL_THRESHOLD` constant (currently
 a placeholder €10 cutoff between "sell" and "give away") if you want to
 tune the decision logic without touching env vars.
