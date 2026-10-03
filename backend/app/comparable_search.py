@@ -405,9 +405,15 @@ DEFAULT_PAGES = 1
 # Android client (not personal secrets). Kleinanzeigen rotates these; when
 # requests start failing with 401/403, override via env / backend/.env:
 # KLEINANZEIGEN_APP_USER, KLEINANZEIGEN_APP_PASSWORD, KLEINANZEIGEN_APP_VERSION.
+#
+# There is deliberately NO bundled default app version: when
+# KLEINANZEIGEN_APP_VERSION is unset we leave ``app_version`` unspecified so
+# the kleinanzeigen-api library applies its own (newer) default, which it
+# keeps current across releases. Pinning a value here risks shipping a stale
+# version string that is itself rejected with 401/403 and silently overriding
+# library upgrades -- the opposite of what this override is for.
 DEFAULT_APP_USER = "android"
 DEFAULT_APP_PASSWORD = "TaR60pEttY"
-DEFAULT_APP_VERSION = "2026.23.1"
 
 
 def _env_value(*names: str) -> str | None:
@@ -419,16 +425,19 @@ def _env_value(*names: str) -> str | None:
     return None
 
 
-def _resolve_kleinanzeigen_credentials() -> tuple[str, str, str]:
+def _resolve_kleinanzeigen_credentials() -> tuple[str, str, str | None]:
     """Return ``(user, password, app_version)`` for ``KleinanzeigenAPI``.
 
-    Order: ``APP_*`` env -> the library's ``KLEINANZEIGEN_BASIC_USER`` /
-    ``KLEINANZEIGEN_BASIC_PW`` (user/password only) -> bundled defaults.
-    Blank/whitespace-only values count as unset. Never log the password.
+    Order: ``KLEINANZEIGEN_APP_*`` env -> the library's
+    ``KLEINANZEIGEN_BASIC_USER`` / ``KLEINANZEIGEN_BASIC_PW`` (user/password
+    only) -> bundled defaults. ``app_version`` has no bundled default: it is
+    ``None`` when ``KLEINANZEIGEN_APP_VERSION`` is unset, and the caller then
+    lets the library apply its own default. Blank/whitespace-only values
+    count as unset. Never log the password.
     """
     user = _env_value("KLEINANZEIGEN_APP_USER", "KLEINANZEIGEN_BASIC_USER") or DEFAULT_APP_USER
     password = _env_value("KLEINANZEIGEN_APP_PASSWORD", "KLEINANZEIGEN_BASIC_PW") or DEFAULT_APP_PASSWORD
-    version = _env_value("KLEINANZEIGEN_APP_VERSION") or DEFAULT_APP_VERSION
+    version = _env_value("KLEINANZEIGEN_APP_VERSION")
     return user, password, version
 
 # How many times the service will call the provider for a single *candidate
@@ -545,9 +554,12 @@ class KleinanzeigenAPIProvider:
         # max_retries -- see module docstring "Rate limiting". Do not pass
         # a lower rate_limit here.
         user, password, version = _resolve_kleinanzeigen_credentials()
-        self._client = KleinanzeigenAPI(
-            basic_user=user, basic_pw=password, app_version=version
-        )
+        client_kwargs: dict[str, Any] = {"basic_user": user, "basic_pw": password}
+        # Only override app_version when explicitly configured; otherwise let
+        # the library use its own (current) default -- see DEFAULT_APP_* note.
+        if version is not None:
+            client_kwargs["app_version"] = version
+        self._client = KleinanzeigenAPI(**client_kwargs)
         return self._client
 
     def search(self, query: str, exclude: list[str] | None = None) -> list[dict[str, Any]]:

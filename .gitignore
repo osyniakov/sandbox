@@ -62,6 +62,5 @@ backend/uploads/
 
 # Local env files (secrets / credential overrides); keep the example
 .env
-backend/.env
 !.env.example
 !backend/.env.example

@@ -234,7 +234,12 @@ Resolution order, read at call time (blank values count as unset):
 1. `KLEINANZEIGEN_APP_USER` / `KLEINANZEIGEN_APP_PASSWORD` / `KLEINANZEIGEN_APP_VERSION` from the environment or `.env`
 2. the library's own `KLEINANZEIGEN_BASIC_USER` / `KLEINANZEIGEN_BASIC_PW`
    (user and password only)
-3. bundled defaults in `backend/app/comparable_search.py`
+3. bundled defaults for user/password in `backend/app/comparable_search.py`
+
+`KLEINANZEIGEN_APP_VERSION` has **no bundled default**: when it is unset, the
+app version is left unspecified and the `kleinanzeigen-api` library applies
+its own (current) default, which stays up to date across library releases.
+Only set `KLEINANZEIGEN_APP_VERSION` to pin or override that value.
 
 To fix: put fresh values in `backend/.env` (copy `backend/.env.example`;
 docker compose loads it automatically) or set them as environment variables

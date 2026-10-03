@@ -1197,11 +1197,13 @@ def _build_kwargs(calls: list[dict[str, Any]]) -> dict[str, Any]:
 def test_credentials_default_to_bundled_values(fake_ka) -> None:
     from app import comparable_search as cs
 
-    assert _build_kwargs(fake_ka) == {
+    # No app_version is passed when unset -> library applies its own default.
+    kwargs = _build_kwargs(fake_ka)
+    assert kwargs == {
         "basic_user": cs.DEFAULT_APP_USER,
         "basic_pw": cs.DEFAULT_APP_PASSWORD,
-        "app_version": cs.DEFAULT_APP_VERSION,
     }
+    assert "app_version" not in kwargs
 
 
 def test_credentials_from_app_env(fake_ka, monkeypatch) -> None:
@@ -1222,23 +1224,23 @@ def test_blank_app_env_falls_back(fake_ka, monkeypatch) -> None:
     monkeypatch.setenv("KLEINANZEIGEN_APP_USER", "")
     monkeypatch.setenv("KLEINANZEIGEN_APP_PASSWORD", "   ")
     monkeypatch.setenv("KLEINANZEIGEN_APP_VERSION", "\t")
-    assert _build_kwargs(fake_ka) == {
+    kwargs = _build_kwargs(fake_ka)
+    assert kwargs == {
         "basic_user": cs.DEFAULT_APP_USER,
         "basic_pw": cs.DEFAULT_APP_PASSWORD,
-        "app_version": cs.DEFAULT_APP_VERSION,
     }
+    assert "app_version" not in kwargs
 
 
 def test_library_basic_env_used_when_app_unset(fake_ka, monkeypatch) -> None:
-    from app import comparable_search as cs
-
     monkeypatch.setenv("KLEINANZEIGEN_BASIC_USER", "lib_u")
     monkeypatch.setenv("KLEINANZEIGEN_BASIC_PW", "lib_p")
-    assert _build_kwargs(fake_ka) == {
+    kwargs = _build_kwargs(fake_ka)
+    assert kwargs == {
         "basic_user": "lib_u",
         "basic_pw": "lib_p",
-        "app_version": cs.DEFAULT_APP_VERSION,
     }
+    assert "app_version" not in kwargs
 
 
 def test_no_rate_limit_kwarg_passed(fake_ka) -> None:
