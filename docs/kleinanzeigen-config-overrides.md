@@ -46,7 +46,7 @@ The user and password become the `Authorization: Basic …` header.
 |---|---|---|---|
 | Basic-auth user | `basic_user` | `KLEINANZEIGEN_BASIC_USER` | **Yes**, no code change |
 | Basic-auth password | `basic_pw` | `KLEINANZEIGEN_BASIC_PW` | **Yes**, no code change |
-| App version | `app_version` | **none** | **No**, needs the small code change below |
+| App version | `app_version` | `KLEINANZEIGEN_APP_VERSION` (read by our backend, not the library) | **Yes**, no further code change |
 
 ## 1. User and password: set the variables on Railway
 
@@ -79,12 +79,12 @@ Things to know:
   ships inside the Android app. Keep it in Railway Variables only, and never
   commit it.
 
-## 2. App version: needs a small code change
+## 2. App version: set `KLEINANZEIGEN_APP_VERSION`
 
-There is no environment variable for `app_version`. It is only a constructor
-argument, so our code has to read an environment variable and pass the value
-in. Proposed change to `KleinanzeigenAPIProvider._get_client()` in
-`backend/app/comparable_search.py`:
+The library has no environment variable for `app_version`; it is only a
+constructor argument. Our backend therefore reads `KLEINANZEIGEN_APP_VERSION`
+and passes the value in. This is implemented in
+`KleinanzeigenAPIProvider._get_client()` in `backend/app/comparable_search.py`:
 
 ```python
 import os

@@ -55,7 +55,7 @@ needed if Kleinanzeigen rotates the app credentials). See
 |---|---|---|
 | `KLEINANZEIGEN_BASIC_USER` | library default (`android`) | Basic-auth user, read directly by `kleinanzeigen-api` |
 | `KLEINANZEIGEN_BASIC_PW` | library default | Basic-auth password, read directly by `kleinanzeigen-api` |
-| `KLEINANZEIGEN_APP_VERSION` | library default (`2026.25.0`) | app version spoofed in request headers; **not yet wired up**, needs the code change described in the doc |
+| `KLEINANZEIGEN_APP_VERSION` | library default (`2026.25.0`) | app version spoofed in request headers; read by the backend and passed to the library as `app_version`; unset or blank keeps the library default |
 
 `backend/app/config.py` also has a `SELL_THRESHOLD` constant (currently
 a placeholder €10 cutoff between "sell" and "give away") if you want to

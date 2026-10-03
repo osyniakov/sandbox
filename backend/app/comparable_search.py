@@ -383,6 +383,7 @@ environment by whoever picks this up):
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any, Protocol, runtime_checkable
 
@@ -486,6 +487,9 @@ class KleinanzeigenAPIProvider:
     this class never requires the package to make any network calls or read
     environment credentials at import/construction time -- tests inject a
     fake ``client`` instead and never touch the real network.
+
+    If the ``KLEINANZEIGEN_APP_VERSION`` environment variable is set to a
+    non-blank value, it is passed to the client as ``app_version``.
     """
 
     def __init__(
@@ -510,10 +514,18 @@ class KleinanzeigenAPIProvider:
         # so constructing this provider never requires network access.
         from kleinanzeigen_api import KleinanzeigenAPI
 
+        kwargs: dict[str, Any] = {}
+        # Override the app version the library spoofs in its headers (it has
+        # no env var of its own). Read here, at client creation time. Unset
+        # or blank -> keep the library's default. The format isn't validated.
+        app_version = os.getenv("KLEINANZEIGEN_APP_VERSION", "").strip()
+        if app_version:
+            kwargs["app_version"] = app_version
+
         # Deliberately use the library's own defaults for rate_limit /
         # max_retries -- see module docstring "Rate limiting". Do not pass
         # a lower rate_limit here.
-        self._client = KleinanzeigenAPI()
+        self._client = KleinanzeigenAPI(**kwargs)
         return self._client
 
     def search(self, query: str, exclude: list[str] | None = None) -> list[dict[str, Any]]:
