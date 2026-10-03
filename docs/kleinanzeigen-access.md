@@ -231,7 +231,7 @@ searches fail with HTTP 401/403 (the error message says so).
 
 Resolution order, read at call time (blank values count as unset):
 
-1. `APP_USER` / `APP_PASSWORD` / `APP_VERSION` from the environment or `.env`
+1. `KLEINANZEIGEN_APP_USER` / `KLEINANZEIGEN_APP_PASSWORD` / `KLEINANZEIGEN_APP_VERSION` from the environment or `.env`
 2. the library's own `KLEINANZEIGEN_BASIC_USER` / `KLEINANZEIGEN_BASIC_PW`
    (user and password only)
 3. bundled defaults in `backend/app/comparable_search.py`

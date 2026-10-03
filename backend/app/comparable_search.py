@@ -404,7 +404,7 @@ DEFAULT_PAGES = 1
 # Bundled Kleinanzeigen app-distribution Basic-auth values from the official
 # Android client (not personal secrets). Kleinanzeigen rotates these; when
 # requests start failing with 401/403, override via env / backend/.env:
-# APP_USER, APP_PASSWORD, APP_VERSION.
+# KLEINANZEIGEN_APP_USER, KLEINANZEIGEN_APP_PASSWORD, KLEINANZEIGEN_APP_VERSION.
 DEFAULT_APP_USER = "android"
 DEFAULT_APP_PASSWORD = "TaR60pEttY"
 DEFAULT_APP_VERSION = "2026.23.1"
@@ -426,9 +426,9 @@ def _resolve_kleinanzeigen_credentials() -> tuple[str, str, str]:
     ``KLEINANZEIGEN_BASIC_PW`` (user/password only) -> bundled defaults.
     Blank/whitespace-only values count as unset. Never log the password.
     """
-    user = _env_value("APP_USER", "KLEINANZEIGEN_BASIC_USER") or DEFAULT_APP_USER
-    password = _env_value("APP_PASSWORD", "KLEINANZEIGEN_BASIC_PW") or DEFAULT_APP_PASSWORD
-    version = _env_value("APP_VERSION") or DEFAULT_APP_VERSION
+    user = _env_value("KLEINANZEIGEN_APP_USER", "KLEINANZEIGEN_BASIC_USER") or DEFAULT_APP_USER
+    password = _env_value("KLEINANZEIGEN_APP_PASSWORD", "KLEINANZEIGEN_BASIC_PW") or DEFAULT_APP_PASSWORD
+    version = _env_value("KLEINANZEIGEN_APP_VERSION") or DEFAULT_APP_VERSION
     return user, password, version
 
 # How many times the service will call the provider for a single *candidate
@@ -587,8 +587,8 @@ class KleinanzeigenAPIProvider:
             # query/URL that merely contains those digits can't trip the hint.
             if re.search(r"\b40[13] from API\b", str(exc)):
                 message += (
-                    " -- credentials may be rotated/rejected: set fresh APP_USER, "
-                    "APP_PASSWORD and APP_VERSION in the deployment env (Railway "
+                    " -- credentials may be rotated/rejected: set fresh KLEINANZEIGEN_APP_USER, "
+                    "KLEINANZEIGEN_APP_PASSWORD and KLEINANZEIGEN_APP_VERSION in the deployment env (Railway "
                     "service variables, or backend/.env locally; see "
                     "docs/kleinanzeigen-access.md)"
                 )

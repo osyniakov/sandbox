@@ -1159,9 +1159,9 @@ def test_search_item_no_identified_name_does_not_filter_fallback_results() -> No
 # --- Kleinanzeigen credential resolution ---------------------------------
 
 _CRED_VARS = (
-    "APP_USER",
-    "APP_PASSWORD",
-    "APP_VERSION",
+    "KLEINANZEIGEN_APP_USER",
+    "KLEINANZEIGEN_APP_PASSWORD",
+    "KLEINANZEIGEN_APP_VERSION",
     "KLEINANZEIGEN_BASIC_USER",
     "KLEINANZEIGEN_BASIC_PW",
 )
@@ -1205,9 +1205,9 @@ def test_credentials_default_to_bundled_values(fake_ka) -> None:
 
 
 def test_credentials_from_app_env(fake_ka, monkeypatch) -> None:
-    monkeypatch.setenv("APP_USER", " u ")
-    monkeypatch.setenv("APP_PASSWORD", "p")
-    monkeypatch.setenv("APP_VERSION", "9.9.9")
+    monkeypatch.setenv("KLEINANZEIGEN_APP_USER", " u ")
+    monkeypatch.setenv("KLEINANZEIGEN_APP_PASSWORD", "p")
+    monkeypatch.setenv("KLEINANZEIGEN_APP_VERSION", "9.9.9")
     monkeypatch.setenv("KLEINANZEIGEN_BASIC_USER", "ignored")
     assert _build_kwargs(fake_ka) == {
         "basic_user": "u",
@@ -1219,9 +1219,9 @@ def test_credentials_from_app_env(fake_ka, monkeypatch) -> None:
 def test_blank_app_env_falls_back(fake_ka, monkeypatch) -> None:
     from app import comparable_search as cs
 
-    monkeypatch.setenv("APP_USER", "")
-    monkeypatch.setenv("APP_PASSWORD", "   ")
-    monkeypatch.setenv("APP_VERSION", "\t")
+    monkeypatch.setenv("KLEINANZEIGEN_APP_USER", "")
+    monkeypatch.setenv("KLEINANZEIGEN_APP_PASSWORD", "   ")
+    monkeypatch.setenv("KLEINANZEIGEN_APP_VERSION", "\t")
     assert _build_kwargs(fake_ka) == {
         "basic_user": cs.DEFAULT_APP_USER,
         "basic_pw": cs.DEFAULT_APP_PASSWORD,
@@ -1262,7 +1262,7 @@ def test_401_403_error_adds_credential_hint() -> None:
     with pytest.raises(ComparableSearchError) as excinfo:
         provider.search("vintage lamp")
     msg = str(excinfo.value)
-    assert "APP_USER" in msg and "APP_PASSWORD" in msg and "APP_VERSION" in msg
+    assert "KLEINANZEIGEN_APP_USER" in msg and "KLEINANZEIGEN_APP_PASSWORD" in msg and "KLEINANZEIGEN_APP_VERSION" in msg
 
 
 def test_unrelated_403_in_text_does_not_add_hint() -> None:
@@ -1273,4 +1273,4 @@ def test_unrelated_403_in_text_does_not_add_hint() -> None:
     provider = KleinanzeigenAPIProvider(client=_RaisingClient(exc))
     with pytest.raises(ComparableSearchError) as excinfo:
         provider.search("route 403")
-    assert "APP_USER" not in str(excinfo.value)
+    assert "KLEINANZEIGEN_APP_USER" not in str(excinfo.value)
