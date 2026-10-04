@@ -344,7 +344,7 @@ function InventoryPage() {
       )}
 
       {loaded && visibleItems.length > 0 && (
-        <ul className="mt-5 grid list-none gap-3 p-0 text-left lg:grid-cols-2">
+        <ul className="mt-5 grid list-none grid-cols-1 gap-3 p-0 text-left lg:grid-cols-2">
           {visibleItems.map((item) => {
             const nextStatuses = item.valid_next_statuses || []
             const decisionBadgeClasses =
@@ -357,7 +357,7 @@ function InventoryPage() {
             return (
               <li
                 key={item.id}
-                className={`flex gap-3 rounded-2xl border border-line bg-surface p-3 shadow-card ${
+                className={`flex min-w-0 gap-3 rounded-2xl border border-line bg-surface p-3 shadow-card ${
                   done ? 'opacity-70' : ''
                 }`}
               >
@@ -462,7 +462,7 @@ function InventoryPage() {
             <p id="delete-dialog-title" className="font-semibold">
               Delete this item?
             </p>
-            <p className="mt-1 text-sm text-muted">
+            <p className="mt-1 break-words text-sm text-muted [overflow-wrap:anywhere]">
               “{confirmItem.identified_name || `Item #${confirmItem.id}`}” and its photo will be
               removed for good.
             </p>
