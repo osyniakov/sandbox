@@ -566,3 +566,68 @@ def test_claude_vision_provider_does_not_require_api_key_when_client_injected(tm
     # Should not raise despite no API key being configured anywhere.
     result = provider.identify(str(photo))
     assert result["name"] == "Thing"
+
+
+_VISION_JSON = json.dumps(
+    {
+        "name": "Desk Lamp",
+        "category": "lighting",
+        "brand": "IKEA",
+        "condition": "good",
+        "search_keywords": ["desk lamp"],
+        "confidence": "high",
+    }
+)
+
+
+@pytest.mark.parametrize(
+    "wrapped",
+    [
+        "```json\n" + _VISION_JSON + "\n```",
+        "Here is the identification:\n" + _VISION_JSON,
+    ],
+)
+def test_claude_vision_provider_parses_fenced_or_prose_wrapped_response(tmp_path, wrapped) -> None:
+    photo = tmp_path / "lamp.jpg"
+    photo.write_bytes(b"fake-jpeg-bytes")
+    provider = ClaudeVisionProvider(client=_FakeAnthropicClient(response_text=wrapped))
+
+    result = provider.identify(str(photo), hint="antique")
+
+    assert result["name"] == "Desk Lamp"
+
+
+def test_claude_vision_provider_empty_text_raises_with_raw_snippet(tmp_path) -> None:
+    photo = tmp_path / "lamp.jpg"
+    photo.write_bytes(b"fake-jpeg-bytes")
+    provider = ClaudeVisionProvider(client=_FakeAnthropicClient(response_text="  "))
+
+    with pytest.raises(IdentificationError, match="raw text: '  '"):
+        provider.identify(str(photo))
+
+
+def test_claude_vision_provider_unparseable_error_includes_raw_snippet(tmp_path) -> None:
+    photo = tmp_path / "lamp.jpg"
+    photo.write_bytes(b"fake-jpeg-bytes")
+    provider = ClaudeVisionProvider(client=_FakeAnthropicClient(response_text="I cannot tell."))
+
+    with pytest.raises(IdentificationError, match="I cannot tell"):
+        provider.identify(str(photo))
+
+
+def test_claude_vision_provider_hinted_prompt_ends_with_reminder(tmp_path) -> None:
+    from app.identification import _IDENTIFICATION_PROMPT
+
+    photo = tmp_path / "lamp.jpg"
+    photo.write_bytes(b"fake-jpeg-bytes")
+    fake_client = _FakeAnthropicClient(response_text=_VISION_JSON)
+    provider = ClaudeVisionProvider(client=fake_client)
+
+    provider.identify(str(photo), hint="antique")
+    sent = fake_client.messages.last_kwargs["messages"][0]["content"][1]["text"]
+    assert sent.rstrip().endswith("no prose, no markdown code fences.")
+    assert sent.startswith(_IDENTIFICATION_PROMPT)
+
+    provider.identify(str(photo))
+    sent = fake_client.messages.last_kwargs["messages"][0]["content"][1]["text"]
+    assert sent == _IDENTIFICATION_PROMPT

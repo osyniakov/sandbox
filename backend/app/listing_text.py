@@ -32,11 +32,11 @@ untouched.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from typing import Any, Protocol, runtime_checkable
 
+from app.llm_json import parse_json_object
 from app.models import Decision, Item
 
 logger = logging.getLogger(__name__)
@@ -211,20 +211,17 @@ class ClaudeListingTextProvider:
         except Exception as exc:  # network errors, timeouts, SDK/API errors, etc.
             raise ListingTextError(f"Claude listing-text API call failed: {exc}") from exc
 
+        text = ""
         try:
             text = _extract_text_block(response)
-            data = json.loads(text)
+            data = parse_json_object(text)
         except ListingTextError:
             raise
         except Exception as exc:
             raise ListingTextError(
-                f"Could not parse Claude listing-text response as JSON: {exc}"
+                f"Could not parse Claude listing-text response as JSON: {exc} "
+                f"(raw text: {text[:200]!r})"
             ) from exc
-
-        if not isinstance(data, dict):
-            raise ListingTextError(
-                f"Claude listing-text response JSON was not an object: {data!r}"
-            )
 
         return data
 

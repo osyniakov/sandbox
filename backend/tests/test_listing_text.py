@@ -460,3 +460,35 @@ def test_claude_listing_text_provider_can_be_constructed_without_api_key(monkeyp
     # Must not raise.
     provider = ClaudeListingTextProvider()
     assert provider is not None
+
+
+_LISTING_JSON = json.dumps({"title": "Schreibtischlampe IKEA", "description": "Gut erhaltene Lampe."})
+
+
+@pytest.mark.parametrize(
+    "wrapped",
+    [
+        "```json\n" + _LISTING_JSON + "\n```",
+        "Hier ist der Text:\n" + _LISTING_JSON,
+    ],
+)
+def test_claude_listing_text_provider_parses_fenced_or_prose_wrapped_response(wrapped) -> None:
+    provider = ClaudeListingTextProvider(client=_FakeAnthropicClient(response_text=wrapped))
+
+    result = provider.generate(_item_info())
+
+    assert result["title"] == "Schreibtischlampe IKEA"
+
+
+def test_claude_listing_text_provider_empty_text_raises_with_raw_snippet() -> None:
+    provider = ClaudeListingTextProvider(client=_FakeAnthropicClient(response_text="  "))
+
+    with pytest.raises(ListingTextError, match="raw text: '  '"):
+        provider.generate(_item_info())
+
+
+def test_claude_listing_text_provider_unparseable_error_includes_raw_snippet() -> None:
+    provider = ClaudeListingTextProvider(client=_FakeAnthropicClient(response_text="Sorry, no."))
+
+    with pytest.raises(ListingTextError, match="Sorry, no"):
+        provider.generate(_item_info())
