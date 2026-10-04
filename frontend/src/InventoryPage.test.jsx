@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import InventoryPage from './InventoryPage.jsx'
@@ -541,7 +541,6 @@ describe('InventoryPage', () => {
 
   it('deletes an item and removes it from the list after confirming', async () => {
     const user = userEvent.setup()
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     fetch.mockImplementation((url, options = {}) => {
       if (options.method === 'DELETE') {
         return Promise.resolve({
@@ -564,8 +563,8 @@ describe('InventoryPage', () => {
     })
 
     await user.click(screen.getByRole('button', { name: /^delete$/i }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^delete$/i }))
 
-    expect(window.confirm).toHaveBeenCalledWith('Delete this item? This cannot be undone.')
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
@@ -581,7 +580,6 @@ describe('InventoryPage', () => {
 
   it('does not delete or call the endpoint when the confirmation is cancelled', async () => {
     const user = userEvent.setup()
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
     fetch.mockResolvedValue({ ok: true, status: 200, json: async () => [DECIDED_SELL_ITEM] })
 
     renderInventoryPage()
@@ -591,8 +589,15 @@ describe('InventoryPage', () => {
     })
 
     await user.click(screen.getByRole('button', { name: /^delete$/i }))
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveAttribute('aria-modal', 'true')
+    expect(dialog).toHaveAccessibleName('Delete this item?')
+    expect(within(dialog).getByText(/“Cordless Drill” and its photo will be removed for good\./)).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: /^cancel$/i })).toHaveFocus()
+    await user.click(within(dialog).getByRole('button', { name: /^cancel$/i }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^delete$/i })).toHaveFocus()
 
-    expect(window.confirm).toHaveBeenCalled()
     expect(fetch).not.toHaveBeenCalledWith(
       `${API_BASE_URL}/items/1`,
       expect.objectContaining({ method: 'DELETE' }),
@@ -602,7 +607,6 @@ describe('InventoryPage', () => {
 
   it('shows an error and leaves the item in place when the delete request fails', async () => {
     const user = userEvent.setup()
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     fetch.mockImplementation((url, options = {}) => {
       if (options.method === 'DELETE') {
         return Promise.resolve({
@@ -626,6 +630,7 @@ describe('InventoryPage', () => {
     })
 
     await user.click(screen.getByRole('button', { name: /^delete$/i }))
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^delete$/i }))
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/no item with id 1/i)
@@ -635,7 +640,6 @@ describe('InventoryPage', () => {
 
   it('disables the delete button for an item while its delete is in flight', async () => {
     const user = userEvent.setup()
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
     let resolveDelete
     const deletePromise = new Promise((resolve) => {
       resolveDelete = resolve
@@ -659,6 +663,7 @@ describe('InventoryPage', () => {
 
     const deleteButton = screen.getByRole('button', { name: /^delete$/i })
     await user.click(deleteButton)
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^delete$/i }))
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /deleting/i })).toBeDisabled()
@@ -669,5 +674,29 @@ describe('InventoryPage', () => {
     await waitFor(() => {
       expect(screen.queryByText(/cordless drill/i)).not.toBeInTheDocument()
     })
+  })
+
+  it('closes the delete dialog on Escape without deleting and restores focus', async () => {
+    const user = userEvent.setup()
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => [DECIDED_SELL_ITEM] })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
+    })
+
+    const trigger = screen.getByRole('button', { name: /^delete$/i })
+    await user.click(trigger)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+    expect(fetch).not.toHaveBeenCalledWith(
+      `${API_BASE_URL}/items/1`,
+      expect.objectContaining({ method: 'DELETE' }),
+    )
   })
 })

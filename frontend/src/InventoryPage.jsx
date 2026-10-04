@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from './api.js'
 import { formatPrice } from './format.js'
-import { Plus } from './icons.jsx'
+import { Check, Plus, Trash } from './icons.jsx'
 import { useAuthedImageUrl } from './useAuthedImageUrl.js'
 
 const STATUS_ACTION_LABELS = {
@@ -41,16 +41,17 @@ const DECISION_TILE_PILL_CLASSES = {
   pending: 'bg-sunken text-muted',
 }
 
-// Maps each `Item.decision` value to the shared semantic decision-color
-// tokens defined in index.css (sandbox-zlt.2's @theme block), so the
-// badge below reuses the same sell=green / give_away=blue /
-// throw_away=red / pending=neutral meaning as the rest of the app.
-const DECISION_BADGE_CLASSES = {
-  pending: 'bg-pending-bg text-pending-text border-pending-border',
-  sell: 'bg-sell-bg text-sell-text border-sell-border',
-  give_away: 'bg-give-away-bg text-give-away-text border-give-away-border',
-  throw_away: 'bg-throw-away-bg text-throw-away-text border-throw-away-border',
+// Decision pill classes (same tokens as the decision tiles).
+const DECISION_BADGE_CLASSES = DECISION_TILE_PILL_CLASSES
+
+// Which status action is the recommended one for each decision.
+const DECISION_PRIMARY_STATUS = {
+  sell: 'listed',
+  give_away: 'given_away',
+  throw_away: 'disposed',
 }
+
+const DONE_STATUSES = ['listed', 'given_away', 'disposed']
 
 // One unfiltered request: the decision tiles need counts for every decision
 // regardless of the active filters, so filtering happens in memory.
@@ -128,33 +129,35 @@ async function deleteItem(id, signal) {
 // same "no photo yet" / "still loading" / "ready" states ItemResultPage.jsx
 // handles for its single photo -- see useAuthedImageUrl.js for the full
 // authenticated-blob-URL rationale.
+function lowConfidenceCopy(item) {
+  return item.decision === 'throw_away' && (item.comparable_listings || []).length === 0
+    ? 'No comparable listings found — double-check'
+    : 'Few comparable listings — double-check the price'
+}
+
 function InventoryItemPhoto({ item }) {
   const photoObjectUrl = useAuthedImageUrl(item.photo_url)
   const alt = item.identified_name
     ? `Photo of ${item.identified_name}`
     : `Photo of item #${item.id}`
 
+  const tile =
+    'flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-dashed border-line bg-sunken text-center text-xs text-muted'
+
   if (!item.photo_url) {
-    return (
-      <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded border border-dashed border-border text-center text-xs text-text">
-        No photo
-      </div>
-    )
+    return <div className={tile}>No photo</div>
   }
 
   if (!photoObjectUrl) {
     return (
-      <div
-        className="flex h-16 w-16 shrink-0 items-center justify-center rounded border border-dashed border-border text-center text-xs text-text"
-        data-testid="photo-placeholder"
-      >
+      <div className={tile} data-testid="photo-placeholder">
         Loading...
       </div>
     )
   }
 
   return (
-    <img className="h-16 w-16 shrink-0 rounded object-cover" src={photoObjectUrl} alt={alt} />
+    <img className="h-20 w-20 shrink-0 rounded-xl object-cover" src={photoObjectUrl} alt={alt} />
   )
 }
 
@@ -177,6 +180,10 @@ function InventoryPage() {
   const [updateError, setUpdateError] = useState('')
   const [deletingId, setDeletingId] = useState(null)
   const [deleteError, setDeleteError] = useState('')
+  const [confirmItem, setConfirmItem] = useState(null)
+  const deleteTriggerRef = useRef(null)
+  const cancelRef = useRef(null)
+  const dialogRef = useRef(null)
 
   const loadItems = useCallback(
     async (signal) => {
@@ -214,10 +221,19 @@ function InventoryPage() {
     }
   }
 
+  function openDeleteDialog(item, trigger) {
+    deleteTriggerRef.current = trigger
+    setConfirmItem(item)
+  }
+
+  function closeDeleteDialog() {
+    setConfirmItem(null)
+    const trigger = deleteTriggerRef.current
+    deleteTriggerRef.current = null
+    if (trigger && trigger.isConnected) trigger.focus()
+  }
+
   async function handleDelete(item) {
-    if (!window.confirm('Delete this item? This cannot be undone.')) {
-      return
-    }
     setDeletingId(item.id)
     setDeleteError('')
     try {
@@ -229,6 +245,33 @@ function InventoryPage() {
       setDeletingId(null)
     }
   }
+
+  const dialogOpen = confirmItem !== null
+  useEffect(() => {
+    if (!dialogOpen) return undefined
+    cancelRef.current?.focus()
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeDeleteDialog()
+      } else if (event.key === 'Tab' && dialogRef.current) {
+        const buttons = dialogRef.current.querySelectorAll('button')
+        const first = buttons[0]
+        const last = buttons[buttons.length - 1]
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first.focus()
+        }
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+    // closeDeleteDialog only touches state setters and refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogOpen])
 
   const decisionCounts = { sell: 0, give_away: 0, throw_away: 0, pending: 0 }
   let waitingCount = 0
@@ -389,75 +432,146 @@ function InventoryPage() {
             const nextStatuses = item.valid_next_statuses || []
             const decisionBadgeClasses =
               DECISION_BADGE_CLASSES[item.decision] || DECISION_BADGE_CLASSES.pending
+            const done = DONE_STATUSES.includes(item.status)
+            const working = item.status.startsWith('pending')
+            const busy = updatingId === item.id || deletingId === item.id
+            const primaryStatus = DECISION_PRIMARY_STATUS[item.decision]
+            const hasPrice = item.suggested_price !== null && item.suggested_price !== undefined && item.suggested_price !== ''
             return (
               <li
                 key={item.id}
-                className="flex flex-wrap items-start gap-4 border-b border-border py-4 last:border-b-0 sm:items-center"
+                className={`flex gap-3 rounded-2xl border border-line bg-surface p-3 shadow-card ${
+                  done ? 'opacity-70' : ''
+                }`}
               >
-                <div className="flex min-w-[200px] flex-1 items-center gap-4">
+                <Link to={`/items/${item.id}`} tabIndex={-1} className="shrink-0">
                   <InventoryItemPhoto item={item} />
+                </Link>
 
-                  <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <div className="flex items-start gap-2">
                     <Link
                       to={`/items/${item.id}`}
-                      className="link block font-medium break-words"
+                      className="min-w-0 flex-1 font-semibold leading-snug break-words [overflow-wrap:anywhere] hover:text-primary"
                     >
                       {item.identified_name || `Item #${item.id}`}
                     </Link>
-                    <p className="mt-1">
-                      <span
-                        className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold ${decisionBadgeClasses}`}
-                      >
-                        {DECISION_LABELS[item.decision] || item.decision}
+                    {hasPrice && (
+                      <span className="font-mono text-sm text-ink">
+                        {formatPrice(Number(item.suggested_price))}
                       </span>
-                      {/* Low-confidence badge (sandbox-8jm.7) -- same
-                          decision_confidence field as ItemResultPage.jsx,
-                          fits inline right after the decision badge without
-                          restructuring this row's layout. */}
-                      {item.decision_confidence === 'low' && (
-                        <span
-                          className="ml-1 inline-block rounded-full border border-pending-border bg-pending-bg px-2 py-0.5 text-xs font-semibold text-pending-text"
-                          role="status"
-                        >
-                          {item.decision === 'throw_away' &&
-                          (item.comparable_listings || []).length === 0
-                            ? 'No comparable listings found — double-check'
-                            : 'Few comparable listings — double-check the price'}
-                        </span>
-                      )}
-                    </p>
-                    <p className="mt-1 text-sm text-text">
-                      Status: {STATUS_LABELS[item.status] || item.status}
-                    </p>
+                    )}
                   </div>
-                </div>
 
-                <div className="flex w-full flex-col gap-1.5 sm:w-48">
-                  {nextStatuses.map((targetStatus) => (
-                    <button
-                      key={targetStatus}
-                      type="button"
-                      disabled={updatingId === item.id || deletingId === item.id}
-                      onClick={() => handleAdvance(item, targetStatus)}
-                      className="cursor-pointer rounded border border-primary bg-primary px-3 py-1.5 text-sm font-medium whitespace-nowrap text-white hover:border-primary-hover hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
+                    <span
+                      className={`inline-flex rounded-full px-2 py-0.5 font-semibold ${decisionBadgeClasses}`}
                     >
-                      {STATUS_ACTION_LABELS[targetStatus]}
-                    </button>
-                  ))}
+                      {DECISION_LABELS[item.decision] || item.decision}
+                    </span>
+                    {/* Low-confidence badge (sandbox-8jm.7): short visible
+                        label, full copy kept as accessible text and title. */}
+                    {item.decision_confidence === 'low' && (
+                      <span
+                        className="inline-flex rounded-full bg-warn-soft px-2 py-0.5 font-semibold text-warn"
+                        role="status"
+                        title={lowConfidenceCopy(item)}
+                      >
+                        <span aria-hidden="true">Check price</span>
+                        <span className="sr-only">{lowConfidenceCopy(item)}</span>
+                      </span>
+                    )}
+                    <span className="inline-flex items-center gap-1">
+                      {working && (
+                        <span className="pulse h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+                      )}
+                      {done && <Check size={12} strokeWidth={3} />}
+                      <span>Status: {STATUS_LABELS[item.status] || item.status}</span>
+                    </span>
+                    {item.category && <span>· {item.category}</span>}
+                  </div>
 
-                  <button
-                    type="button"
-                    disabled={updatingId === item.id || deletingId === item.id}
-                    onClick={() => handleDelete(item)}
-                    className="cursor-pointer rounded border border-throw-away-border bg-throw-away-bg px-3 py-1.5 text-sm font-medium whitespace-nowrap text-throw-away-text hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {deletingId === item.id ? 'Deleting...' : 'Delete'}
-                  </button>
+                  <div className="mt-auto flex flex-wrap items-center gap-2 pt-2">
+                    {nextStatuses.map((targetStatus) => {
+                      const primary = targetStatus === primaryStatus
+                      return (
+                        <button
+                          key={targetStatus}
+                          type="button"
+                          disabled={busy}
+                          onClick={() => handleAdvance(item, targetStatus)}
+                          className={`cursor-pointer rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50 ${
+                            primary
+                              ? 'border border-primary bg-primary text-white hover:bg-primary-hover'
+                              : 'border border-line bg-surface text-ink hover:bg-sunken'
+                          }`}
+                        >
+                          {STATUS_ACTION_LABELS[targetStatus]}
+                        </button>
+                      )
+                    })}
+
+                    <button
+                      type="button"
+                      disabled={busy}
+                      aria-label={deletingId === item.id ? 'Deleting...' : 'Delete'}
+                      title={deletingId === item.id ? 'Deleting...' : 'Delete'}
+                      onClick={(event) => openDeleteDialog(item, event.currentTarget)}
+                      className="ml-auto cursor-pointer rounded-full p-1.5 text-muted hover:bg-toss-soft hover:text-toss disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Trash size={16} />
+                    </button>
+                  </div>
                 </div>
               </li>
             )
           })}
         </ul>
+      )}
+
+      {confirmItem && (
+        <div
+          className="fixed inset-0 z-30 flex items-end justify-center bg-ink/40 p-4 sm:items-center"
+          onClick={closeDeleteDialog}
+        >
+          <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-dialog-title"
+            className="w-full max-w-sm rounded-2xl bg-surface p-5 text-ink shadow-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p id="delete-dialog-title" className="font-semibold">
+              Delete this item?
+            </p>
+            <p className="mt-1 text-sm text-muted">
+              “{confirmItem.identified_name || `Item #${confirmItem.id}`}” and its photo will be
+              removed for good.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                ref={cancelRef}
+                type="button"
+                onClick={closeDeleteDialog}
+                className="cursor-pointer rounded-full px-4 py-2 text-sm font-semibold hover:bg-sunken"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const item = confirmItem
+                  closeDeleteDialog()
+                  handleDelete(item)
+                }}
+                className="cursor-pointer rounded-full bg-toss px-4 py-2 text-sm font-semibold text-white"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
