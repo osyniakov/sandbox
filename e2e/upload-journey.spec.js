@@ -108,7 +108,7 @@ test('uploading a real photo runs the full pipeline and reaches a terminal outco
   // ItemResultPage.jsx always renders a "Comparable listings" <h3> for a
   // decided item (not for failed ones, handled above), followed by either
   // a "No comparable listings found." <p>, or a <ul> of <li> entries (each
-  // with a title link and a price in EUR).
+  // with a title link and a formatPrice-style price such as "€45" or "€45.50").
   // Real Kleinanzeigen search results vary run to run, so this only
   // asserts "if any rendered, they look real" -- not a specific count.
   const comparableHeading = page.getByRole('heading', {
@@ -123,14 +123,14 @@ test('uploading a real photo runs the full pipeline and reaches a terminal outco
     const firstItem = comparableItems.first()
     const firstItemText = (await firstItem.textContent())?.trim() ?? ''
     expect(firstItemText.length).toBeGreaterThan(0)
-    // Each <li> renders `<a>{listing.title}</a> — {price} EUR...` -- a
-    // visible link with non-empty text is the title; the surrounding text
-    // node carries the price, checked via the "EUR" that's always
-    // interpolated alongside `listing.price.toFixed(2)`.
+    // Each <li> renders `<a>{listing.title}</a>`, a price span formatted
+    // via formatPrice (e.g. "€45", "€45.50"), then a condition/location
+    // span -- a visible link with non-empty text is the title; the price
+    // is checked via the "€" followed by a digit.
     const firstItemLink = firstItem.locator('a')
     await expect(firstItemLink).toBeVisible()
     expect((await firstItemLink.textContent())?.trim().length).toBeGreaterThan(0)
-    expect(firstItemText).toMatch(/EUR/)
+    expect(firstItemText).toMatch(/€\s?\d/)
   }
 })
 

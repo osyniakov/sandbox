@@ -278,9 +278,9 @@ describe('ItemResultPage', () => {
     const listItems = screen.getAllByRole('listitem')
     expect(listItems).toHaveLength(2)
     expect(listItems[0]).toHaveTextContent(
-      'Bosch cordless drill, good condition45.00 EURgood · Berlin',
+      'Bosch cordless drill, good condition€45good · Berlin',
     )
-    expect(listItems[1]).toHaveTextContent('Bosch drill set46.00 EURgood · Munich')
+    expect(listItems[1]).toHaveTextContent('Bosch drill set€46good · Munich')
   })
 
   it('renders the give_away decision with comparable listings but no suggested price', async () => {

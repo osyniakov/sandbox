@@ -145,20 +145,18 @@ test('no rendered comparable listing shows an unambiguous "brand new" condition 
   // comment).
   for (let i = 0; i < comparableCount; i += 1) {
     const itemText = (await comparableItems.nth(i).textContent())?.trim() ?? ''
-    // Scope the match to ONLY the portion of the rendered text AFTER the
-    // price (i.e. after "EUR"), not the full <li> text. ItemResultPage.jsx
-    // always renders `{title} — {price} EUR, {condition}, {location}`, so
-    // the title (which precedes "EUR") is real, uncontrolled Kleinanzeigen
-    // listing text and very commonly contains marketing language like
-    // "NEU" even when the actual scraped `condition` field is "gebraucht"
-    // (used) -- backend/app/pricing.py's `is_new_condition` only ever
-    // looks at the structured `condition` field, never the title. Matching
-    // against the full text would therefore false-positive on such
-    // listings; matching only the post-"EUR" suffix (condition + location)
-    // keeps this test aligned with what the backend actually considers.
-    const priceMarkerIndex = itemText.indexOf('EUR')
+    // Scope the match to ONLY the condition/location line
+    // (data-testid="comparable-meta" in ItemResultPage.jsx), not the full
+    // <li> text. The title is real, uncontrolled Kleinanzeigen listing text
+    // and very commonly contains marketing language like "NEU" even when
+    // the actual scraped `condition` field is "gebraucht" (used) --
+    // backend/app/pricing.py's `is_new_condition` only ever looks at the
+    // structured `condition` field, never the title. Matching against the
+    // full text would therefore false-positive on such listings; matching
+    // only the dedicated meta element keeps this test aligned with what
+    // the backend actually considers.
     const conditionAndLocationText =
-      priceMarkerIndex === -1 ? itemText : itemText.slice(priceMarkerIndex + 'EUR'.length)
+      (await comparableItems.nth(i).getByTestId('comparable-meta').textContent()) ?? ''
     expect(
       isUnambiguousNewConditionLabel(conditionAndLocationText),
       `comparable listing #${i} rendered an unambiguous "brand new" ` +
