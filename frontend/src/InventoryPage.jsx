@@ -3,8 +3,14 @@ import { Link } from 'react-router-dom'
 import { apiFetch } from './api.js'
 import { formatPrice } from './format.js'
 import { Check, Plus, Trash } from './icons.jsx'
-import { DECISION_PRIMARY_STATUS, STATUS_ACTION_LABELS, patchItemStatus } from './itemsApi.js'
-import { useAuthedImageUrl } from './useAuthedImageUrl.js'
+import {
+  DECISION_LABELS,
+  DECISION_PILL_CLASSES,
+  DECISION_PRIMARY_STATUS,
+  STATUS_ACTION_LABELS,
+  patchItemStatus,
+} from './itemsApi.js'
+import ItemPhoto from './ItemPhoto.jsx'
 
 const STATUS_LABELS = {
   decided: 'To do',
@@ -18,26 +24,11 @@ const STATUS_LABELS = {
   search_failed: 'Search failed',
 }
 
-const DECISION_LABELS = {
-  sell: 'Sell',
-  give_away: 'Give away',
-  throw_away: 'Throw away',
-  pending: 'Pending',
-}
-
 const STATUS_FILTER_OPTIONS = Object.keys(STATUS_LABELS)
 const DECISION_FILTER_OPTIONS = Object.keys(DECISION_LABELS)
 
-// Pill classes for the decision tiles (same tokens as the prototype).
-const DECISION_TILE_PILL_CLASSES = {
-  sell: 'bg-sell-soft text-sell',
-  give_away: 'bg-give-soft text-give',
-  throw_away: 'bg-toss-soft text-toss',
-  pending: 'bg-sunken text-muted',
-}
-
-// Decision pill classes (same tokens as the decision tiles).
-const DECISION_BADGE_CLASSES = DECISION_TILE_PILL_CLASSES
+const DECISION_TILE_PILL_CLASSES = DECISION_PILL_CLASSES
+const DECISION_BADGE_CLASSES = DECISION_PILL_CLASSES
 
 const DONE_STATUSES = ['listed', 'given_away', 'disposed']
 
@@ -84,43 +75,10 @@ async function deleteItem(id, signal) {
   return response.json()
 }
 
-// Renders a single inventory item's photo thumbnail (or a "no photo"/
-// loading placeholder), extracted into its own component because
-// `useAuthedImageUrl` is a hook and hooks can't be called inside the
-// `.map()` below (one call per rendered `<li>`, sandbox-dfr.5). Handles the
-// same "no photo yet" / "still loading" / "ready" states ItemResultPage.jsx
-// handles for its single photo -- see useAuthedImageUrl.js for the full
-// authenticated-blob-URL rationale.
 function lowConfidenceCopy(item) {
   return item.decision === 'throw_away' && (item.comparable_listings || []).length === 0
     ? 'No comparable listings found — double-check'
     : 'Few comparable listings — double-check the price'
-}
-
-function InventoryItemPhoto({ item }) {
-  const photoObjectUrl = useAuthedImageUrl(item.photo_url)
-  const alt = item.identified_name
-    ? `Photo of ${item.identified_name}`
-    : `Photo of item #${item.id}`
-
-  const tile =
-    'flex h-20 w-20 shrink-0 items-center justify-center rounded-xl border border-dashed border-line bg-sunken text-center text-xs text-muted'
-
-  if (!item.photo_url) {
-    return <div className={tile}>No photo</div>
-  }
-
-  if (!photoObjectUrl) {
-    return (
-      <div className={tile} data-testid="photo-placeholder">
-        Loading...
-      </div>
-    )
-  }
-
-  return (
-    <img className="h-20 w-20 shrink-0 rounded-xl object-cover" src={photoObjectUrl} alt={alt} />
-  )
 }
 
 // The basement inventory list, rendered at `/inventory` (sandbox-yqf.11).
@@ -407,7 +365,7 @@ function InventoryPage() {
                 }`}
               >
                 <Link to={`/items/${item.id}`} tabIndex={-1} className="shrink-0">
-                  <InventoryItemPhoto item={item} />
+                  <ItemPhoto item={item} />
                 </Link>
 
                 <div className="flex min-w-0 flex-1 flex-col">

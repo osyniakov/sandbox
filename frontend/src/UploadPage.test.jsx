@@ -49,9 +49,24 @@ function renderUploadPage() {
   )
 }
 
+// fetch is routed by URL/method: the "Recently added" strip's GET /items goes
+// to `itemsFetch` (default: empty list), everything else (the upload POST) to
+// `uploadFetch`, so the upload tests' call-order/count assumptions are unchanged.
+let uploadFetch
+let itemsFetch
+function installFetch() {
+  uploadFetch = vi.fn()
+  itemsFetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => [] }))
+  vi.stubGlobal('fetch', (url, options = {}) =>
+    url.endsWith('/items') && (options.method || 'GET') === 'GET'
+      ? itemsFetch(url, options)
+      : uploadFetch(url, options),
+  )
+}
+
 describe('UploadPage photo capture/upload flow', () => {
   beforeEach(() => {
-    vi.stubGlobal('fetch', vi.fn())
+    installFetch()
     localStorage.clear()
   })
 
@@ -76,7 +91,7 @@ describe('UploadPage photo capture/upload flow', () => {
 
   it('uploads the selected photo and navigates to the item results page on success', async () => {
     const user = userEvent.setup()
-    fetch.mockResolvedValueOnce({
+    uploadFetch.mockResolvedValueOnce({
       ok: true,
       status: 201,
       json: async () => ({ id: 42, status: 'pending_identification', photo_path: '/x' }),
@@ -98,8 +113,8 @@ describe('UploadPage photo capture/upload flow', () => {
       expect(screen.getByText(/item #42/i)).toBeInTheDocument()
     })
 
-    expect(fetch).toHaveBeenCalledTimes(1)
-    const [url, options] = fetch.mock.calls[0]
+    expect(uploadFetch).toHaveBeenCalledTimes(1)
+    const [url, options] = uploadFetch.mock.calls[0]
     expect(url).toContain('/items')
     expect(options.method).toBe('POST')
     // The multipart field name must match what the backend expects
@@ -119,7 +134,7 @@ describe('UploadPage photo capture/upload flow', () => {
 
   it('includes the typed hint in the upload FormData', async () => {
     const user = userEvent.setup()
-    fetch.mockResolvedValueOnce({
+    uploadFetch.mockResolvedValueOnce({
       ok: true,
       status: 201,
       json: async () => ({ id: 42, status: 'pending_identification', photo_path: '/x' }),
@@ -138,14 +153,14 @@ describe('UploadPage photo capture/upload flow', () => {
       expect(screen.getByText(/item #42/i)).toBeInTheDocument()
     })
 
-    expect(fetch).toHaveBeenCalledTimes(1)
-    const [, options] = fetch.mock.calls[0]
+    expect(uploadFetch).toHaveBeenCalledTimes(1)
+    const [, options] = uploadFetch.mock.calls[0]
     expect(options.body.get('hint')).toBe('Bosch drill, orange casing')
   })
 
   it('still uploads successfully when no hint is typed (hint is optional)', async () => {
     const user = userEvent.setup()
-    fetch.mockResolvedValueOnce({
+    uploadFetch.mockResolvedValueOnce({
       ok: true,
       status: 201,
       json: async () => ({ id: 42, status: 'pending_identification', photo_path: '/x' }),
@@ -161,8 +176,8 @@ describe('UploadPage photo capture/upload flow', () => {
       expect(screen.getByText(/item #42/i)).toBeInTheDocument()
     })
 
-    expect(fetch).toHaveBeenCalledTimes(1)
-    const [, options] = fetch.mock.calls[0]
+    expect(uploadFetch).toHaveBeenCalledTimes(1)
+    const [, options] = uploadFetch.mock.calls[0]
     expect(options.body.get('photo')).toBe(file)
     expect(options.body.get('hint')).toBe('')
   })
@@ -174,7 +189,7 @@ describe('UploadPage photo capture/upload flow', () => {
     const fetchPromise = new Promise((resolve) => {
       resolveFetch = resolve
     })
-    fetch.mockReturnValueOnce(fetchPromise)
+    uploadFetch.mockReturnValueOnce(fetchPromise)
 
     renderUploadPage()
 
@@ -199,7 +214,7 @@ describe('UploadPage photo capture/upload flow', () => {
 
   it('clears the hint field on reset after an error', async () => {
     const user = userEvent.setup()
-    fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    uploadFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
 
     renderUploadPage()
 
@@ -230,7 +245,7 @@ describe('UploadPage photo capture/upload flow', () => {
     const fetchPromise = new Promise((resolve) => {
       resolveFetch = resolve
     })
-    fetch.mockReturnValueOnce(fetchPromise)
+    uploadFetch.mockReturnValueOnce(fetchPromise)
 
     renderUploadPage()
 
@@ -244,7 +259,7 @@ describe('UploadPage photo capture/upload flow', () => {
     // *while* the request is in flight, and a loading indicator is shown.
     expect(input).toBeDisabled()
     expect(screen.getByRole('status')).toHaveTextContent(/uploading photo/i)
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(uploadFetch).toHaveBeenCalledTimes(1)
 
     resolveFetch({
       ok: true,
@@ -259,7 +274,7 @@ describe('UploadPage photo capture/upload flow', () => {
       expect(screen.getByText(/item #42/i)).toBeInTheDocument()
     })
 
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(uploadFetch).toHaveBeenCalledTimes(1)
   })
 
   it('does not fire a second fetch if the input is interacted with again while a request is already in flight', async () => {
@@ -269,7 +284,7 @@ describe('UploadPage photo capture/upload flow', () => {
     const fetchPromise = new Promise((resolve) => {
       resolveFetch = resolve
     })
-    fetch.mockReturnValueOnce(fetchPromise)
+    uploadFetch.mockReturnValueOnce(fetchPromise)
 
     renderUploadPage()
 
@@ -281,14 +296,14 @@ describe('UploadPage photo capture/upload flow', () => {
     // Request is still pending -- input should be disabled, blocking a
     // second selection.
     expect(input).toBeDisabled()
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(uploadFetch).toHaveBeenCalledTimes(1)
 
     // Attempt a second file selection while the first request is still in
     // flight. `user.upload` is a no-op on a disabled input (mirrors real
     // browser behavior), so this must not trigger a second fetch call.
     await user.upload(input, makeFixtureImageFile())
 
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(uploadFetch).toHaveBeenCalledTimes(1)
 
     // Clean up: resolve the outstanding request so it doesn't leak into
     // other tests / cause act() warnings.
@@ -304,7 +319,7 @@ describe('UploadPage photo capture/upload flow', () => {
 
   it('shows a visible error message when the upload fails (network error)', async () => {
     const user = userEvent.setup()
-    fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    uploadFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
 
     renderUploadPage()
 
@@ -321,7 +336,7 @@ describe('UploadPage photo capture/upload flow', () => {
 
   it('shows a visible error message when the backend returns a 4xx response', async () => {
     const user = userEvent.setup()
-    fetch.mockResolvedValueOnce({
+    uploadFetch.mockResolvedValueOnce({
       ok: false,
       status: 400,
       statusText: 'Bad Request',
@@ -340,7 +355,7 @@ describe('UploadPage photo capture/upload flow', () => {
 
   it('shows a session-expired message (not a generic/raw error) when the upload gets a 401', async () => {
     const user = userEvent.setup()
-    fetch.mockResolvedValueOnce({
+    uploadFetch.mockResolvedValueOnce({
       ok: false,
       status: 401,
       statusText: 'Unauthorized',
@@ -363,7 +378,7 @@ describe('UploadPage photo capture/upload flow', () => {
     const user = userEvent.setup()
     const prepared = new File([new Uint8Array([9])], 'small.jpg', { type: 'image/jpeg' })
     prepareUploadImage.mockResolvedValueOnce(prepared)
-    fetch.mockResolvedValueOnce({
+    uploadFetch.mockResolvedValueOnce({
       ok: true,
       status: 201,
       json: async () => ({ id: 42 }),
@@ -377,16 +392,16 @@ describe('UploadPage photo capture/upload flow', () => {
       expect(screen.getByText(/item #42/i)).toBeInTheDocument()
     })
     expect(prepareUploadImage).toHaveBeenCalledWith(raw)
-    expect(fetch.mock.calls[0][1].body.get('photo')).toBe(prepared)
+    expect(uploadFetch.mock.calls[0][1].body.get('photo')).toBe(prepared)
   })
 
   it('passes an abort signal to fetch', async () => {
     const user = userEvent.setup()
-    fetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 1 }) })
+    uploadFetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 1 }) })
     renderUploadPage()
     await user.upload(screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
     await waitFor(() => expect(screen.getByText(/item #1/i)).toBeInTheDocument())
-    expect(fetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal)
+    expect(uploadFetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal)
   })
 
   describe('upload timeout', () => {
@@ -406,8 +421,8 @@ describe('UploadPage photo capture/upload flow', () => {
     it('shows a timeout error, re-enables the input, and allows a successful retry', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true })
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
-      fetch.mockImplementationOnce(hangingFetch)
-      fetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 7 }) })
+      uploadFetch.mockImplementationOnce(hangingFetch)
+      uploadFetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 7 }) })
 
       renderUploadPage()
       const input = screen.getByLabelText(/take or choose a photo/i)
@@ -428,12 +443,12 @@ describe('UploadPage photo capture/upload flow', () => {
       await waitFor(() => {
         expect(screen.getByText(/item #7/i)).toBeInTheDocument()
       })
-      expect(fetch).toHaveBeenCalledTimes(2)
+      expect(uploadFetch).toHaveBeenCalledTimes(2)
     })
 
     it('does not show the timeout message for non-timeout failures', async () => {
       const user = userEvent.setup()
-      fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      uploadFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
       renderUploadPage()
       await user.upload(screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
       await waitFor(() => {
@@ -445,7 +460,7 @@ describe('UploadPage photo capture/upload flow', () => {
     it('clears the timer on success so no late abort/error occurs', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true })
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
-      fetch.mockImplementationOnce(async () => {
+      uploadFetch.mockImplementationOnce(async () => {
         return { ok: true, status: 201, json: async () => ({ id: 5 }) }
       })
 
@@ -474,7 +489,7 @@ describe('UploadPage photo capture/upload flow', () => {
         resolvePrepare = resolve
       }),
     )
-    fetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 3 }) })
+    uploadFetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 3 }) })
 
     renderUploadPage()
     const input = screen.getByLabelText(/take or choose a photo|preparing/i)
@@ -483,7 +498,7 @@ describe('UploadPage photo capture/upload flow', () => {
 
     expect(screen.getByRole('status')).toHaveTextContent(/preparing photo/i)
     expect(input).toBeDisabled()
-    expect(fetch).not.toHaveBeenCalled()
+    expect(uploadFetch).not.toHaveBeenCalled()
 
     resolvePrepare(file)
     await waitFor(() => {
@@ -498,7 +513,7 @@ describe('UploadPage photo capture/upload flow', () => {
     try {
       const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
       let signal
-      fetch.mockImplementationOnce((_url, options) => {
+      uploadFetch.mockImplementationOnce((_url, options) => {
         signal = options.signal
         return new Promise((_resolve, reject) => {
           signal.addEventListener('abort', () => {
@@ -524,5 +539,68 @@ describe('UploadPage photo capture/upload flow', () => {
       warnSpy.mockRestore()
       vi.useRealTimers()
     }
+  })
+})
+
+describe('UploadPage "Recently added" strip', () => {
+  beforeEach(() => {
+    installFetch()
+    localStorage.clear()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    localStorage.clear()
+    cleanup()
+  })
+
+  function listResponse(items) {
+    return { ok: true, status: 200, json: async () => items }
+  }
+
+  it('renders nothing with 0 items', async () => {
+    renderUploadPage()
+    await waitFor(() => expect(itemsFetch).toHaveBeenCalled())
+    await act(async () => {})
+    expect(screen.queryByText('Recently added')).not.toBeInTheDocument()
+  })
+
+  it('shows exactly the 3 newest items, newest first, linking to their pages', async () => {
+    const items = [1, 2, 3, 4, 5].map((id) => ({
+      id,
+      identified_name: id === 4 ? null : `Thing ${id}`,
+      decision: id === 5 ? 'give_away' : 'sell',
+      photo_url: null,
+    }))
+    itemsFetch.mockResolvedValue(listResponse(items))
+    renderUploadPage()
+
+    expect(await screen.findByText('Recently added')).toBeInTheDocument()
+    const tiles = screen.getAllByRole('listitem')
+    expect(tiles).toHaveLength(3)
+    const links = tiles.map((li) => li.querySelector('a').getAttribute('href'))
+    expect(links).toEqual(['/items/5', '/items/4', '/items/3'])
+    expect(tiles[0]).toHaveTextContent('Thing 5')
+    expect(tiles[0]).toHaveTextContent('Give away')
+    expect(tiles[1]).toHaveTextContent('Item #4')
+    expect(screen.getByRole('link', { name: 'See all →' })).toHaveAttribute('href', '/inventory')
+  })
+
+  it('renders nothing and no alert when the fetch fails', async () => {
+    itemsFetch.mockRejectedValue(new TypeError('Failed to fetch'))
+    renderUploadPage()
+    await waitFor(() => expect(itemsFetch).toHaveBeenCalled())
+    await act(async () => {})
+    expect(screen.queryByText('Recently added')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('renders nothing and no alert on a non-ok response', async () => {
+    itemsFetch.mockResolvedValue({ ok: false, status: 500, statusText: 'x', json: async () => ({}) })
+    renderUploadPage()
+    await waitFor(() => expect(itemsFetch).toHaveBeenCalled())
+    await act(async () => {})
+    expect(screen.queryByText('Recently added')).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 })

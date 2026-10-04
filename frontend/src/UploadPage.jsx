@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { AlertCircle, Camera } from './icons.jsx'
 import { apiFetch } from './api.js'
 import { prepareUploadImage } from './imageResize.js'
+import ItemPhoto from './ItemPhoto.jsx'
+import { DECISION_LABELS, DECISION_PILL_CLASSES } from './itemsApi.js'
 
 // Abort the upload request if it hasn't completed after this long, so a stalled
 // mobile connection doesn't leave the page on "Uploading..." forever.
@@ -22,6 +24,61 @@ async function extractErrorMessage(response) {
     // Response body wasn't JSON -- fall through to the generic message.
   }
   return `Upload failed (${response.status} ${response.statusText})`
+}
+
+// "Recently added" strip: the 3 newest items. Purely optional -- renders
+// nothing while loading, on any failure, or with no items, and never blocks
+// uploading. GET /items returns every item ordered by id ascending.
+function RecentlyAdded() {
+  const [items, setItems] = useState([])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    ;(async () => {
+      try {
+        const response = await apiFetch('/items', { signal: controller.signal })
+        if (!response.ok) return
+        const data = await response.json()
+        if (controller.signal.aborted || !Array.isArray(data)) return
+        setItems([...data].sort((a, b) => b.id - a.id).slice(0, 3))
+      } catch {
+        // Optional strip: swallow errors (including abort).
+      }
+    })()
+    return () => controller.abort()
+  }, [])
+
+  if (items.length === 0) return null
+
+  return (
+    <div className="mt-10 border-t border-line pt-6">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-sm font-semibold">Recently added</h2>
+        <Link to="/inventory" className="text-sm font-medium text-primary hover:text-primary-hover">
+          See all →
+        </Link>
+      </div>
+      <ul className="mt-3 grid grid-cols-3 gap-3">
+        {items.map((item) => (
+          <li key={item.id} className="min-w-0">
+            <Link to={`/items/${item.id}`} className="block min-w-0">
+              <ItemPhoto item={item} className="aspect-square w-full" />
+              <p className="mt-1.5 truncate text-sm font-medium">
+                {item.identified_name || `Item #${item.id}`}
+              </p>
+              <span
+                className={`mt-0.5 inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${
+                  DECISION_PILL_CLASSES[item.decision] || DECISION_PILL_CLASSES.pending
+                }`}
+              >
+                {DECISION_LABELS[item.decision] || item.decision}
+              </span>
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  )
 }
 
 // The photo capture/upload page, rendered at `/`. On a successful upload
@@ -259,6 +316,8 @@ function UploadPage() {
           Brand, model, or anything the photo can&apos;t show.
         </p>
       </div>
+
+      <RecentlyAdded />
     </div>
   )
 }

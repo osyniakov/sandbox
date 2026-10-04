@@ -15,6 +15,21 @@ export const DECISION_PRIMARY_STATUS = {
   throw_away: 'disposed',
 }
 
+export const DECISION_LABELS = {
+  sell: 'Sell',
+  give_away: 'Give away',
+  throw_away: 'Throw away',
+  pending: 'Pending',
+}
+
+// Decision pill classes (semantic tokens), shared by inventory and upload pages.
+export const DECISION_PILL_CLASSES = {
+  sell: 'bg-sell-soft text-sell',
+  give_away: 'bg-give-soft text-give',
+  throw_away: 'bg-toss-soft text-toss',
+  pending: 'bg-sunken text-muted',
+}
+
 export async function patchItemStatus(id, status, signal) {
   const response = await apiFetch(`/items/${id}/status`, {
     method: 'PATCH',
