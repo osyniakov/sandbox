@@ -2,7 +2,19 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch } from './api.js'
 import { useAuthedImageUrl } from './useAuthedImageUrl.js'
-import { AlertCircle, AlertTriangle, Check, ChevronLeft, Gift, Tag, Trash } from './icons.jsx'
+import {
+  AlertCircle,
+  AlertTriangle,
+  Check,
+  ChevronLeft,
+  Copy,
+  ExternalLink,
+  Gift,
+  Tag,
+  Trash,
+} from './icons.jsx'
+import PricePosition from './PricePosition.jsx'
+import { formatPrice } from './format.js'
 
 // `Item.status` values that mean "the pipeline is done with this item"
 // (see backend/app/pipeline.py's "Polling contract for GET /items/{id}"
@@ -90,17 +102,6 @@ function activeStepIndex(status) {
   return ACTIVE_STEP_BY_STATUS[status] ?? 0
 }
 
-// "€35" for whole prices, "€45.50" otherwise.
-const PRICE_FORMAT_WHOLE = new Intl.NumberFormat('en-IE', {
-  style: 'currency',
-  currency: 'EUR',
-  maximumFractionDigits: 0,
-})
-const PRICE_FORMAT_CENTS = new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR' })
-function formatPrice(price) {
-  return (Number.isInteger(price) ? PRICE_FORMAT_WHOLE : PRICE_FORMAT_CENTS).format(price)
-}
-
 function ProcessingCard({ item, stuck }) {
   const active = activeStepIndex(item.status)
   return (
@@ -167,17 +168,20 @@ function BackLink() {
   )
 }
 
-// How long the "Copied!" feedback stays visible on a CopyButton after a
-// successful copy before reverting to its normal label.
+// How long the "Copied" / "Copy failed" feedback stays visible on a
+// CopyButton before reverting to its normal label.
 const COPY_FEEDBACK_MS = 2000
 
 // A small button that copies `text` to the clipboard via the browser's
-// `navigator.clipboard.writeText` API and shows brief "Copied!" feedback
-// (reverting after COPY_FEEDBACK_MS) on success. Used for both the
-// suggested title and suggested description below, independently -- each
-// instance tracks its own `copied` state.
+// `navigator.clipboard.writeText` API and shows brief "Copied" feedback
+// (reverting after COPY_FEEDBACK_MS) on success, or "Copy failed" if the
+// Clipboard API is missing (e.g. insecure context) or the write is rejected
+// (e.g. permission denied). Used for the suggested title, description and
+// search query independently -- each instance tracks its own state.
+// The accessible name stays "Copy <label>" via aria-label regardless of the
+// visible text; the outcome is announced through a polite live region.
 function CopyButton({ text, label }) {
-  const [copied, setCopied] = useState(false)
+  const [feedback, setFeedback] = useState(null) // null | 'copied' | 'failed'
   const timeoutIdRef = useRef(null)
 
   useEffect(() => {
@@ -189,20 +193,37 @@ function CopyButton({ text, label }) {
   }, [])
 
   async function handleClick() {
-    await navigator.clipboard.writeText(text)
-    setCopied(true)
+    let outcome = 'copied'
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // Covers both a missing `navigator.clipboard` (TypeError) and a
+      // rejected writeText promise.
+      outcome = 'failed'
+    }
+    setFeedback(outcome)
     if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current)
-    timeoutIdRef.current = setTimeout(() => setCopied(false), COPY_FEEDBACK_MS)
+    timeoutIdRef.current = setTimeout(() => setFeedback(null), COPY_FEEDBACK_MS)
   }
 
+  const visible = feedback === 'copied' ? 'Copied' : feedback === 'failed' ? 'Copy failed' : 'Copy'
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      className="ml-2 shrink-0 rounded border border-border px-2 py-1 text-sm"
-    >
-      {copied ? 'Copied!' : `Copy ${label}`}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={handleClick}
+        aria-label={`Copy ${label}`}
+        className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-xs font-semibold hover:bg-sunken ${
+          feedback === 'failed' ? 'text-toss' : feedback === 'copied' ? 'text-sell' : ''
+        }`}
+      >
+        {feedback === 'copied' ? <Check size={14} /> : <Copy size={14} />}
+        {visible}
+      </button>
+      <span className="sr-only" aria-live="polite">
+        {feedback === 'copied' ? 'Copied' : feedback === 'failed' ? 'Copy failed' : ''}
+      </span>
+    </>
   )
 }
 
@@ -345,6 +366,10 @@ function ItemResultPage() {
   // never crashes on `.length`/`.map` below.
   const comparableListings = item.comparable_listings ?? []
 
+  // Query for the listing card's "Open Kleinanzeigen" link: the exact query
+  // the search used, else the identified name; no link if neither exists.
+  const listingSearchQuery = (item.search_query_used || item.identified_name || '').trim()
+
   const photoAlt = item.identified_name
     ? `Photo of ${item.identified_name}`
     : `Photo of item #${item.id}`
@@ -468,67 +493,125 @@ function ItemResultPage() {
               conditionally-rendered-optional-field convention as
               `item.hint` above. Plain JSX text interpolation only (never
               dangerouslySetInnerHTML) since this is LLM-generated text. */}
-          {(item.decision === 'sell' || item.decision === 'give_away') &&
-            item.suggested_title &&
-            item.suggested_description && (
-              <div className="mt-6 text-left">
-                <h3 className="mb-2">Suggested Kleinanzeigen listing</h3>
+          <div className="mt-6 space-y-6">
+            <PricePosition
+              decision={item.decision}
+              suggestedPrice={item.suggested_price}
+              comparableListings={comparableListings}
+            />
 
-                <div className="mb-3 flex items-start justify-between gap-2">
-                  <p className="font-semibold">{item.suggested_title}</p>
-                  <CopyButton text={item.suggested_title} label="title" />
+            {(item.decision === 'sell' || item.decision === 'give_away') &&
+              item.suggested_title &&
+              item.suggested_description && (
+                /* e2e (helpers/decision.js) walks heading -> parent -> `p`
+                   descendants: title <p> first, description <p> second, so
+                   the row labels are <span>s, not <p>s, and the heading and
+                   the "Open Kleinanzeigen" link are direct children of this
+                   card (a two-column grid) rather than wrapped in a header
+                   div. */
+                <div className="grid grid-cols-[1fr_auto] overflow-hidden rounded-2xl border border-line bg-surface text-left shadow-card">
+                  <h3
+                    className={`border-b border-line px-5 py-3 font-semibold ${
+                      listingSearchQuery ? '' : 'col-span-2'
+                    }`}
+                  >
+                    Suggested Kleinanzeigen listing
+                  </h3>
+                  {listingSearchQuery && (
+                    <a
+                      href={buildKleinanzeigenSearchUrl(listingSearchQuery)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 border-b border-line px-5 py-3 text-sm font-medium text-primary hover:text-primary-hover"
+                    >
+                      Open Kleinanzeigen
+                      <ExternalLink size={14} />
+                    </a>
+                  )}
+
+                  <div className="col-span-2 divide-y divide-line">
+                    <div className="flex items-start gap-3 px-5 py-4">
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-xs font-semibold uppercase tracking-wider text-muted">
+                          Title
+                        </span>
+                        <p className="mt-1 font-medium">{item.suggested_title}</p>
+                      </div>
+                      <CopyButton text={item.suggested_title} label="title" />
+                    </div>
+                    <div className="flex items-start gap-3 px-5 py-4">
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-xs font-semibold uppercase tracking-wider text-muted">
+                          Description
+                        </span>
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed">
+                          {item.suggested_description}
+                        </p>
+                      </div>
+                      <CopyButton text={item.suggested_description} label="description" />
+                    </div>
+                  </div>
                 </div>
+              )}
 
-                <div className="flex items-start justify-between gap-2">
-                  <p className="flex-1 whitespace-pre-wrap">{item.suggested_description}</p>
-                  <CopyButton text={item.suggested_description} label="description" />
-                </div>
-              </div>
-            )}
-
-          {/* The actual Kleinanzeigen search query used to find the
-              comparable listings below (sandbox-b9a.1/.2) -- only rendered
-              when a non-empty string, since a search may never have been
-              attempted (e.g. identification failed, or never produced
-              usable keywords). Placed just above "Comparable listings" so
-              it's clear which query produced them. */}
-          {item.search_query_used && (
-            <div className="mt-6 text-left">
-              <div className="flex items-start justify-between gap-2">
-                <p>Kleinanzeigen search used: {item.search_query_used}</p>
+            {/* The actual Kleinanzeigen search query used to find the
+                comparable listings below (sandbox-b9a.1/.2) -- only rendered
+                when a non-empty string, since a search may never have been
+                attempted. Placed just above "Comparable listings" so it's
+                clear which query produced them. */}
+            {item.search_query_used && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-left">
+                <p className="text-sm text-muted">
+                  Searched:{' '}
+                  <span className="font-mono text-xs text-ink">{item.search_query_used}</span>
+                </p>
                 <CopyButton text={item.search_query_used} label="search query" />
-              </div>
-              <p className="mt-1">
                 <a
                   href={buildKleinanzeigenSearchUrl(item.search_query_used)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="link"
+                  className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:text-primary-hover"
                 >
-                  Search on Kleinanzeigen ↗
+                  Search on Kleinanzeigen
+                  <ExternalLink size={14} />
                 </a>
-              </p>
-            </div>
-          )}
-
-          <div className="mt-6 text-left">
-            <h3 className="mb-2">Comparable listings</h3>
-            {comparableListings.length === 0 ? (
-              <p>No comparable listings found.</p>
-            ) : (
-              <ul className="list-disc pl-5">
-                {comparableListings.map((listing) => (
-                  <li key={listing.id} className="mb-2">
-                    <a href={listing.url} target="_blank" rel="noopener noreferrer" className="link">
-                      {listing.title}
-                    </a>{' '}
-                    &mdash; {listing.price.toFixed(2)} EUR
-                    {listing.condition && `, ${listing.condition}`}
-                    {listing.location && `, ${listing.location}`}
-                  </li>
-                ))}
-              </ul>
+              </div>
             )}
+
+            <div className="text-left">
+              <h3 className="font-semibold">Comparable listings</h3>
+              {comparableListings.length === 0 ? (
+                <p className="mt-3 text-sm text-muted">No comparable listings found.</p>
+              ) : (
+                <ul className="mt-3 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+                  {comparableListings.map((listing) => (
+                    /* DOM order is title, price, then condition/location:
+                       e2e slices the <li> text after "EUR" to inspect the
+                       condition, so the price must precede it in the DOM
+                       even though the grid places the meta line below. */
+                    <li
+                      key={listing.id}
+                      className="grid grid-cols-[1fr_auto] items-baseline gap-x-3 px-4 py-3"
+                    >
+                      <a
+                        href={listing.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-w-0 truncate font-medium hover:underline"
+                      >
+                        {listing.title}
+                      </a>
+                      <span className="text-right font-mono text-sm tabular-nums">
+                        {typeof listing.price === 'number' ? `${listing.price.toFixed(2)} EUR` : ''}
+                      </span>
+                      <span className="text-sm text-muted">
+                        {[listing.condition, listing.location].filter(Boolean).join(' · ')}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
         </>
       )}

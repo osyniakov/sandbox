@@ -12,18 +12,17 @@
 // Matches the exact label text ItemResultPage.jsx's DECISION_INFO renders
 // for each terminal decision ("Sell" / "Give Away" / "Throw Away") -- see
 // that file's DECISION_INFO map. Deliberately does NOT anchor with ^/$
-// since the rendered badge text also includes a leading aria-hidden emoji
-// icon character (e.g. "\u{1F4B0} Sell") that a substring match sidesteps
-// needing to account for.
+// since the pill also contains an inline-SVG icon; a substring match keeps
+// this independent of any icon or decoration markup.
 export const DECISION_LABEL_RE = /Sell|Give Away|Throw Away/
 
 // ItemResultPage.jsx polls GET /items/{id} every POLL_INTERVAL_MS while
-// status is non-terminal, rendering a `role="status"` "Still working on
-// this item (status: ...)..." message meanwhile, and -- once terminal -- a
-// DIFFERENT `role="status"` badge containing the decision's label ("Sell" /
-// "Give Away" / "Throw Away"). This Locator targets that terminal badge
-// specifically (not just any `role="status"`, since the non-terminal
-// message is also one).
+// status is non-terminal, rendering a `role="status"` processing card
+// ("Working on it..." plus a step list) meanwhile, and -- once terminal -- a
+// DIFFERENT `role="status"` decision pill containing the decision's label
+// ("Sell" / "Give Away" / "Throw Away"). This Locator targets that terminal
+// pill specifically (not just any `role="status"`, since the processing
+// card is also one).
 export function terminalDecisionBadge(page) {
   return page.getByRole('status').filter({ hasText: DECISION_LABEL_RE })
 }
@@ -147,10 +146,11 @@ export async function assertListingSectionStructure(page, expect, decision, test
     await expect(listingHeading).toBeVisible()
     const listingSection = listingHeading.locator('xpath=..')
 
-    // JSX order inside listingSection is: h3, then a title row (<p> +
-    // "Copy title" button), then a description row (<p> + "Copy
-    // description" button) -- so the first <p> descendant is the title,
-    // the second is the description.
+    // The heading's parent is the listing card, which holds the heading,
+    // the "Open Kleinanzeigen" link, then a title row (<p> + "Copy title"
+    // button) and a description row (<p> + "Copy description" button).
+    // Row labels ("Title"/"Description") are <span>s, so the first <p>
+    // descendant is the title and the second is the description.
     const listingParagraphs = listingSection.locator('p')
     const titleText = (await listingParagraphs.nth(0).textContent())?.trim() ?? ''
     const descriptionText = (await listingParagraphs.nth(1).textContent())?.trim() ?? ''

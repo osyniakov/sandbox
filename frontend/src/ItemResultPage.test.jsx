@@ -261,7 +261,7 @@ describe('ItemResultPage', () => {
     })
 
     expect(screen.getByText(/sell/i)).toBeInTheDocument()
-    expect(screen.getByText(/45\.50/)).toBeInTheDocument()
+    expect(screen.getByText('€45.50')).toBeInTheDocument()
 
     const links = screen.getAllByRole('link', { name: /bosch/i })
     expect(links).toHaveLength(2)
@@ -278,9 +278,9 @@ describe('ItemResultPage', () => {
     const listItems = screen.getAllByRole('listitem')
     expect(listItems).toHaveLength(2)
     expect(listItems[0]).toHaveTextContent(
-      'Bosch cordless drill, good condition — 45.00 EUR, good, Berlin',
+      'Bosch cordless drill, good condition45.00 EURgood · Berlin',
     )
-    expect(listItems[1]).toHaveTextContent('Bosch drill set — 46.00 EUR, good, Munich')
+    expect(listItems[1]).toHaveTextContent('Bosch drill set46.00 EURgood · Munich')
   })
 
   it('renders the give_away decision with comparable listings but no suggested price', async () => {
@@ -331,15 +331,81 @@ describe('ItemResultPage', () => {
     fireEvent.click(copyTitleButton)
     expect(writeText).toHaveBeenCalledWith(SELL_ITEM_WITH_SUGGESTION.suggested_title)
     await waitFor(() => {
-      expect(copyTitleButton).toHaveTextContent('Copied!')
+      expect(copyTitleButton).toHaveTextContent('Copied')
     })
 
     const copyDescriptionButton = screen.getByRole('button', { name: /copy description/i })
     fireEvent.click(copyDescriptionButton)
     expect(writeText).toHaveBeenCalledWith(SELL_ITEM_WITH_SUGGESTION.suggested_description)
     await waitFor(() => {
-      expect(copyDescriptionButton).toHaveTextContent('Copied!')
+      expect(copyDescriptionButton).toHaveTextContent('Copied')
     })
+  })
+
+  it('shows "Copy failed" (no unhandled rejection) when the clipboard write is rejected, then reverts', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM_WITH_SUGGESTION })
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'))
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    })
+
+    renderAtItem(1)
+    const button = await screen.findByRole('button', { name: 'Copy title' })
+
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      fireEvent.click(button)
+      await waitFor(() => expect(button).toHaveTextContent('Copy failed'))
+      // Accessible name is stable while the visible text changes.
+      expect(screen.getByRole('button', { name: 'Copy title' })).toBe(button)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000)
+      })
+      expect(button).toHaveTextContent(/^Copy$/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows "Copy failed" when navigator.clipboard is missing', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM_WITH_SUGGESTION })
+    Object.defineProperty(navigator, 'clipboard', {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    })
+
+    renderAtItem(1)
+    const button = await screen.findByRole('button', { name: 'Copy description' })
+    fireEvent.click(button)
+    await waitFor(() => expect(button).toHaveTextContent('Copy failed'))
+  })
+
+  it('renders the price-position strip for a sell decision with 2+ priced comparables', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM })
+    renderAtItem(1)
+    expect(await screen.findByRole('heading', { name: 'Where €45.50 sits' })).toBeInTheDocument()
+  })
+
+  it('omits the price-position strip for give_away decisions', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => GIVE_AWAY_ITEM })
+    renderAtItem(2)
+    await screen.findByText(/old board game/i)
+    expect(screen.queryByTestId('price-position')).not.toBeInTheDocument()
+  })
+
+  it('links "Open Kleinanzeigen" in the listing card to the search URL', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ...SELL_ITEM_WITH_SUGGESTION, search_query_used: 'bosch cordless drill' }),
+    })
+    renderAtItem(1)
+    const link = await screen.findByRole('link', { name: /open kleinanzeigen/i })
+    expect(link).toHaveAttribute('href', buildKleinanzeigenSearchUrl('bosch cordless drill'))
+    expect(link).toHaveAttribute('target', '_blank')
   })
 
   it('shows the suggested title/description with copy-to-clipboard for a give_away decision', async () => {
@@ -363,14 +429,14 @@ describe('ItemResultPage', () => {
     fireEvent.click(copyTitleButton)
     expect(writeText).toHaveBeenCalledWith(GIVE_AWAY_ITEM_WITH_SUGGESTION.suggested_title)
     await waitFor(() => {
-      expect(copyTitleButton).toHaveTextContent('Copied!')
+      expect(copyTitleButton).toHaveTextContent('Copied')
     })
 
     const copyDescriptionButton = screen.getByRole('button', { name: /copy description/i })
     fireEvent.click(copyDescriptionButton)
     expect(writeText).toHaveBeenCalledWith(GIVE_AWAY_ITEM_WITH_SUGGESTION.suggested_description)
     await waitFor(() => {
-      expect(copyDescriptionButton).toHaveTextContent('Copied!')
+      expect(copyDescriptionButton).toHaveTextContent('Copied')
     })
   })
 
@@ -395,14 +461,14 @@ describe('ItemResultPage', () => {
     renderAtItem(1)
 
     await waitFor(() => {
-      expect(screen.getByText(/kleinanzeigen search used: bosch cordless drill/i)).toBeInTheDocument()
+      expect(screen.getByText('bosch cordless drill')).toBeInTheDocument()
     })
 
     const copyQueryButton = screen.getByRole('button', { name: /copy search query/i })
     fireEvent.click(copyQueryButton)
     expect(writeText).toHaveBeenCalledWith('bosch cordless drill')
     await waitFor(() => {
-      expect(copyQueryButton).toHaveTextContent('Copied!')
+      expect(copyQueryButton).toHaveTextContent('Copied')
     })
 
     const searchLink = screen.getByRole('link', { name: /search on kleinanzeigen/i })
@@ -423,7 +489,7 @@ describe('ItemResultPage', () => {
       expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
     })
 
-    expect(screen.queryByText(/kleinanzeigen search used/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^searched:/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /copy search query/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /search on kleinanzeigen/i })).not.toBeInTheDocument()
 
