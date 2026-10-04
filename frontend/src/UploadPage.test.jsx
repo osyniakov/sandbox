@@ -1,12 +1,19 @@
+import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
-import UploadPage from './UploadPage.jsx'
+import UploadPage, { UPLOAD_TIMEOUT_MS } from './UploadPage.jsx'
+import { prepareUploadImage } from './imageResize.js'
 import { AuthProvider } from './AuthContext.jsx'
 
 // A minimal in-memory "fixture" image file, standing in for a real photo
 // selected via the camera-capture/file-picker input.
+// Default: pass the file through; individual tests override.
+vi.mock('./imageResize.js', () => ({
+  prepareUploadImage: vi.fn(async (file) => file),
+}))
+
 function makeFixtureImageFile() {
   return new File([new Uint8Array([1, 2, 3, 4])], 'fixture-photo.jpg', {
     type: 'image/jpeg',
@@ -355,5 +362,172 @@ describe('UploadPage photo capture/upload flow', () => {
   it('renders a reachable sign-out control', () => {
     renderUploadPage()
     expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
+  })
+
+  it('uploads the prepared (downscaled) file rather than the raw selection', async () => {
+    const user = userEvent.setup()
+    const prepared = new File([new Uint8Array([9])], 'small.jpg', { type: 'image/jpeg' })
+    prepareUploadImage.mockResolvedValueOnce(prepared)
+    fetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({ id: 42 }),
+    })
+
+    renderUploadPage()
+    const raw = makeFixtureImageFile()
+    await user.upload(screen.getByLabelText(/take or choose a photo/i), raw)
+
+    await waitFor(() => {
+      expect(screen.getByText(/item #42/i)).toBeInTheDocument()
+    })
+    expect(prepareUploadImage).toHaveBeenCalledWith(raw)
+    expect(fetch.mock.calls[0][1].body.get('photo')).toBe(prepared)
+  })
+
+  it('passes an abort signal to fetch', async () => {
+    const user = userEvent.setup()
+    fetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 1 }) })
+    renderUploadPage()
+    await user.upload(screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
+    await waitFor(() => expect(screen.getByText(/item #1/i)).toBeInTheDocument())
+    expect(fetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal)
+  })
+
+  describe('upload timeout', () => {
+    afterEach(() => {
+      vi.useRealTimers()
+    })
+
+    // fetch mock that never resolves but rejects with AbortError on abort.
+    function hangingFetch(_url, options) {
+      return new Promise((_resolve, reject) => {
+        options.signal.addEventListener('abort', () => {
+          reject(new DOMException('The operation was aborted.', 'AbortError'))
+        })
+      })
+    }
+
+    it('shows a timeout error, re-enables the input, and allows a successful retry', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      fetch.mockImplementationOnce(hangingFetch)
+      fetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 7 }) })
+
+      renderUploadPage()
+      const input = screen.getByLabelText(/take or choose a photo/i)
+      const file = makeFixtureImageFile()
+      await user.upload(input, file)
+      expect(input).toBeDisabled()
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(UPLOAD_TIMEOUT_MS + 1)
+      })
+
+      expect(screen.getByRole('alert')).toHaveTextContent(/taking too long/i)
+      expect(input).not.toBeDisabled()
+      expect(input.value).toBe('')
+
+      // Same file again must work.
+      await user.upload(input, file)
+      await waitFor(() => {
+        expect(screen.getByText(/item #7/i)).toBeInTheDocument()
+      })
+      expect(fetch).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not show the timeout message for non-timeout failures', async () => {
+      const user = userEvent.setup()
+      fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      renderUploadPage()
+      await user.upload(screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
+      await waitFor(() => {
+        expect(screen.getByRole('alert')).toHaveTextContent(/could not reach the server/i)
+      })
+      expect(screen.queryByText(/taking too long/i)).not.toBeInTheDocument()
+    })
+
+    it('clears the timer on success so no late abort/error occurs', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      fetch.mockImplementationOnce(async () => {
+        return { ok: true, status: 201, json: async () => ({ id: 5 }) }
+      })
+
+      renderUploadPage()
+      await user.upload(screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
+      await waitFor(() => {
+        expect(screen.getByText(/item #5/i)).toBeInTheDocument()
+      })
+
+      // The timeout timer must be gone (success clears it; navigation also
+      // unmounts the page, which aborts the finished request harmlessly).
+      expect(vi.getTimerCount()).toBe(0)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(UPLOAD_TIMEOUT_MS * 2)
+      })
+      expect(screen.getByText(/item #5/i)).toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows the preparing state with the input disabled while the photo is being prepared', async () => {
+    const user = userEvent.setup()
+    let resolvePrepare
+    prepareUploadImage.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolvePrepare = resolve
+      }),
+    )
+    fetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 3 }) })
+
+    renderUploadPage()
+    const input = screen.getByLabelText(/take or choose a photo|preparing/i)
+    const file = makeFixtureImageFile()
+    await user.upload(input, file)
+
+    expect(screen.getByRole('status')).toHaveTextContent(/preparing photo/i)
+    expect(input).toBeDisabled()
+    expect(fetch).not.toHaveBeenCalled()
+
+    resolvePrepare(file)
+    await waitFor(() => {
+      expect(screen.getByText(/item #3/i)).toBeInTheDocument()
+    })
+  })
+
+  it('aborts the request on unmount and does not update state or log errors afterwards', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+      let signal
+      fetch.mockImplementationOnce((_url, options) => {
+        signal = options.signal
+        return new Promise((_resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            reject(new DOMException('aborted', 'AbortError'))
+          })
+        })
+      })
+
+      const { unmount } = renderUploadPage()
+      await user.upload(screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
+      expect(signal.aborted).toBe(false)
+
+      unmount()
+      expect(signal.aborted).toBe(true)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(UPLOAD_TIMEOUT_MS + 1)
+      })
+      expect(errorSpy).not.toHaveBeenCalled()
+      expect(warnSpy).not.toHaveBeenCalled()
+    } finally {
+      errorSpy.mockRestore()
+      warnSpy.mockRestore()
+      vi.useRealTimers()
+    }
   })
 })
