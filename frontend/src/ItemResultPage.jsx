@@ -573,7 +573,7 @@ function ItemResultPage() {
                    div. */
                 <div className="grid grid-cols-[1fr_auto] overflow-hidden rounded-2xl border border-line bg-surface text-left shadow-card">
                   <h3
-                    className={`border-b border-line px-5 py-3 font-semibold ${
+                    className={`min-w-0 border-b border-line px-5 py-3 font-semibold ${
                       listingSearchQuery ? '' : 'col-span-2'
                     }`}
                   >
@@ -584,7 +584,7 @@ function ItemResultPage() {
                       href={buildKleinanzeigenSearchUrl(listingSearchQuery)}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="inline-flex items-center gap-1 border-b border-line px-5 py-3 text-sm font-medium text-primary hover:text-primary-hover"
+                      className="inline-flex items-center gap-1 whitespace-nowrap border-b border-line px-5 py-3 text-sm font-medium text-primary hover:text-primary-hover"
                     >
                       Open Kleinanzeigen
                       <ExternalLink size={14} />
@@ -647,10 +647,10 @@ function ItemResultPage() {
               ) : (
                 <ul className="mt-3 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
                   {comparableListings.map((listing) => (
-                    /* DOM order is title, price, then condition/location:
-                       e2e slices the <li> text after "EUR" to inspect the
-                       condition, so the price must precede it in the DOM
-                       even though the grid places the meta line below. */
+                    /* e2e reads the condition/location line via
+                       data-testid="comparable-meta" (not by slicing the
+                       <li> text), so a title or price containing any
+                       particular characters can't confuse it. */
                     <li
                       key={listing.id}
                       className="grid grid-cols-[1fr_auto] items-baseline gap-x-3 px-4 py-3"
@@ -664,9 +664,9 @@ function ItemResultPage() {
                         {listing.title}
                       </a>
                       <span className="text-right font-mono text-sm tabular-nums">
-                        {typeof listing.price === 'number' ? `${listing.price.toFixed(2)} EUR` : ''}
+                        {typeof listing.price === 'number' ? formatPrice(listing.price) : ''}
                       </span>
-                      <span className="text-sm text-muted">
+                      <span data-testid="comparable-meta" className="text-sm text-muted">
                         {[listing.condition, listing.location].filter(Boolean).join(' · ')}
                       </span>
                     </li>
