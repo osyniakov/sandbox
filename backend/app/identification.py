@@ -53,13 +53,13 @@ about a photo, and this module treats them differently on purpose:
 from __future__ import annotations
 
 import base64
-import json
 import logging
 import mimetypes
 import os
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from app.llm_json import parse_json_object
 from app.models import Item, ItemStatus
 
 logger = logging.getLogger(__name__)
@@ -211,6 +211,8 @@ class ClaudeVisionProvider:
                 "\n\nThe user has provided the following hint about this item -- "
                 "take it into account if it's helpful, but rely primarily on the "
                 f"photo:\nUser-provided hint: \"{hint}\"\n"
+                "\nRespond with ONLY the JSON object described above -- no prose, "
+                "no markdown code fences.\n"
             )
 
         try:
@@ -237,20 +239,17 @@ class ClaudeVisionProvider:
         except Exception as exc:  # network errors, timeouts, SDK/API errors, etc.
             raise IdentificationError(f"Claude vision API call failed: {exc}") from exc
 
+        text = ""
         try:
             text = _extract_text_block(response)
-            data = json.loads(text)
+            data = parse_json_object(text)
         except IdentificationError:
             raise
         except Exception as exc:
             raise IdentificationError(
-                f"Could not parse Claude vision response as JSON: {exc}"
+                f"Could not parse Claude vision response as JSON: {exc} "
+                f"(raw text: {text[:200]!r})"
             ) from exc
-
-        if not isinstance(data, dict):
-            raise IdentificationError(
-                f"Claude vision response JSON was not an object: {data!r}"
-            )
 
         return data
 
