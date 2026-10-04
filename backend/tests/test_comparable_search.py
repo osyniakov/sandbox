@@ -1071,6 +1071,43 @@ def test_is_relevant_short_stem_word_boundary_matches_plural_and_compound_end() 
     assert _is_relevant("Hosen Damen", identified_name="Hose", brand=None) is True
 
 
+def test_is_relevant_short_raw_token_accepts_irregular_plurals() -> None:
+    # bead sandbox-vlq: raw 3-4 char tokens accept the umlaut-mutated unit +
+    # "e"/"er" at the END of a title word, and bare unit+"er" only when the
+    # unit has no a/o/u (Kind, Ski, Bild).
+    assert _is_relevant("Bücher Set", identified_name="Buch", brand=None) is True
+    assert _is_relevant("Kinder Fahrrad", identified_name="Kind", brand=None) is True
+    assert _is_relevant("Skier 170cm", identified_name="Ski", brand=None) is True
+    assert _is_relevant("Räder 4 Stück", identified_name="Rad", brand=None) is True
+    assert _is_relevant("Töpfe Set", identified_name="Topf", brand=None) is True
+    assert _is_relevant("Häuser", identified_name="Haus", brand=None) is True
+    assert _is_relevant("Bilder", identified_name="Bild", brand=None) is True
+    # Digraph-spelled title and compound end.
+    assert _is_relevant("Buecher Paket", identified_name="Buch", brand=None) is True
+    assert _is_relevant("Kinderbücher", identified_name="Buch", brand=None) is True
+    # With a brand present (brand token is excluded, "Buch" still decides).
+    assert _is_relevant("Bücher Ravensburger", identified_name="Ravensburger Buch", brand="Ravensburger") is True
+
+
+def test_is_relevant_short_raw_token_irregular_plural_regression_guards() -> None:
+    # Destemmed stems must NOT get the "er" form ("rollen" -> "roll").
+    assert _is_relevant("Roller", identified_name="Rollen", brand=None) is False
+    # Merely starting with the unit stays rejected.
+    assert _is_relevant("Radler", identified_name="Rad", brand=None) is False
+    assert _is_relevant("Radiergummi", identified_name="Rad", brand=None) is False
+    assert _is_relevant("Bettgestell", identified_name="Bett", brand=None) is False
+    assert _is_relevant("Hosenträger", identified_name="Hose", brand=None) is False
+    # Mutated-form false matches.
+    assert _is_relevant("Büste", identified_name="Bus", brand=None) is False
+    # Bare "-er" is not allowed for units containing a/o/u.
+    assert _is_relevant("Rocker", identified_name="Rock", brand=None) is False
+    assert _is_relevant("Master", identified_name="Mast", brand=None) is False
+    assert _is_relevant("Bauer", identified_name="Bau", brand=None) is False
+    assert _is_relevant("Tanker", identified_name="Tank", brand=None) is False
+    assert _is_relevant("Poster", identified_name="Post", brand=None) is False
+    assert _is_relevant("Bücherregal", identified_name="Buch", brand=None) is False
+
+
 def test_build_query_attempts_skips_multiword_brand_keyword_variants() -> None:
     brand = "Black & Decker"
     attempts = _build_query_attempts(
