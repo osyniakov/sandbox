@@ -1,7 +1,12 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { apiFetch } from './api.js'
+import { prepareUploadImage } from './imageResize.js'
 import SignOutControl from './SignOutControl.jsx'
+
+// Abort the upload request if it hasn't completed after this long, so a stalled
+// mobile connection doesn't leave the page on "Uploading..." forever.
+export const UPLOAD_TIMEOUT_MS = 60000
 
 // Extracts a human-readable message from a failed fetch Response.
 // The backend returns FastAPI-style `{"detail": "..."}` bodies for its
@@ -24,12 +29,29 @@ async function extractErrorMessage(response) {
 // for why that's a separate route rather than inline state) so the user
 // lands on the results page for the item they just created.
 function UploadPage() {
-  // 'idle' | 'uploading' | 'error'
+  // 'idle' | 'preparing' | 'uploading' | 'error'
   const [status, setStatus] = useState('idle')
   const [errorMessage, setErrorMessage] = useState('')
   const [hint, setHint] = useState('')
   const fileInputRef = useRef(null)
   const navigate = useNavigate()
+  const mountedRef = useRef(true)
+  const controllerRef = useRef(null)
+  const timerRef = useRef(null)
+
+  // On unmount (e.g. navigating away mid-upload): cancel the in-flight
+  // request and timer, and make handleFileChange skip any further state
+  // updates. Setting true in the effect body keeps StrictMode remounts correct.
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      clearTimeout(timerRef.current)
+      controllerRef.current?.abort()
+    }
+  }, [])
+
+  const busy = status === 'preparing' || status === 'uploading'
 
   async function handleFileChange(event) {
     const file = event.target.files?.[0]
@@ -37,17 +59,42 @@ function UploadPage() {
       return
     }
 
-    setStatus('uploading')
+    setStatus('preparing')
     setErrorMessage('')
 
+    // Never throws; falls back to the original file.
+    const prepared = await prepareUploadImage(file)
+    if (!mountedRef.current) {
+      return
+    }
+
+    setStatus('uploading')
+
     const formData = new FormData()
-    formData.append('photo', file)
+    formData.append('photo', prepared)
     formData.append('hint', hint)
+
+    const controller = new AbortController()
+    controllerRef.current = controller
+    let timedOut = false
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, UPLOAD_TIMEOUT_MS)
+    timerRef.current = timer
+
+    // Clear the input so selecting the same file again fires onChange.
+    function resetInput() {
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
 
     try {
       const response = await apiFetch('/items', {
         method: 'POST',
         body: formData,
+        signal: controller.signal,
       })
 
       if (!response.ok) {
@@ -63,21 +110,35 @@ function UploadPage() {
         if (response.status === 401) {
           setErrorMessage('Your session has expired. Please sign in again.')
           setStatus('error')
+          resetInput()
           return
         }
         const message = await extractErrorMessage(response)
         setErrorMessage(message)
         setStatus('error')
+        resetInput()
         return
       }
 
       const data = await response.json()
       navigate(`/items/${data.id}`)
-    } catch {
-      // Network error (backend unreachable, CORS failure, offline, etc.)
-      // -- fetch rejects rather than resolving with a Response.
-      setErrorMessage('Could not reach the server. Check your connection and try again.')
+    } catch (err) {
+      if (!mountedRef.current) {
+        return
+      }
+      if (timedOut || err?.name === 'AbortError') {
+        setErrorMessage(
+          'Upload is taking too long -- check your connection and try again.',
+        )
+      } else {
+        // Network error (backend unreachable, CORS failure, offline, etc.)
+        // -- fetch rejects rather than resolving with a Response.
+        setErrorMessage('Could not reach the server. Check your connection and try again.')
+      }
       setStatus('error')
+      resetInput()
+    } finally {
+      clearTimeout(timer)
     }
   }
 
@@ -119,7 +180,7 @@ function UploadPage() {
         onChange={(e) => setHint(e.target.value)}
         placeholder="e.g. Bosch drill, orange casing"
         maxLength={500}
-        disabled={status === 'uploading'}
+        disabled={busy}
         className="form-input mx-auto disabled:opacity-60 disabled:cursor-not-allowed"
       />
 
@@ -127,7 +188,11 @@ function UploadPage() {
         htmlFor="photo-input"
         className="block mt-6 mb-2 font-semibold text-heading"
       >
-        {status === 'uploading' ? 'Uploading...' : 'Take or choose a photo'}
+        {status === 'uploading'
+          ? 'Uploading...'
+          : status === 'preparing'
+            ? 'Preparing...'
+            : 'Take or choose a photo'}
       </label>
       <input
         id="photo-input"
@@ -135,10 +200,16 @@ function UploadPage() {
         type="file"
         accept="image/*"
         onChange={handleFileChange}
-        disabled={status === 'uploading'}
-        aria-busy={status === 'uploading'}
+        disabled={busy}
+        aria-busy={busy}
         className="form-file mx-auto disabled:opacity-60 disabled:cursor-not-allowed"
       />
+
+      {status === 'preparing' && (
+        <p className="mt-6 text-sm italic text-text" role="status">
+          Preparing photo...
+        </p>
+      )}
 
       {status === 'uploading' && (
         <p className="mt-6 text-sm italic text-text" role="status">
