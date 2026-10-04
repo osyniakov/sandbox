@@ -86,75 +86,14 @@
   --font-sans: Figtree, system-ui, 'Segoe UI', sans-serif;
   --font-display: 'Bricolage Grotesque', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
-
-  /* TEMPORARY legacy aliases (sandbox-zlt.2 names) so pages not yet
-     restyled keep compiling and look coherent. Removed in sandbox-2pc.11. */
-  --color-sell-bg: var(--sell-soft);
-  --color-sell-text: var(--sell);
-  --color-sell-border: var(--sell);
-  --color-give-away-bg: var(--give-soft);
-  --color-give-away-text: var(--give);
-  --color-give-away-border: var(--give);
-  --color-throw-away-bg: var(--toss-soft);
-  --color-throw-away-text: var(--toss);
-  --color-throw-away-border: var(--toss);
-  --color-pending-bg: var(--sunken);
-  --color-pending-text: var(--muted);
-  --color-pending-border: var(--line);
-  --color-bg: var(--surface);
-  --color-text: var(--muted);
-  --color-heading: var(--ink);
-  --color-border: var(--line);
 }
 
-/* =========================================================================
-   Shared base component styles (sandbox-zlt.2)
-   -------------------------------------------------------------------------
-   Tailwind's preflight reset (part of `@import 'tailwindcss'` above)
-   strips native browser chrome app-wide: links lose their underline and
-   color, <select> loses its border/background/dropdown arrow, and file
-   <input> loses its button styling. These reusable classes restore clear
-   affordances using the tokens defined above, so sandbox-zlt.3-.6 apply
-   `.link` / `.form-select` / `.form-file` consistently instead of
-   reinventing link/form-control styling on every page. */
-@layer components {
-  /* Apply to any <a> that needs to look clickable again post-preflight. */
-  .link {
-    @apply text-primary underline decoration-1 underline-offset-2 hover:text-primary-hover;
-  }
-
-  /* Apply to <select> elements. Restores a visible bordered box plus a
-     CSS-only dropdown-arrow affordance (inline SVG chevron, no separate
-     image asset) in place of the native arrow preflight removed. */
-  .form-select {
-    @apply appearance-none rounded border border-border bg-bg text-text text-base px-3 py-2 pr-8 cursor-pointer;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%236b6375'%3E%3Cpath fill-rule='evenodd' d='M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.25a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z' clip-rule='evenodd'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right 0.5rem center;
-    background-size: 1.1em;
-  }
-
-  /* Apply to file <input type="file">. Restores a visible bordered box
-     and styles the file-selector-button pseudo-element (supported in
-     Chromium/Firefox/Safari) so the "choose file" affordance reads as a
-     real button again. */
-  .form-file {
-    @apply block rounded border border-border bg-bg text-text text-sm;
-
-    &::file-selector-button {
-      @apply mr-3 cursor-pointer rounded border border-border bg-bg px-3 py-1.5 text-sm font-medium text-text;
-    }
-
-    &::file-selector-button:hover {
-      @apply bg-primary-hover/10 border-primary;
-    }
-  }
-
-  /* Apply to single-line text <input> elements (e.g. type="text").
-     Restores a visible bordered box in place of the border/background
-     preflight removed, matching .form-select/.form-file's look. */
-  .form-input {
-    @apply rounded border border-border bg-bg text-text text-base px-3 py-2;
+/* Visible keyboard focus ring on every interactive element. In the base
+   layer so utilities like focus:outline-none still win. */
+@layer base {
+  :focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
   }
 }
 

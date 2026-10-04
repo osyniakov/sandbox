@@ -27,9 +27,6 @@ const STATUS_LABELS = {
 const STATUS_FILTER_OPTIONS = Object.keys(STATUS_LABELS)
 const DECISION_FILTER_OPTIONS = Object.keys(DECISION_LABELS)
 
-const DECISION_TILE_PILL_CLASSES = DECISION_PILL_CLASSES
-const DECISION_BADGE_CLASSES = DECISION_PILL_CLASSES
-
 const DONE_STATUSES = ['listed', 'given_away', 'disposed']
 
 // One unfiltered request: the decision tiles need counts for every decision
@@ -256,7 +253,7 @@ function InventoryPage() {
                   }`}
                 >
                   <span
-                    className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${DECISION_TILE_PILL_CLASSES[value]}`}
+                    className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${DECISION_PILL_CLASSES[value]}`}
                   >
                     {DECISION_LABELS[value]}
                   </span>
@@ -351,7 +348,7 @@ function InventoryPage() {
           {visibleItems.map((item) => {
             const nextStatuses = item.valid_next_statuses || []
             const decisionBadgeClasses =
-              DECISION_BADGE_CLASSES[item.decision] || DECISION_BADGE_CLASSES.pending
+              DECISION_PILL_CLASSES[item.decision] || DECISION_PILL_CLASSES.pending
             const done = DONE_STATUSES.includes(item.status)
             const working = item.status.startsWith('pending')
             const busy = updatingId === item.id || deletingId === item.id
