@@ -167,3 +167,17 @@ body {
   color: var(--ink);
   font-family: var(--font-sans);
 }
+
+/* Indeterminate progress bar (UploadPage busy card). */
+@keyframes bar {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(250%); }
+}
+.indeterminate {
+  animation: bar 1.3s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .indeterminate {
+    animation: none;
+  }
+}

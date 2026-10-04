@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
+import { AlertCircle, Camera } from './icons.jsx'
 import { apiFetch } from './api.js'
 import { prepareUploadImage } from './imageResize.js'
 
@@ -151,45 +152,41 @@ function UploadPage() {
   }
 
   return (
-    <div className="max-w-lg mx-auto my-16 px-4 text-center">
-      <h1 className="text-4xl md:text-5xl">Basement Declutter</h1>
-      <p className="text-base text-text">
-        Photograph an item, find comparable listings, and get a sell /
-        give-away / throw-away recommendation.
+    <div className="mx-auto max-w-xl">
+      <p className="text-xs font-semibold uppercase tracking-wider text-primary">
+        New item
+      </p>
+      <h1 className="mt-1 font-display text-3xl font-bold tracking-tight sm:text-4xl">
+        What did you find down there?
+      </h1>
+      <p className="mt-2 text-muted">
+        Take a clear photo of one item. We&apos;ll handle the rest in about 20
+        seconds.
       </p>
 
-      <p className="mt-4">
-        <Link to="/inventory" className="link">
-          View basement inventory
-        </Link>
-      </p>
-
-      <label
-        htmlFor="hint-input"
-        className="block mt-6 mb-2 font-semibold text-heading"
-      >
-        Hint (optional)
-      </label>
-      <input
-        id="hint-input"
-        type="text"
-        value={hint}
-        onChange={(e) => setHint(e.target.value)}
-        placeholder="e.g. Bosch drill, orange casing"
-        maxLength={500}
-        disabled={busy}
-        className="form-input mx-auto disabled:opacity-60 disabled:cursor-not-allowed"
-      />
-
+      {/* The label stays in the DOM while busy (visually hidden) so the
+          input keeps an accessible name; the busy card replaces the zone. */}
       <label
         htmlFor="photo-input"
-        className="block mt-6 mb-2 font-semibold text-heading"
+        className={
+          busy
+            ? 'sr-only'
+            : 'group mt-8 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-line bg-surface px-6 py-12 text-center transition hover:border-primary hover:bg-primary-soft/40 has-[:focus-visible]:border-primary'
+        }
       >
-        {status === 'uploading'
-          ? 'Uploading...'
-          : status === 'preparing'
-            ? 'Preparing...'
-            : 'Take or choose a photo'}
+        {busy ? (
+          status === 'uploading' ? 'Uploading...' : 'Preparing...'
+        ) : (
+          <>
+            <span className="grid h-14 w-14 place-items-center rounded-full bg-primary text-white shadow-card transition group-hover:scale-105">
+              <Camera size={26} />
+            </span>
+            <span className="mt-4 font-semibold">Take or choose a photo</span>
+            <span className="mt-1 text-sm text-muted">
+              On your phone this opens the camera
+            </span>
+          </>
+        )}
       </label>
       <input
         id="photo-input"
@@ -199,36 +196,69 @@ function UploadPage() {
         onChange={handleFileChange}
         disabled={busy}
         aria-busy={busy}
-        className="form-file mx-auto disabled:opacity-60 disabled:cursor-not-allowed"
+        className="sr-only"
       />
 
-      {status === 'preparing' && (
-        <p className="mt-6 text-sm italic text-text" role="status">
-          Preparing photo...
-        </p>
-      )}
-
-      {status === 'uploading' && (
-        <p className="mt-6 text-sm italic text-text" role="status">
-          Uploading photo...
-        </p>
+      {busy && (
+        <div
+          className="mt-8 overflow-hidden rounded-2xl border border-line bg-surface shadow-card"
+          role="status"
+        >
+          <div className="flex items-center gap-4 p-4">
+            <div className="grid h-16 w-16 shrink-0 place-items-center rounded-xl bg-sunken text-muted">
+              <Camera size={24} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold">
+                {status === 'uploading' ? 'Uploading photo…' : 'Preparing photo…'}
+              </p>
+              <p className="truncate text-sm text-muted">Hang tight, this takes a moment.</p>
+            </div>
+          </div>
+          <div className="h-1 overflow-hidden bg-sunken">
+            <div className="indeterminate h-full w-2/5 rounded-full bg-primary" />
+          </div>
+        </div>
       )}
 
       {status === 'error' && (
         <div
-          className="mt-4 px-4 py-3 rounded border border-throw-away-border bg-throw-away-bg text-throw-away-text"
+          className="mt-4 flex gap-2.5 rounded-xl bg-toss-soft px-3.5 py-3 text-sm text-toss"
           role="alert"
         >
-          <p>{errorMessage}</p>
+          <AlertCircle
+            size={16}
+            className="mt-0.5 shrink-0"
+          />
+          <p className="flex-1">{errorMessage}</p>
           <button
             type="button"
             onClick={handleReset}
-            className="mt-2 rounded border border-border bg-bg px-3 py-1.5 text-sm font-medium text-text cursor-pointer hover:bg-primary-hover/10 hover:border-primary"
+            className="shrink-0 self-start cursor-pointer rounded-lg bg-surface px-2.5 py-1 text-xs font-semibold text-ink shadow-card"
           >
             Try again
           </button>
         </div>
       )}
+
+      <div className="mt-6">
+        <label htmlFor="hint-input" className="text-sm font-semibold">
+          Hint <span className="font-normal text-muted">(optional)</span>
+        </label>
+        <input
+          id="hint-input"
+          type="text"
+          value={hint}
+          onChange={(e) => setHint(e.target.value)}
+          placeholder="e.g. Bosch drill, orange casing"
+          maxLength={500}
+          disabled={busy}
+          className="mt-1.5 w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 placeholder:text-muted/70 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary-soft disabled:cursor-not-allowed disabled:opacity-60"
+        />
+        <p className="mt-1.5 text-xs text-muted">
+          Brand, model, or anything the photo can&apos;t show.
+        </p>
+      </div>
     </div>
   )
 }

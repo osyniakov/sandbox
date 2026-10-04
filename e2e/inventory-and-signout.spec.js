@@ -168,14 +168,13 @@ test('an uploaded item appears in /inventory and a manual status transition upda
 test('signing out reverts to the sign-in gate and survives a page reload', async ({ page }) => {
   await signInAs(page)
 
-  // UploadPage.jsx's "View basement inventory" link -- land on
+  // the app shell's top-bar "Inventory" nav link -- land on
   // /inventory specifically (rather than staying on `/`) since it has
   // its own unambiguous heading ("Basement Inventory") to assert on
-  // before AND after sign-out, unlike `/` (UploadPage.jsx) and the
-  // sign-in gate (SignInPage.jsx), which both render an identical
-  // "Basement Declutter" <h1> and so can't be told apart by that text
-  // alone (see smoke.spec.js's same observation).
-  await page.getByRole('link', { name: /view basement inventory/i }).click()
+  // before AND after sign-out, unlike `/` (UploadPage.jsx, whose
+  // <h1> is "What did you find down there?") and the sign-in gate
+  // (SignInPage.jsx), whose headings differ from /inventory's.
+  await page.getByRole('link', { name: 'Inventory', exact: true }).click()
   await expect(page).toHaveURL(/\/inventory$/)
 
   const inventoryHeading = page.getByRole('heading', { name: /^Basement Inventory$/ })
