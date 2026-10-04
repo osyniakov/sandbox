@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { API_BASE_URL, GOOGLE_CLIENT_ID } from './api.js'
 import { useAuth } from './AuthContext.jsx'
+import { AlertCircle, Box } from './icons.jsx'
 
 // How often (ms) to poll for `window.google` while waiting for the
 // Google Identity Services (GIS) script (loaded `async defer` from
@@ -112,36 +113,57 @@ function SignInPage() {
   }, [completeSignIn])
 
   return (
-    <div className="max-w-lg mx-auto my-16 px-4 text-center">
-      <h1 className="text-4xl md:text-5xl">Basement Declutter</h1>
-      <p className="text-base text-text">
-        Sign in with your Google account to photograph items, find
-        comparable listings, and get a sell / give-away / throw-away
-        recommendation.
-      </p>
+    <div className="px-4 py-16 sm:py-24">
+      <div className="mx-auto max-w-sm">
+        <div className="mb-8 flex items-center gap-2.5">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-primary text-white">
+            <Box size={22} />
+          </span>
+          <h1 className="font-display text-lg font-bold tracking-tight">
+            Basement Declutter
+          </h1>
+        </div>
+        <p className="font-display text-4xl font-bold leading-[1.05] tracking-tight text-ink">
+          Sell it, gift it, or bin it.
+        </p>
+        <p className="mt-3 text-muted">
+          Snap a photo of anything in the basement. We identify it, check what
+          it goes for on Kleinanzeigen, and tell you what to do with it.
+        </p>
 
-      <div className="mt-8 flex justify-center" ref={buttonContainerRef} />
-
-      {scriptLoadFailed && (
-        <div
-          className="mt-4 px-4 py-3 rounded border border-throw-away-border bg-throw-away-bg text-throw-away-text"
-          role="alert"
-        >
-          <p>
-            Could not load Google Sign-In. Check your connection and reload
-            the page.
+        <div className="mt-8 rounded-2xl border border-line bg-surface p-5 shadow-card">
+          <p className="mb-4 text-center text-sm text-ink">
+            Sign in with your Google account to continue.
           </p>
-        </div>
-      )}
+          <div className="flex justify-center" ref={buttonContainerRef} />
+          <p className="mt-3 text-center text-xs text-muted">
+            Only invited accounts can sign in.
+          </p>
 
-      {errorMessage && (
-        <div
-          className="mt-4 px-4 py-3 rounded border border-throw-away-border bg-throw-away-bg text-throw-away-text"
-          role="alert"
-        >
-          <p>{errorMessage}</p>
+          {scriptLoadFailed && (
+            <div
+              className="mt-4 flex gap-2.5 rounded-xl bg-toss-soft px-3.5 py-3 text-sm text-toss"
+              role="alert"
+            >
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <p>
+                Could not load Google Sign-In. Check your connection and reload
+                the page.
+              </p>
+            </div>
+          )}
+
+          {errorMessage && (
+            <div
+              className="mt-4 flex gap-2.5 rounded-xl bg-toss-soft px-3.5 py-3 text-sm text-toss"
+              role="alert"
+            >
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <p>{errorMessage}</p>
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   )
 }
