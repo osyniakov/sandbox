@@ -56,6 +56,9 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        # SQLite can't natively ALTER/DROP most column changes; batch mode
+        # recreates the table (copy data, swap) so such migrations work.
+        render_as_batch=True,
     )
 
     with context.begin_transaction():
@@ -77,7 +80,11 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            # SQLite can't natively ALTER/DROP most column changes; batch
+            # mode recreates the table (copy data, swap) so they work.
+            render_as_batch=True,
         )
 
         with context.begin_transaction():
