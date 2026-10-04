@@ -231,35 +231,116 @@ describe('InventoryPage', () => {
     })
   })
 
-  it('calls GET /items with status and decision query params when filters change', async () => {
+  it('fetches once without query params and filters in memory via tiles and chips', async () => {
     const user = userEvent.setup()
-    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => [] })
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [DECIDED_SELL_ITEM, LISTED_ITEM, PENDING_ITEM],
+    })
 
     renderInventoryPage()
 
     await waitFor(() => {
-      expect(fetch).toHaveBeenCalledWith(`${API_BASE_URL}/items`, expect.anything())
+      expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
     })
+    const itemCalls = () => fetch.mock.calls.filter(([url]) => !String(url).includes('/uploads/'))
+    expect(itemCalls()).toHaveLength(1)
 
-    fetch.mockClear()
-    await user.selectOptions(screen.getByLabelText(/^status$/i), 'decided')
+    // Tile counts cover every item, whatever the status filter.
+    const sellTile = screen.getByRole('button', { name: /^sell\s*2$/i })
+    expect(sellTile).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: /^pending\s*1$/i })).toBeInTheDocument()
 
+    await user.click(screen.getByRole('button', { name: 'Listed' }))
+    expect(screen.queryByText(/cordless drill/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/old bookshelf/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Listed' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: /^sell\s*2$/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^pending\s*1$/i }))
+    expect(screen.getByText(/no items match these filters/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /clear filters/i }))
+    expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
+    expect(screen.getByText(/item #3/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /^sell\s*2$/i }))
+    expect(screen.getByRole('button', { name: /^sell\s*2$/i })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    expect(screen.queryByText(/item #3/i)).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^sell\s*2$/i }))
+    expect(screen.getByText(/item #3/i)).toBeInTheDocument()
+
+    expect(itemCalls()).toHaveLength(1)
+  })
+
+  it('shows the summary line, omitting the sell value when it is zero', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [DECIDED_SELL_ITEM, LISTED_ITEM, PENDING_ITEM],
+    })
+    renderInventoryPage()
+    // 45.5 + 45.5 = 91 -> whole euros.
+    expect(await screen.findByText(/3 items · 1 waiting on you · ~€91 to sell/)).toBeInTheDocument()
+    cleanup()
+
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => [PENDING_ITEM] })
+    renderInventoryPage()
+    expect(await screen.findByText(/^1 item · 0 waiting on you$/)).toBeInTheDocument()
+  })
+
+  it('offers chips for failure statuses and shows friendly labels', async () => {
+    const user = userEvent.setup()
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => [
+        { ...PENDING_ITEM, id: 5, status: 'identification_failed' },
+        { ...PENDING_ITEM, id: 6, status: 'search_failed' },
+      ],
+    })
+    renderInventoryPage()
+    await screen.findByText(/item #5/i)
+    expect(screen.getByText('Status: Couldn\'t identify')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Search failed' }))
+    expect(screen.queryByText(/item #5/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/item #6/i)).toBeInTheDocument()
+  })
+
+  it('keeps counts correct and drops the item from a filtered view after a status change', async () => {
+    const user = userEvent.setup()
+    fetch.mockImplementation((url, options = {}) => {
+      if (options.method === 'PATCH') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ ...DECIDED_SELL_ITEM, status: 'listed', valid_next_statuses: [] }),
+        })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => [DECIDED_SELL_ITEM] })
+    })
+    renderInventoryPage()
+    await screen.findByText(/cordless drill/i)
+    await user.click(screen.getByRole('button', { name: 'To do' }))
+    await user.click(screen.getByRole('button', { name: /mark as listed on kleinanzeigen/i }))
     await waitFor(() => {
-      expect(fetch).toHaveBeenCalledWith(
-        `${API_BASE_URL}/items?status=decided`,
-        expect.anything(),
-      )
+      expect(screen.queryByText(/cordless drill/i)).not.toBeInTheDocument()
     })
+    expect(screen.getByText(/no items match these filters/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^sell\s*1$/i })).toBeInTheDocument()
+  })
 
-    fetch.mockClear()
-    await user.selectOptions(screen.getByLabelText(/^decision$/i), 'sell')
-
-    await waitFor(() => {
-      expect(fetch).toHaveBeenCalledWith(
-        `${API_BASE_URL}/items?status=decided&decision=sell`,
-        expect.anything(),
-      )
-    })
+  it('shows the "Nothing here yet" state with an Add item link when there are no items', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => [] })
+    renderInventoryPage()
+    expect(await screen.findByText('Nothing here yet')).toBeInTheDocument()
+    const links = screen.getAllByRole('link', { name: /add item/i })
+    links.forEach((link) => expect(link).toHaveAttribute('href', '/'))
+    expect(screen.queryByText(/no items match/i)).not.toBeInTheDocument()
   })
 
   it('shows a status-advance button only for currently-valid next states, and calls PATCH with the right payload', async () => {

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from './api.js'
+import { formatPrice } from './format.js'
+import { Plus } from './icons.jsx'
 import { useAuthedImageUrl } from './useAuthedImageUrl.js'
 
 const STATUS_ACTION_LABELS = {
@@ -10,24 +12,34 @@ const STATUS_ACTION_LABELS = {
 }
 
 const STATUS_LABELS = {
-  pending_identification: 'Pending identification',
-  pending_search: 'Pending search',
-  pending_decision: 'Pending decision',
-  decided: 'Decided',
+  decided: 'To do',
   listed: 'Listed',
   given_away: 'Given away',
   disposed: 'Disposed',
+  pending_identification: 'Pending identification',
+  pending_search: 'Pending search',
+  pending_decision: 'Pending decision',
+  identification_failed: "Couldn't identify",
+  search_failed: 'Search failed',
 }
 
 const DECISION_LABELS = {
-  pending: 'Pending',
   sell: 'Sell',
   give_away: 'Give away',
   throw_away: 'Throw away',
+  pending: 'Pending',
 }
 
 const STATUS_FILTER_OPTIONS = Object.keys(STATUS_LABELS)
 const DECISION_FILTER_OPTIONS = Object.keys(DECISION_LABELS)
+
+// Pill classes for the decision tiles (same tokens as the prototype).
+const DECISION_TILE_PILL_CLASSES = {
+  sell: 'bg-sell-soft text-sell',
+  give_away: 'bg-give-soft text-give',
+  throw_away: 'bg-toss-soft text-toss',
+  pending: 'bg-sunken text-muted',
+}
 
 // Maps each `Item.decision` value to the shared semantic decision-color
 // tokens defined in index.css (sandbox-zlt.2's @theme block), so the
@@ -40,14 +52,10 @@ const DECISION_BADGE_CLASSES = {
   throw_away: 'bg-throw-away-bg text-throw-away-text border-throw-away-border',
 }
 
-async function fetchItems(statusFilter, decisionFilter, signal) {
-  const params = new URLSearchParams()
-  if (statusFilter) params.set('status', statusFilter)
-  if (decisionFilter) params.set('decision', decisionFilter)
-  const query = params.toString()
-  const response = await apiFetch(`/items${query ? `?${query}` : ''}`, {
-    signal,
-  })
+// One unfiltered request: the decision tiles need counts for every decision
+// regardless of the active filters, so filtering happens in memory.
+async function fetchItems(signal) {
+  const response = await apiFetch('/items', { signal })
   if (!response.ok) {
     // A 401 means the session expired while this page was open -- apiFetch
     // (api.js) has already cleared the stale token and dispatched
@@ -151,8 +159,8 @@ function InventoryItemPhoto({ item }) {
 }
 
 // The basement inventory list, rendered at `/inventory` (sandbox-yqf.11).
-// Lists every `Item` (photo thumbnail, decision, status), filterable by
-// `status`/`decision` via `GET /items` query params, with per-item
+// Lists every `Item` (photo thumbnail, decision, status), filterable in
+// memory by status (chips) and decision (tiles), with per-item
 // buttons to manually advance status to any currently-valid next state
 // via `PATCH /items/{id}/status`. Which statuses are valid next states is
 // NOT duplicated here -- it's read directly from each item's
@@ -175,7 +183,7 @@ function InventoryPage() {
       setLoading(true)
       setLoadError('')
       try {
-        const data = await fetchItems(statusFilter, decisionFilter, signal)
+        const data = await fetchItems(signal)
         setItems(data)
       } catch (err) {
         if (err.name === 'AbortError') return
@@ -184,7 +192,7 @@ function InventoryPage() {
         setLoading(false)
       }
     },
-    [statusFilter, decisionFilter],
+    [],
   )
 
   useEffect(() => {
@@ -222,96 +230,162 @@ function InventoryPage() {
     }
   }
 
+  const decisionCounts = { sell: 0, give_away: 0, throw_away: 0, pending: 0 }
+  let waitingCount = 0
+  let sellValue = 0
+  for (const item of items) {
+    if (item.decision in decisionCounts) decisionCounts[item.decision] += 1
+    if (item.status === 'decided') waitingCount += 1
+    if (item.decision === 'sell' && (item.status === 'decided' || item.status === 'listed')) {
+      sellValue += Number(item.suggested_price) || 0
+    }
+  }
+  const visibleItems = items.filter(
+    (item) =>
+      (!decisionFilter || item.decision === decisionFilter) &&
+      (!statusFilter || item.status === statusFilter),
+  )
+  const loaded = !loading && !loadError
+  const alertClasses = 'mt-4 rounded-2xl border border-toss bg-toss-soft px-4 py-3 text-sm text-toss'
+
+  function clearFilters() {
+    setStatusFilter('')
+    setDecisionFilter('')
+  }
+
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8 text-center">
-      <h1>Basement Inventory</h1>
-
-      <p className="mt-2">
-        <Link to="/" className="link">
-          Upload another photo
+    <div>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-ink sm:text-4xl">
+            Basement Inventory
+          </h1>
+          {loaded && (
+            <p className="mt-1 text-muted">
+              {items.length} {items.length === 1 ? 'item' : 'items'} · {waitingCount} waiting on
+              you
+              {sellValue > 0 && <> · ~{formatPrice(Math.round(sellValue))} to sell</>}
+            </p>
+          )}
+        </div>
+        <Link
+          to="/"
+          className="hidden items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-card hover:bg-primary-hover sm:inline-flex"
+        >
+          <Plus size={16} strokeWidth={2.4} />
+          Add item
         </Link>
-      </p>
-
-      <div className="mt-6 mb-6 flex flex-wrap justify-center gap-6">
-        <label
-          htmlFor="status-filter"
-          className="flex flex-col items-start gap-1 text-sm font-semibold text-heading"
-        >
-          Status
-          <select
-            id="status-filter"
-            className="form-select"
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
-          >
-            <option value="">All statuses</option>
-            {STATUS_FILTER_OPTIONS.map((value) => (
-              <option key={value} value={value}>
-                {STATUS_LABELS[value]}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label
-          htmlFor="decision-filter"
-          className="flex flex-col items-start gap-1 text-sm font-semibold text-heading"
-        >
-          Decision
-          <select
-            id="decision-filter"
-            className="form-select"
-            value={decisionFilter}
-            onChange={(event) => setDecisionFilter(event.target.value)}
-          >
-            <option value="">All decisions</option>
-            {DECISION_FILTER_OPTIONS.map((value) => (
-              <option key={value} value={value}>
-                {DECISION_LABELS[value]}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
 
+      {loaded && items.length > 0 && (
+        <>
+          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {DECISION_FILTER_OPTIONS.map((value) => {
+              const on = decisionFilter === value
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setDecisionFilter(on ? '' : value)}
+                  className={`cursor-pointer rounded-2xl border bg-surface p-3.5 text-left transition ${
+                    on ? 'border-primary ring-4 ring-primary-soft' : 'border-line hover:border-muted'
+                  }`}
+                >
+                  <span
+                    className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${DECISION_TILE_PILL_CLASSES[value]}`}
+                  >
+                    {DECISION_LABELS[value]}
+                  </span>
+                  <span className="mt-2 block font-display text-2xl font-bold text-ink">
+                    {decisionCounts[value]}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted">Status</span>
+            <div className="flex flex-wrap gap-1.5">
+              {['', ...STATUS_FILTER_OPTIONS].map((value) => {
+                const on = statusFilter === value
+                return (
+                  <button
+                    key={value || 'all'}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setStatusFilter(value)}
+                    className={`cursor-pointer rounded-full border px-3 py-1 text-sm ${
+                      on
+                        ? 'border-ink bg-ink font-semibold text-ground'
+                        : 'border-line bg-surface text-ink hover:bg-sunken'
+                    }`}
+                  >
+                    {value ? STATUS_LABELS[value] : 'All'}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
       {updateError && (
-        <div
-          className="mb-4 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
-          role="alert"
-        >
+        <div className={alertClasses} role="alert">
           <p>{updateError}</p>
         </div>
       )}
 
       {deleteError && (
-        <div
-          className="mb-4 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
-          role="alert"
-        >
+        <div className={alertClasses} role="alert">
           <p>{deleteError}</p>
         </div>
       )}
 
       {loadError && (
-        <div
-          className="mb-4 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
-          role="alert"
-        >
+        <div className={alertClasses} role="alert">
           <p>{loadError}</p>
         </div>
       )}
 
       {loading && (
-        <p className="italic text-text" role="status">
+        <p className="mt-5 text-muted" role="status">
           Loading inventory...
         </p>
       )}
 
-      {!loading && !loadError && items.length === 0 && <p>No items match these filters.</p>}
+      {loaded && items.length === 0 && (
+        <div className="mt-5 rounded-2xl border-2 border-dashed border-line px-6 py-14 text-center">
+          <p className="font-semibold text-ink">Nothing here yet</p>
+          <p className="mt-1 text-sm text-muted">
+            Photograph your first basement item to get a recommendation.
+          </p>
+          <Link
+            to="/"
+            className="mt-4 inline-flex rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover"
+          >
+            Add item
+          </Link>
+        </div>
+      )}
 
-      {!loading && !loadError && items.length > 0 && (
-        <ul className="m-0 list-none p-0 text-left">
-          {items.map((item) => {
+      {loaded && items.length > 0 && visibleItems.length === 0 && (
+        <div className="mt-5 rounded-2xl border border-dashed border-line px-4 py-10 text-center text-sm text-muted">
+          <p>No items match these filters.</p>
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="mt-2 cursor-pointer font-semibold text-primary hover:text-primary-hover"
+          >
+            Clear filters
+          </button>
+        </div>
+      )}
+
+      {loaded && visibleItems.length > 0 && (
+        <ul className="mt-5 grid list-none gap-3 p-0 text-left lg:grid-cols-2">
+          {visibleItems.map((item) => {
             const nextStatuses = item.valid_next_statuses || []
             const decisionBadgeClasses =
               DECISION_BADGE_CLASSES[item.decision] || DECISION_BADGE_CLASSES.pending
