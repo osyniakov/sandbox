@@ -132,6 +132,13 @@ platform's equivalent build-arg setting), not just a runtime/service env
 var — Vite inlines `VITE_*` variables into the compiled JS bundle at build time, so
 setting it only as a runtime env var has no effect on the built image.
 
+The backend keeps its SQLite database (`declutter.db`) and uploaded photos
+under `DATA_DIR`. On Railway, `DATA_DIR=/data` and a persistent volume
+(`backend-data`) is mounted at `/data` on the backend service. Without that
+volume, every deploy starts with an empty database. All three Railway
+services (backend, frontend, e2e-tests) deploy from `master`, so every push
+to `master` redeploys them.
+
 ## Access control
 
 The app requires Google Sign-In to use — there is no anonymous or
