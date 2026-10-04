@@ -948,6 +948,110 @@ describe('ItemResultPage', () => {
   })
 })
 
+describe('ItemResultPage status actions', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+    localStorage.clear()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    localStorage.clear()
+    cleanup()
+  })
+
+  const ACTION_NAMES = [
+    'Mark as listed on Kleinanzeigen',
+    'Mark as given away',
+    'Mark as disposed',
+  ]
+
+  function mockWithPatch(item, patchResponse) {
+    fetch.mockImplementation((url, options) => {
+      if (typeof url === 'string' && url.includes('/uploads/')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          blob: async () => new Blob(['x'], { type: 'image/jpeg' }),
+        })
+      }
+      if (options?.method === 'PATCH') return patchResponse(url, options)
+      return Promise.resolve({ ok: true, status: 200, json: async () => item })
+    })
+  }
+
+  it('shows the panel for a decided item, with the decision-matching button primary', async () => {
+    mockWithPatch(SELL_ITEM, () => new Promise(() => {}))
+    renderAtItem(1)
+
+    expect(await screen.findByText('Done something with it?')).toBeInTheDocument()
+    for (const name of ACTION_NAMES) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('button', { name: ACTION_NAMES[0] })).toHaveClass('bg-primary')
+    expect(screen.getByRole('button', { name: ACTION_NAMES[1] })).not.toHaveClass('bg-primary')
+  })
+
+  it('does not show the panel for a non-decided item', async () => {
+    mockWithPatch({ ...SELL_ITEM, status: 'listed' }, () => new Promise(() => {}))
+    renderAtItem(1)
+
+    await screen.findByRole('heading', { name: /cordless drill/i })
+    expect(screen.queryByText('Done something with it?')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Mark as/ })).not.toBeInTheDocument()
+  })
+
+  it('PATCHes the status, disables the buttons while pending, and hides the panel on success', async () => {
+    let resolvePatch
+    mockWithPatch(
+      SELL_ITEM,
+      () =>
+        new Promise((resolve) => {
+          resolvePatch = () =>
+            resolve({ ok: true, status: 200, json: async () => ({ ...SELL_ITEM, status: 'given_away' }) })
+        }),
+    )
+    renderAtItem(1)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Mark as given away' }))
+
+    for (const name of ACTION_NAMES) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
+    const patchCall = fetch.mock.calls.find(([, options]) => options?.method === 'PATCH')
+    expect(patchCall[0]).toBe(`${API_BASE_URL}/items/1/status`)
+    expect(JSON.parse(patchCall[1].body)).toEqual({ status: 'given_away' })
+
+    await act(async () => {
+      resolvePatch()
+    })
+    await waitFor(() => {
+      expect(screen.queryByText('Done something with it?')).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows an alert and re-enables the buttons when the PATCH fails', async () => {
+    mockWithPatch(SELL_ITEM, () =>
+      Promise.resolve({
+        ok: false,
+        status: 409,
+        statusText: 'Conflict',
+        json: async () => ({ detail: 'Cannot change status.' }),
+      }),
+    )
+    renderAtItem(1)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Mark as disposed' }))
+
+    expect(await screen.findByText('Cannot change status.')).toBeInTheDocument()
+    expect(screen.getByText('Cannot change status.').closest('[role="alert"]')).toBeInTheDocument()
+    for (const name of ACTION_NAMES) {
+      expect(screen.getByRole('button', { name })).toBeEnabled()
+    }
+    expect(screen.getByText('Done something with it?')).toBeInTheDocument()
+  })
+})
+
 // Direct unit tests for the URL-building helper (sandbox-b9a.2), separate
 // from the component tests above so the exact URL format is pinned down in
 // isolation -- see that function's comment in ItemResultPage.jsx for why

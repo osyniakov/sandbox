@@ -13,6 +13,7 @@ import {
   Tag,
   Trash,
 } from './icons.jsx'
+import { DECISION_PRIMARY_STATUS, STATUS_ACTION_LABELS, patchItemStatus } from './itemsApi.js'
 import PricePosition from './PricePosition.jsx'
 import { formatPrice } from './format.js'
 
@@ -150,6 +151,67 @@ function ProcessingCard({ item, stuck }) {
           This is taking longer than expected. The pipeline may have
           gotten stuck -- feel free to check back later.
         </p>
+      )}
+    </div>
+  )
+}
+
+// "Done something with it?" panel, shown only while the item is `decided`.
+// The action matching the decision is the primary pill. On success the parent
+// replaces its item with the PATCH response (status is no longer `decided`,
+// so this panel unmounts); on failure the error shows and buttons re-enable.
+function StatusActions({ item, onUpdated }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const controllerRef = useRef(null)
+
+  useEffect(() => {
+    return () => controllerRef.current?.abort()
+  }, [])
+
+  async function handleClick(targetStatus) {
+    const controller = new AbortController()
+    controllerRef.current = controller
+    setBusy(true)
+    setError('')
+    try {
+      const updated = await patchItemStatus(item.id, targetStatus, controller.signal)
+      if (controller.signal.aborted) return
+      onUpdated(updated)
+    } catch (err) {
+      if (controller.signal.aborted || err.name === 'AbortError') return
+      setError(err.message || 'Could not update status.')
+      setBusy(false)
+    }
+  }
+
+  const primaryStatus = DECISION_PRIMARY_STATUS[item.decision]
+  return (
+    <div className="flex flex-wrap gap-2 rounded-2xl bg-sunken p-4">
+      <p className="w-full text-sm text-muted">Done something with it?</p>
+      {Object.entries(STATUS_ACTION_LABELS).map(([targetStatus, label]) => (
+        <button
+          key={targetStatus}
+          type="button"
+          disabled={busy}
+          onClick={() => handleClick(targetStatus)}
+          className={`cursor-pointer rounded-full px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
+            targetStatus === primaryStatus
+              ? 'border border-primary bg-primary text-white hover:bg-primary-hover'
+              : 'border border-line bg-surface text-ink hover:bg-ground'
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+      {error && (
+        <div
+          className="flex w-full gap-2.5 rounded-xl bg-toss-soft px-3.5 py-3 text-sm text-toss"
+          role="alert"
+        >
+          <AlertCircle size={16} className="mt-0.5 shrink-0" />
+          <p>{error}</p>
+        </div>
       )}
     </div>
   )
@@ -612,6 +674,8 @@ function ItemResultPage() {
                 </ul>
               )}
             </div>
+
+            {item.status === 'decided' && <StatusActions item={item} onUpdated={setItem} />}
           </div>
         </>
       )}
