@@ -14,6 +14,11 @@ import { expect, test } from '@playwright/test'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { signInAs } from './helpers/auth.js'
+import {
+  assertListingSectionStructure,
+  reportOutcome,
+  waitForTerminalOutcome,
+} from './helpers/decision.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -32,15 +37,7 @@ const FIXTURE_PHOTO_PATH = path.join(
   'bosch-cordless-drill.png'
 )
 
-// Matches the exact label text ItemResultPage.jsx's DECISION_INFO renders
-// for each terminal decision ("Sell" / "Give Away" / "Throw Away") -- see
-// that file's DECISION_INFO map. Deliberately does NOT anchor with ^/$
-// since the rendered badge text also includes a leading aria-hidden emoji
-// icon character (e.g. "\u{1F4B0} Sell") that a substring match sidesteps
-// needing to account for.
-const DECISION_LABEL_RE = /Sell|Give Away|Throw Away/
-
-test('uploading a real photo runs the full pipeline and reaches a terminal decision', async ({
+test('uploading a real photo runs the full pipeline and reaches a terminal outcome', async ({
   page,
   context,
 }) => {
@@ -67,71 +64,33 @@ test('uploading a real photo runs the full pipeline and reaches a terminal decis
   // pipeline's outcome.
   await expect(page).toHaveURL(/\/items\/[^/]+$/)
 
-  // ItemResultPage.jsx polls GET /items/{id} every POLL_INTERVAL_MS while
-  // status is non-terminal, rendering a `role="status"` "Still working on
-  // this item (status: ...)..." message meanwhile, and -- once terminal --
-  // a DIFFERENT `role="status"` badge containing the decision's label
-  // ("Sell" / "Give Away" / "Throw Away"). Wait for the terminal badge
-  // specifically (not just any `role="status"`, since the non-terminal
-  // message is also one) using Playwright's own auto-waiting/polling
-  // against the config's generous default expect timeout -- no manual
-  // sleep -- since this covers the real pipeline's real latency (Claude
-  // vision + Kleinanzeigen search + Claude listing-text generation).
-  const decisionBadge = page
-    .getByRole('status')
-    .filter({ hasText: DECISION_LABEL_RE })
-  await expect(decisionBadge).toBeVisible()
-
-  const badgeText = (await decisionBadge.textContent())?.trim() ?? ''
-  let decision
-  if (/Throw Away/.test(badgeText)) {
-    decision = 'throw_away'
-  } else if (/Give Away/.test(badgeText)) {
-    decision = 'give_away'
-  } else if (/Sell/.test(badgeText)) {
-    decision = 'sell'
-  } else {
-    // Should be unreachable given the `.filter()` above already required
-    // one of these three substrings to be present -- but fail loudly
-    // rather than silently mis-branching if the badge's wording ever
-    // changes out from under this regex.
-    throw new Error(`Could not classify decision badge text: ${JSON.stringify(badgeText)}`)
+  // Wait (single auto-wait, generous real-API timeout from the config) for
+  // either the decision badge or the pipeline-failure alert; any other
+  // alert (e.g. loadError) fails the test. See helpers/decision.js.
+  const outcome = await waitForTerminalOutcome(page, expect)
+  if (outcome.kind === 'failed') {
+    // identification_failed / search_failed is a tolerated real-API outcome;
+    // the helper already verified the exact message and that no badge or
+    // listing is rendered. No comparable-listings section exists either.
+    reportOutcome(test.info(), `pipeline ended in ${outcome.status}`)
+    return
   }
 
-  // --- Branch assertions on whichever real decision actually came back ---
+  // Listing section: required (and structurally checked) for sell/give_away
+  // when generation succeeded, reported-but-tolerated when it didn't,
+  // absent for throw_away.
+  const { listingPresent, listingSection, titleText } = await assertListingSectionStructure(
+    page,
+    expect,
+    outcome.decision,
+    test.info()
+  )
 
-  // The "Suggested Kleinanzeigen listing" section (sandbox-dwl.5) is only
-  // ever rendered by ItemResultPage.jsx when decision is sell/give_away
-  // AND both suggested_title and suggested_description are non-empty
-  // (see its conditional render, keyed off `item.suggested_title &&
-  // item.suggested_description`). It shares a common parent `<div>` with
-  // its own `<h3>Suggested Kleinanzeigen listing</h3>` heading immediately
-  // above the title/description rows, in that DOM order -- walk from the
-  // heading to that parent rather than depending on any CSS class names.
-  const listingHeading = page.getByRole('heading', {
-    name: /Suggested Kleinanzeigen listing/i,
-  })
-
-  if (decision === 'sell' || decision === 'give_away') {
-    await expect(listingHeading).toBeVisible()
-    const listingSection = listingHeading.locator('xpath=..')
-
-    // JSX order inside listingSection is: h3, then a title row (<p> +
-    // "Copy title" button), then a description row (<p> + "Copy
-    // description" button) -- so the first <p> descendant is the title,
-    // the second is the description.
-    const listingParagraphs = listingSection.locator('p')
-    const titleText = (await listingParagraphs.nth(0).textContent())?.trim() ?? ''
-    const descriptionText = (await listingParagraphs.nth(1).textContent())?.trim() ?? ''
-    expect(titleText.length).toBeGreaterThan(0)
-    expect(descriptionText.length).toBeGreaterThan(0)
-
+  if (listingPresent) {
     // CopyButton (ItemResultPage.jsx) renders "Copy title" for the title
-    // instance (label="title") and copies `item.suggested_title` via
-    // navigator.clipboard.writeText on click. Verify the round trip: click
-    // it, then read back the REAL clipboard content and assert it matches
-    // the REAL displayed title exactly (not a hardcoded string, since the
-    // title itself is real/unpredictable LLM output).
+    // instance and copies `item.suggested_title` via
+    // navigator.clipboard.writeText on click. Read back the REAL clipboard
+    // and compare to the REAL displayed title (real LLM output).
     const copyTitleButton = listingSection.getByRole('button', {
       name: /^Copy title$/i,
     })
@@ -142,22 +101,14 @@ test('uploading a real photo runs the full pipeline and reaches a terminal decis
       navigator.clipboard.readText()
     )
     expect(clipboardText).toBe(titleText)
-  } else {
-    // throw_away: the listing-text section must be explicitly ABSENT from
-    // the DOM (not merely hidden) -- `.toHaveCount(0)` is the idiom for
-    // "this locator matches nothing at all", as opposed to
-    // `.not.toBeVisible()` which would also pass for an element that
-    // exists but is hidden (not the case here, but `.toHaveCount(0)` is
-    // the more precise assertion of the two for a conditionally-rendered
-    // React block).
-    await expect(listingHeading).toHaveCount(0)
   }
 
   // --- Comparable listings: real-looking data if any were found ---
   //
-  // ItemResultPage.jsx always renders a "Comparable listings" <h3> once
-  // terminal, followed by either a "No comparable listings found." <p>, or
-  // a <ul> of <li> entries (each with a title link and a price in EUR).
+  // ItemResultPage.jsx always renders a "Comparable listings" <h3> for a
+  // decided item (not for failed ones, handled above), followed by either
+  // a "No comparable listings found." <p>, or a <ul> of <li> entries (each
+  // with a title link and a price in EUR).
   // Real Kleinanzeigen search results vary run to run, so this only
   // asserts "if any rendered, they look real" -- not a specific count.
   const comparableHeading = page.getByRole('heading', {
