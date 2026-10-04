@@ -5,94 +5,106 @@
 @import 'tailwindcss';
 
 /* =========================================================================
-   Shared design tokens (sandbox-zlt.2)
+   Design tokens (sandbox-2pc.1)
    -------------------------------------------------------------------------
-   Tailwind v4 replaced tailwind.config.js's theme.extend with a CSS-first
-   `@theme` block: any `--color-*`/`--font-*`/`--radius-*` custom property
-   declared here is automatically turned into matching utility classes
-   (e.g. `--color-primary` -> `bg-primary`, `text-primary`,
-   `border-primary`, ...). Confirmed this is still how sandbox-zlt.1 wired
-   Tailwind up (see @tailwindcss/vite in vite.config.js, no
-   tailwind.config.js in this repo), so this is the correct mechanism for
-   defining the shared palette rather than a JS config file.
-
-   This task (sandbox-zlt.2) only *defines* these tokens -- it does not
-   restyle any component. sandbox-zlt.3-.6 apply them page by page.
+   Palette from docs/ui-prototype/index.html. Raw values live in plain CSS
+   variables on :root and are overridden under prefers-color-scheme: dark.
+   `@theme inline` below maps them to Tailwind utilities (bg-surface,
+   text-ink, bg-sell-soft, shadow-card, font-display ...) so the utility
+   emits `var(--surface)` directly and switches with the OS theme. Plain
+   `@theme` would resolve the value at build time and break dark mode.
    ========================================================================= */
-@theme {
-  /* --- Semantic decision colors (sell / give_away / throw_away) ---------
-     Carried forward *deliberately* from the pre-Tailwind decision-badge
-     colors already in App.css (.decision-sell / .decision-give-away /
-     .decision-throw-away below), so the green=sell, blue=give-away,
-     red=throw-away meaning survives the restyle instead of being
-     reinvented. Each decision gets a soft background + readable text +
-     border color, matching the existing 3-part badge look. A 4th
-     "pending" neutral is included because .decision-pending exists too
-     (item not yet priced) even though it isn't one of the three
-     disposal decisions. */
-  --color-sell-bg: #eafaf1;
-  --color-sell-text: #1b5e20;
-  --color-sell-border: #2e7d32;
+:root {
+  --ground: #f7f6f9;
+  --surface: #ffffff;
+  --sunken: #f0eef4;
+  --ink: #17141f;
+  --muted: #6b6578;
+  --line: #e4e1ea;
+  --primary: #8b2ff0;
+  --primary-hover: #7420d6;
+  --primary-soft: #f2e9fe;
+  --primary-ink: #5b16b0;
+  --sell: #16794a;
+  --sell-soft: #e3f5eb;
+  --give: #1f5fc9;
+  --give-soft: #e5eefc;
+  --toss: #b3372b;
+  --toss-soft: #fbe9e6;
+  --warn: #8a5a00;
+  --warn-soft: #fdf3dc;
+  --shadow-card:
+    0 1px 2px rgb(23 20 31 / 0.05), 0 4px 16px -4px rgb(23 20 31 / 0.08);
+}
 
-  --color-give-away-bg: #e8f0fe;
-  --color-give-away-text: #174ea6;
-  --color-give-away-border: #1a73e8;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #121016;
+    --surface: #1b1820;
+    --sunken: #241f2b;
+    --ink: #f1eef6;
+    --muted: #a29bb0;
+    --line: #2f2a37;
+    --primary: #b57bff;
+    --primary-hover: #c796ff;
+    --primary-soft: #2c1f42;
+    --primary-ink: #d6b6ff;
+    --sell: #5fd197;
+    --sell-soft: #15301f;
+    --give: #7fb0ff;
+    --give-soft: #172540;
+    --toss: #ff8a7d;
+    --toss-soft: #3a1a17;
+    --warn: #f2c25b;
+    --warn-soft: #332608;
+    --shadow-card: 0 1px 2px rgb(0 0 0 / 0.4), 0 6px 20px -6px rgb(0 0 0 / 0.5);
+  }
+}
 
-  --color-throw-away-bg: #fdecea;
-  --color-throw-away-text: #922b21;
-  --color-throw-away-border: #c0392b;
+@theme inline {
+  --color-ground: var(--ground);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-soft: var(--primary-soft);
+  --color-primary-ink: var(--primary-ink);
+  --color-sell: var(--sell);
+  --color-sell-soft: var(--sell-soft);
+  --color-give: var(--give);
+  --color-give-soft: var(--give-soft);
+  --color-toss: var(--toss);
+  --color-toss-soft: var(--toss-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
 
-  --color-pending-bg: #f1f1f1;
-  --color-pending-text: #555555;
-  --color-pending-border: #999999;
+  --shadow-card: var(--shadow-card);
 
-  /* --- General UI: primary accent + neutrals -----------------------------
-     Reuses the purple brand accent already established in the :root
-     custom properties below (--accent) and in the PWA manifest
-     theme_color in vite.config.js (#aa3bff), instead of inventing a
-     second "primary" brand color. --primary-hover is a darker shade for
-     hover/active states. Background/text/heading/border neutrals mirror
-     the existing --bg/--text/--text-h/--border custom properties (light
-     mode values) so restyle tasks can move from those custom properties
-     to Tailwind's bg-, text-, and border- utilities with no visual change. */
-  --color-primary: #aa3bff;
-  --color-primary-hover: #9022e6;
-  --color-bg: #ffffff;
-  --color-text: #6b6375;
-  --color-heading: #08060d;
-  --color-border: #e5e4e7;
+  --font-sans: Figtree, system-ui, 'Segoe UI', sans-serif;
+  --font-display: 'Bricolage Grotesque', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, Consolas, monospace;
 
-  /* --- Type scale -----------------------------------------------------
-     No overrides needed: Tailwind's default text-* scale already covers
-     what this app needs. Documented here so sandbox-zlt.3-.6 pick from
-     this fixed list instead of arbitrary per-page sizes. Matches the
-     existing plain-CSS scale in this file (h1: 56px desktop / 36px
-     narrow, h2: 24px desktop / 20px narrow):
-       text-4xl  (2.25rem / 36px)  -> h1, narrow viewport / mobile
-       text-5xl  (3rem / 48px)     -> h1, desktop (nearest default step
-                                       to the existing 56px h1)
-       text-xl   (1.25rem / 20px)  -> h2, narrow viewport / mobile
-       text-2xl  (1.5rem / 24px)   -> h2, desktop
-       text-base (1rem / 16px)     -> body copy, buttons, form controls
-       text-sm   (0.875rem / 14px) -> secondary/meta text (category,
-                                       filenames, inventory item details)
-       text-xs   (0.75rem / 12px)  -> thumbnail placeholders, tiny labels
-
-   --- Spacing scale -----------------------------------------------------
-     No overrides needed: Tailwind's default spacing scale (0.25rem
-     steps) already covers this app's gaps/padding. Documented subset
-     that restyle tasks should stick to for visual consistency, based on
-     what App.css already uses:
-       spacing-2 (0.5rem / 8px)   -> tight gaps (badge padding-y, small
-                                      stacks like inventory-actions)
-       spacing-3 (0.75rem / 12px) -> compact padding (error/processing
-                                      banners, inventory-item padding-y)
-       spacing-4 (1rem / 16px)    -> standard gap/padding unit (banner
-                                      padding-x, inventory-item gap)
-       spacing-6 (1.5rem / 24px)  -> section spacing (inventory-filters
-                                      gap, comparables margin-top)
-       spacing-8 (2rem / 32px)    -> large section spacing (photo
-                                      placeholder padding) */
+  /* TEMPORARY legacy aliases (sandbox-zlt.2 names) so pages not yet
+     restyled keep compiling and look coherent. Removed in sandbox-2pc.11. */
+  --color-sell-bg: var(--sell-soft);
+  --color-sell-text: var(--sell);
+  --color-sell-border: var(--sell);
+  --color-give-away-bg: var(--give-soft);
+  --color-give-away-text: var(--give);
+  --color-give-away-border: var(--give);
+  --color-throw-away-bg: var(--toss-soft);
+  --color-throw-away-text: var(--toss);
+  --color-throw-away-border: var(--toss);
+  --color-pending-bg: var(--sunken);
+  --color-pending-text: var(--muted);
+  --color-pending-border: var(--line);
+  --color-bg: var(--surface);
+  --color-text: var(--muted);
+  --color-heading: var(--ink);
+  --color-border: var(--line);
 }
 
 /* =========================================================================
@@ -200,6 +212,9 @@
 
 body {
   margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
 }
 
 #root {
