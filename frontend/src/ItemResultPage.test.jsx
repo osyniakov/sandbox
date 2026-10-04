@@ -571,9 +571,13 @@ describe('ItemResultPage', () => {
     expect(screen.getByText(/throw away/i)).toBeInTheDocument()
     expect(screen.queryByText(/suggested price/i)).not.toBeInTheDocument()
     expect(screen.getByText(/no comparable listings found/i)).toBeInTheDocument()
-    // "Upload another photo" + "View basement inventory" nav links
-    // (sandbox-yqf.11) -- no comparable-listing links since there are none.
-    expect(screen.queryAllByRole('link')).toHaveLength(2)
+    // Only the "Inventory" back link -- no comparable-listing links since
+    // there are none.
+    expect(screen.queryAllByRole('link')).toHaveLength(1)
+    expect(screen.getByRole('link', { name: /back to inventory/i })).toHaveAttribute(
+      'href',
+      '/inventory',
+    )
   })
 
   it('shows a pending indicator (not broken/missing fields) while status is non-terminal', async () => {
@@ -582,7 +586,7 @@ describe('ItemResultPage', () => {
     renderAtItem(4)
 
     await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent(/still working on this item/i)
+      expect(screen.getByRole('status')).toHaveTextContent(/working on it/i)
     })
 
     // None of the decided-only fields should render while pending.
@@ -590,6 +594,42 @@ describe('ItemResultPage', () => {
     expect(screen.queryByText(/comparable listings/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/sell|give away|throw away/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/undefined/i)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['pending_identification', ['active', 'upcoming', 'upcoming']],
+    ['pending_search', ['done', 'active', 'upcoming']],
+    ['pending_decision', ['done', 'done', 'active']],
+    ['some_unknown_status', ['active', 'upcoming', 'upcoming']],
+  ])('renders the processing stepper for %s', async (status, expected) => {
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ...PROCESSING_ITEM, id: 8, status, identified_name: 'Cordless Drill' }),
+    })
+
+    renderAtItem(8)
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/working on it/i)
+    })
+    const steps = screen.getAllByRole('listitem')
+    expect(steps.map((li) => li.getAttribute('data-step-state'))).toEqual(expected)
+    expect(steps[0]).toHaveTextContent('Identify item')
+    expect(steps[0]).toHaveTextContent('Cordless Drill')
+  })
+
+  it('links the failed card to retake the photo', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => IDENTIFICATION_FAILED_ITEM,
+    })
+
+    renderAtItem(5)
+
+    const link = await screen.findByRole('link', { name: /retake photo/i })
+    expect(link).toHaveAttribute('href', '/')
   })
 
   it('shows a distinct error message (not a decision badge) for identification_failed, and stops polling immediately', async () => {
@@ -604,7 +644,7 @@ describe('ItemResultPage', () => {
       /couldn't identify this item from the photo/i,
     )
     expect(screen.queryByText(/pending/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/still working on this item/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/working on it/i)).not.toBeInTheDocument()
     expect(itemFetchCallCount()).toBe(1)
 
     // Terminal by construction (identification_failed is now in
@@ -627,7 +667,7 @@ describe('ItemResultPage', () => {
       /couldn't find comparable listings right now/i,
     )
     expect(screen.queryByText(/pending/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/still working on this item/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/working on it/i)).not.toBeInTheDocument()
     expect(itemFetchCallCount()).toBe(1)
 
     await advanceAndFlush(POLL_INTERVAL_MS * 5)

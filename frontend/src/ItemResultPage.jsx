@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch } from './api.js'
 import { useAuthedImageUrl } from './useAuthedImageUrl.js'
+import { AlertCircle, AlertTriangle, Check, ChevronLeft, Gift, Tag, Trash } from './icons.jsx'
 
 // `Item.status` values that mean "the pipeline is done with this item"
 // (see backend/app/pipeline.py's "Polling contract for GET /items/{id}"
@@ -58,36 +59,112 @@ const POLL_INTERVAL_MS = 2500
 // seconds), so it should never fire for a healthy item, only a stuck one.
 const MAX_POLL_MS = 2 * 60 * 1000
 
-// Each decision maps to a Tailwind utility triple built from the
-// sell-/give-away-/throw-away-/pending- design tokens defined in
-// index.css's `@theme` block (sandbox-zlt.2), so the badge's
-// background/text/border colors stay in sync with that shared palette
-// instead of hardcoding hex values here.
+// Each decision maps to the soft pill colours from index.css's semantic
+// tokens (sell/give/toss) plus an inline-SVG icon component. `pending` has
+// no icon and is only ever the DB column default (see app/models.py); it
+// should never be reached once `status` is terminal, but this keeps
+// rendering safe (no crash, no "undefined") rather than assuming the
+// backend invariant always holds.
 const DECISION_INFO = {
-  sell: {
-    label: 'Sell',
-    icon: '\u{1F4B0}',
-    className: 'bg-sell-bg text-sell-text border-sell-border',
-  },
-  give_away: {
-    label: 'Give Away',
-    icon: '\u{1F381}',
-    className: 'bg-give-away-bg text-give-away-text border-give-away-border',
-  },
-  throw_away: {
-    label: 'Throw Away',
-    icon: '\u{1F5D1}\u{FE0F}',
-    className: 'bg-throw-away-bg text-throw-away-text border-throw-away-border',
-  },
-  // `pending` is only ever the DB column default (see app/models.py) and
-  // should never actually be reached once `status` is terminal, but this
-  // keeps rendering safe (no crash, no "undefined") rather than assuming
-  // the backend invariant always holds.
-  pending: {
-    label: 'Pending',
-    icon: '…',
-    className: 'bg-pending-bg text-pending-text border-pending-border',
-  },
+  sell: { label: 'Sell', Icon: Tag, className: 'bg-sell-soft text-sell' },
+  give_away: { label: 'Give Away', Icon: Gift, className: 'bg-give-soft text-give' },
+  throw_away: { label: 'Throw Away', Icon: Trash, className: 'bg-toss-soft text-toss' },
+  pending: { label: 'Pending', Icon: null, className: 'bg-sunken text-muted' },
+}
+
+// Processing stepper: the three pipeline stages in order, and which one is
+// currently active for each non-terminal status. Unknown non-terminal
+// statuses fall back to step 0 (first step active).
+const PROCESSING_STEPS = [
+  'Identify item',
+  'Search Kleinanzeigen for comparables',
+  'Decide and price',
+]
+const ACTIVE_STEP_BY_STATUS = {
+  pending_identification: 0,
+  pending_search: 1,
+  pending_decision: 2,
+}
+
+function activeStepIndex(status) {
+  return ACTIVE_STEP_BY_STATUS[status] ?? 0
+}
+
+// "€35" for whole prices, "€45.50" otherwise.
+const PRICE_FORMAT_WHOLE = new Intl.NumberFormat('en-IE', {
+  style: 'currency',
+  currency: 'EUR',
+  maximumFractionDigits: 0,
+})
+const PRICE_FORMAT_CENTS = new Intl.NumberFormat('en-IE', { style: 'currency', currency: 'EUR' })
+function formatPrice(price) {
+  return (Number.isInteger(price) ? PRICE_FORMAT_WHOLE : PRICE_FORMAT_CENTS).format(price)
+}
+
+function ProcessingCard({ item, stuck }) {
+  const active = activeStepIndex(item.status)
+  return (
+    <div
+      className="mt-8 rounded-2xl border border-line bg-surface p-5 shadow-card"
+      role="status"
+    >
+      <p className="font-semibold">Working on it…</p>
+      <p className="text-sm text-muted">
+        This page updates by itself. You can leave and come back.
+      </p>
+      <ol className="mt-5 space-y-4">
+        {PROCESSING_STEPS.map((label, i) => {
+          const state = i < active ? 'done' : i === active ? 'active' : 'upcoming'
+          return (
+            <li
+              key={label}
+              data-step-state={state}
+              className={`flex items-center gap-3 ${state === 'upcoming' ? 'text-muted' : ''}`}
+            >
+              {state === 'done' ? (
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-sell text-white">
+                  <Check size={14} />
+                </span>
+              ) : state === 'active' ? (
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-primary-soft">
+                  <span className="pulse h-2.5 w-2.5 rounded-full bg-primary" />
+                </span>
+              ) : (
+                <span className="grid h-7 w-7 place-items-center rounded-full border-2 border-line" />
+              )}
+              <span>
+                <span className={state === 'active' || state === 'done' ? 'font-medium' : ''}>
+                  {label}
+                </span>
+                {i === 0 && item.identified_name && (
+                  <span className="text-sm text-muted"> · {item.identified_name}</span>
+                )}
+              </span>
+            </li>
+          )
+        })}
+      </ol>
+      {stuck && (
+        <p className="mt-4 text-sm text-warn">
+          This is taking longer than expected. The pipeline may have
+          gotten stuck -- feel free to check back later.
+        </p>
+      )}
+    </div>
+  )
+}
+
+function BackLink() {
+  return (
+    <Link
+      to="/inventory"
+      aria-label="Back to inventory"
+      className="inline-flex items-center gap-1 text-sm font-medium text-muted hover:text-ink"
+    >
+      <ChevronLeft size={16} />
+      Inventory
+    </Link>
+  )
 }
 
 // How long the "Copied!" feedback stays visible on a CopyButton after a
@@ -237,26 +314,23 @@ function ItemResultPage() {
 
   if (loadError) {
     return (
-      <div className="max-w-md mx-auto my-16 px-4 text-center">
+      <div className="mx-auto max-w-2xl">
+        <BackLink />
         <div
-          className="mt-4 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
+          className="mt-4 flex gap-2.5 rounded-xl bg-toss-soft px-3.5 py-3 text-sm text-toss"
           role="alert"
         >
+          <AlertCircle size={16} className="mt-0.5 shrink-0" />
           <p>{loadError}</p>
         </div>
-        <p className="mt-4">
-          <Link to="/" className="link">
-            Upload another photo
-          </Link>
-        </p>
       </div>
     )
   }
 
   if (!item) {
     return (
-      <div className="max-w-md mx-auto my-16 px-4 text-center">
-        <p className="italic text-text" role="status">
+      <div className="mx-auto max-w-2xl">
+        <p className="text-sm text-muted" role="status">
           Loading item #{id}...
         </p>
       </div>
@@ -271,117 +345,122 @@ function ItemResultPage() {
   // never crashes on `.length`/`.map` below.
   const comparableListings = item.comparable_listings ?? []
 
+  const photoAlt = item.identified_name
+    ? `Photo of ${item.identified_name}`
+    : `Photo of item #${item.id}`
+  const showPill = isTerminal && !isFailed
+
   return (
-    <div className="max-w-md mx-auto my-16 px-4 text-center">
-      <h1 className="mb-4">Item #{item.id}</h1>
+    <div className="mx-auto max-w-2xl">
+      <BackLink />
 
-      {/* Photo display: `Item.photo_url` (added in sandbox-yqf.19) is a
-          relative path (e.g. "/uploads/<uuid>.jpg") served by the
-          backend's StaticFiles mount, which now requires an Authorization
-          header (sandbox-dfr.3) -- a plain `<img src>` can't attach one, so
-          `useAuthedImageUrl` (sandbox-dfr.5) fetches the photo bytes
-          authenticated via `apiFetch` and exposes them as a `blob:` object
-          URL instead. While there's no `photo_url` yet, or the
-          authenticated fetch hasn't resolved (or failed) yet,
-          `photoObjectUrl` is `null` and a placeholder renders instead of a
-          broken-image icon. */}
-      {!item.photo_url ? (
-        <div
-          className="my-4 rounded border border-dashed border-border px-4 py-8 italic text-text"
-          data-testid="photo-placeholder"
-        >
-          <p>Photo unavailable.</p>
-        </div>
-      ) : photoObjectUrl ? (
-        <img
-          className="my-4 block max-h-80 max-w-full rounded object-contain mx-auto"
-          src={photoObjectUrl}
-          alt={item.identified_name ? `Photo of ${item.identified_name}` : `Photo of item #${item.id}`}
-        />
-      ) : (
-        <div
-          className="my-4 rounded border border-dashed border-border px-4 py-8 italic text-text"
-          data-testid="photo-placeholder"
-        >
-          <p>Loading photo...</p>
-        </div>
-      )}
+      <div className="mt-4 grid gap-5 sm:grid-cols-[13rem_1fr] sm:items-start">
+        {/* Photo display: `Item.photo_url` (added in sandbox-yqf.19) is a
+            relative path (e.g. "/uploads/<uuid>.jpg") served by the
+            backend's StaticFiles mount, which now requires an Authorization
+            header (sandbox-dfr.3) -- a plain `<img src>` can't attach one, so
+            `useAuthedImageUrl` (sandbox-dfr.5) fetches the photo bytes
+            authenticated via `apiFetch` and exposes them as a `blob:` object
+            URL instead. While there's no `photo_url` yet, or the
+            authenticated fetch hasn't resolved (or failed) yet,
+            `photoObjectUrl` is `null` and a placeholder renders instead of a
+            broken-image icon. */}
+        {!item.photo_url ? (
+          <div
+            className="grid aspect-square w-full place-items-center rounded-2xl border border-dashed border-line bg-sunken p-4 text-center text-sm text-muted sm:w-52"
+            data-testid="photo-placeholder"
+          >
+            <p>Photo unavailable.</p>
+          </div>
+        ) : photoObjectUrl ? (
+          <img
+            className="aspect-square w-full rounded-2xl bg-sunken object-cover shadow-card sm:w-52"
+            src={photoObjectUrl}
+            alt={photoAlt}
+          />
+        ) : (
+          <div
+            className="grid aspect-square w-full place-items-center rounded-2xl border border-dashed border-line bg-sunken p-4 text-center text-sm text-muted sm:w-52"
+            data-testid="photo-placeholder"
+          >
+            <p>Loading photo...</p>
+          </div>
+        )}
 
-      {(item.identified_name || item.category) && (
-        <div className="mb-2">
-          {item.identified_name && <h2 className="mb-1">{item.identified_name}</h2>}
-          {item.category && <p className="mt-0 text-sm text-text">{item.category}</p>}
-        </div>
-      )}
+        <div className="min-w-0">
+          <h1 className="text-xs font-semibold uppercase tracking-wider text-muted">
+            Item #{item.id}
+            {item.category ? ` · ${item.category}` : ''}
+          </h1>
+          {item.identified_name && (
+            <h2 className="mt-1 font-display text-2xl font-bold leading-tight tracking-tight sm:text-3xl">
+              {item.identified_name}
+            </h2>
+          )}
+          {item.hint && <p className="mt-1.5 text-sm text-muted">Your hint: {item.hint}</p>}
 
-      {item.hint && <p className="mt-0 text-sm text-text">Your hint: {item.hint}</p>}
+          {showPill && (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {/* Decision pill. role="status" + visible label text (not just
+                  colour) so screen readers announce it and e2e can find it. */}
+              <div
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold ${decisionInfo.className}`}
+                role="status"
+              >
+                {decisionInfo.Icon && <decisionInfo.Icon size={15} />}
+                {decisionInfo.label}
+              </div>
 
-      {!isTerminal && (
-        <div
-          className="mt-6 rounded border border-sell-border bg-sell-bg px-4 py-3 text-sell-text"
-          role="status"
-        >
-          <p>Still working on this item (status: {item.status})...</p>
-          {stuck && (
-            <p className="mt-2">
-              This is taking longer than expected. The pipeline may have
-              gotten stuck -- feel free to check back later.
+              {/* Low-confidence pill (sandbox-8jm.6/.7) -- `decision_confidence`
+                  is only ever "low" once a decision has been reached; "high"
+                  or null/undefined (older items) renders nothing. */}
+              {item.decision_confidence === 'low' && (
+                <div
+                  className="inline-flex items-center gap-1.5 rounded-full bg-warn-soft px-3 py-1 text-sm font-medium text-warn"
+                  role="status"
+                >
+                  <AlertTriangle size={14} />
+                  {item.decision === 'throw_away' && comparableListings.length === 0
+                    ? 'No comparable listings found — double-check'
+                    : 'Few comparable listings — double-check the price'}
+                </div>
+              )}
+            </div>
+          )}
+
+          {showPill && item.decision === 'sell' && item.suggested_price != null && (
+            <p className="mt-3 flex items-baseline gap-2">
+              <span className="font-display text-4xl font-bold tracking-tight tabular-nums">
+                {formatPrice(item.suggested_price)}
+              </span>
+              <span className="text-sm text-muted">suggested price</span>
             </p>
           )}
         </div>
-      )}
+      </div>
+
+      {!isTerminal && <ProcessingCard item={item} stuck={stuck} />}
 
       {/* `identification_failed`/`search_failed` (sandbox-khm.1) are
           terminal but never reach a real decision -- `item.decision` stays
-          at the DB default (`pending`), so rendering the decision-badge/
-          comparable-listings block below for them would show a
-          nonsensical "... Pending" badge. Render a distinct error block
-          instead, reusing the same visual language (role="alert" +
-          throw-away-colored border/background) as the top-level
-          `loadError` block above for consistency. */}
+          at the DB default (`pending`), so they get this distinct error card
+          instead of the decision-pill/comparable-listings block below. */}
       {isFailed && (
-        <div
-          className="mt-6 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
-          role="alert"
-        >
-          <p>{FAILURE_MESSAGES[item.status]}</p>
+        <div className="mt-8 rounded-2xl bg-toss-soft p-5 text-toss" role="alert">
+          <p className="font-semibold">{FAILURE_MESSAGES[item.status]}</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link
+              to="/"
+              className="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover"
+            >
+              Retake photo
+            </Link>
+          </div>
         </div>
       )}
 
       {isTerminal && !isFailed && (
         <>
-          <div
-            className={`inline-block my-4 rounded-full border px-4 py-2 font-semibold ${decisionInfo.className}`}
-            role="status"
-          >
-            <span aria-hidden="true">{decisionInfo.icon}</span> {decisionInfo.label}
-          </div>
-
-          {/* Low-confidence badge (sandbox-8jm.6/.7) -- `decision_confidence`
-              is only ever "low" once a decision has actually been reached
-              (this block is already gated on isTerminal && !isFailed above),
-              and is "high" or null/undefined (older items predating this
-              field) otherwise, in which case nothing renders here. Uses a
-              distinct visible text span (not just a color) plus role="status"
-              so screen readers announce it, matching the decision badge's
-              own accessibility pattern above. */}
-          {item.decision_confidence === 'low' && (
-            <div
-              className="inline-block my-2 ml-2 rounded-full border border-pending-border bg-pending-bg px-3 py-1 text-sm text-pending-text"
-              role="status"
-            >
-              {item.decision === 'throw_away' && comparableListings.length === 0
-                ? 'No comparable listings found — double-check'
-                : 'Few comparable listings — double-check the price'}
-            </div>
-          )}
-
-          {item.decision === 'sell' && item.suggested_price != null && (
-            <p className="font-semibold">
-              Suggested price: {item.suggested_price.toFixed(2)} EUR
-            </p>
-          )}
-
           {/* Suggested Kleinanzeigen title/description (sandbox-dwl.5) --
               only generated for sell/give_away decisions (see
               backend/app/pipeline.py), and only rendered here once both
@@ -454,15 +533,6 @@ function ItemResultPage() {
         </>
       )}
 
-      <p className="mt-6">
-        <Link to="/" className="link">
-          Upload another photo
-        </Link>
-        {' | '}
-        <Link to="/inventory" className="link">
-          View basement inventory
-        </Link>
-      </p>
     </div>
   )
 }

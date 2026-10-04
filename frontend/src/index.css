@@ -176,8 +176,17 @@ body {
 .indeterminate {
   animation: bar 1.3s ease-in-out infinite;
 }
+/* Pulsing dot for the active step in the item processing stepper. */
+@keyframes pulse-dot {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+.pulse {
+  animation: pulse-dot 1.4s ease-in-out infinite;
+}
 @media (prefers-reduced-motion: reduce) {
-  .indeterminate {
+  .indeterminate,
+  .pulse {
     animation: none;
   }
 }

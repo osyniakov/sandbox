@@ -113,12 +113,11 @@ test('an uploaded item appears in /inventory and a manual status transition upda
   // Failed items are not `decided`, so no manual transition applies to them.
   const targetStatus = outcome.kind === 'decision' ? DECISION_TO_TARGET_STATUS[outcome.decision] : null
 
-  // ItemResultPage.jsx always renders a "View basement inventory" link
-  // (`<Link to="/inventory">`) once the item has loaded, outside any
-  // terminal-only conditional -- navigate via it rather than a raw
-  // `page.goto('/inventory')` so this exercises the app's own
-  // client-side routing, same as a real user would use.
-  await page.getByRole('link', { name: /view basement inventory/i }).click()
+  // Navigate via the app shell's "Inventory" nav link rather than a raw
+  // `page.goto('/inventory')` so this exercises the app's own client-side
+  // routing, same as a real user would use. (ItemResultPage's back link has
+  // aria-label "Back to inventory", so this exact-name locator stays unique.)
+  await page.getByRole('link', { name: 'Inventory', exact: true }).click()
   await expect(page).toHaveURL(/\/inventory$/)
 
   // InventoryPage.jsx renders each item as an `<li>` containing a
