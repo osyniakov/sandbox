@@ -134,7 +134,7 @@ function ProcessingCard({ item, stuck }) {
               ) : (
                 <span className="grid h-7 w-7 place-items-center rounded-full border-2 border-line" />
               )}
-              <span>
+              <span className="min-w-0 break-words [overflow-wrap:anywhere]">
                 <span className={state === 'active' || state === 'done' ? 'font-medium' : ''}>
                   {label}
                 </span>
@@ -480,11 +480,11 @@ function ItemResultPage() {
             {item.category ? ` · ${item.category}` : ''}
           </h1>
           {item.identified_name && (
-            <h2 className="mt-1 font-display text-2xl font-bold leading-tight tracking-tight sm:text-3xl">
+            <h2 className="mt-1 break-words font-display text-2xl font-bold leading-tight tracking-tight [overflow-wrap:anywhere] sm:text-3xl">
               {item.identified_name}
             </h2>
           )}
-          {item.hint && <p className="mt-1.5 text-sm text-muted">Your hint: {item.hint}</p>}
+          {item.hint && <p className="mt-1.5 break-words text-sm text-muted [overflow-wrap:anywhere]">Your hint: {item.hint}</p>}
 
           {showPill && (
             <div className="mt-4 flex flex-wrap items-center gap-2">
@@ -597,7 +597,7 @@ function ItemResultPage() {
                         <span className="block text-xs font-semibold uppercase tracking-wider text-muted">
                           Title
                         </span>
-                        <p className="mt-1 font-medium">{item.suggested_title}</p>
+                        <p className="mt-1 break-words font-medium [overflow-wrap:anywhere]">{item.suggested_title}</p>
                       </div>
                       <CopyButton text={item.suggested_title} label="title" />
                     </div>
@@ -606,7 +606,7 @@ function ItemResultPage() {
                         <span className="block text-xs font-semibold uppercase tracking-wider text-muted">
                           Description
                         </span>
-                        <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed">
+                        <p className="mt-1 whitespace-pre-wrap break-words text-sm leading-relaxed [overflow-wrap:anywhere]">
                           {item.suggested_description}
                         </p>
                       </div>
