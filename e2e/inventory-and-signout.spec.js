@@ -180,13 +180,16 @@ test('signing out reverts to the sign-in gate and survives a page reload', async
 
   const inventoryHeading = page.getByRole('heading', { name: /^Basement Inventory$/ })
   const signedInText = page.getByText(/^Signed in as /)
-  const signOutButton = page.getByRole('button', { name: /^Sign out$/ })
+  const signOutButton = page.getByRole('menuitem', { name: /^Sign out$/ })
   // SignInPage.jsx's own distinguishing copy -- not rendered by any
   // authenticated page, so its ABSENCE here is exactly what proves the
   // authenticated app (not the sign-in gate) is what's currently shown.
   const signInGateText = page.getByText(/sign in with your google account/i)
 
   await expect(inventoryHeading).toBeVisible()
+  // Sign-out lives in the AppLayout account menu (sandbox-2pc.2): closed
+  // by default, so open it before asserting on its contents.
+  await page.getByRole('button', { name: 'Account menu' }).click()
   await expect(signedInText).toBeVisible()
   await expect(signOutButton).toBeVisible()
   await expect(signInGateText).toHaveCount(0)
@@ -204,6 +207,7 @@ test('signing out reverts to the sign-in gate and survives a page reload', async
   await expect(inventoryHeading).toHaveCount(0)
   await expect(signedInText).toHaveCount(0)
   await expect(signOutButton).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Account menu' })).toHaveCount(0)
 
   // THE core proof that the session token was actually cleared from
   // localStorage (not just hidden in React state): read it straight back

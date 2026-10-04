@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from './api.js'
 import { useAuthedImageUrl } from './useAuthedImageUrl.js'
-import SignOutControl from './SignOutControl.jsx'
 
 const STATUS_ACTION_LABELS = {
   listed: 'Mark as listed on Kleinanzeigen',
@@ -226,8 +225,6 @@ function InventoryPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-8 text-center">
       <h1>Basement Inventory</h1>
-
-      <SignOutControl />
 
       <p className="mt-2">
         <Link to="/" className="link">

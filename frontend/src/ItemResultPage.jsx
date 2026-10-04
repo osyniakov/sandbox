@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch } from './api.js'
 import { useAuthedImageUrl } from './useAuthedImageUrl.js'
-import SignOutControl from './SignOutControl.jsx'
 
 // `Item.status` values that mean "the pipeline is done with this item"
 // (see backend/app/pipeline.py's "Polling contract for GET /items/{id}"
@@ -275,8 +274,6 @@ function ItemResultPage() {
   return (
     <div className="max-w-md mx-auto my-16 px-4 text-center">
       <h1 className="mb-4">Item #{item.id}</h1>
-
-      <SignOutControl />
 
       {/* Photo display: `Item.photo_url` (added in sandbox-yqf.19) is a
           relative path (e.g. "/uploads/<uuid>.jpg") served by the

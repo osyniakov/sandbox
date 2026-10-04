@@ -726,18 +726,6 @@ describe('ItemResultPage', () => {
     expect(screen.queryByText(/not authenticated/i)).not.toBeInTheDocument()
   })
 
-  it('renders a reachable sign-out control once the item has loaded', async () => {
-    mockItemAndPhotoFetch(SELL_ITEM)
-
-    renderAtItem(1)
-
-    await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
-    })
-
-    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
-  })
-
   it('shows the user-provided hint when present', async () => {
     fetch.mockResolvedValue({
       ok: true,

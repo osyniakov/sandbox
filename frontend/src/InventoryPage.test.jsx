@@ -458,16 +458,6 @@ describe('InventoryPage', () => {
     expect(screen.queryByText(/not authenticated/i)).not.toBeInTheDocument()
   })
 
-  it('renders a reachable sign-out control', async () => {
-    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => [] })
-
-    renderInventoryPage()
-
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
-    })
-  })
-
   it('deletes an item and removes it from the list after confirming', async () => {
     const user = userEvent.setup()
     vi.spyOn(window, 'confirm').mockReturnValue(true)

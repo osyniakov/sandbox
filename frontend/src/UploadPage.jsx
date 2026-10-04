@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { apiFetch } from './api.js'
 import { prepareUploadImage } from './imageResize.js'
-import SignOutControl from './SignOutControl.jsx'
 
 // Abort the upload request if it hasn't completed after this long, so a stalled
 // mobile connection doesn't leave the page on "Uploading..." forever.
@@ -158,8 +157,6 @@ function UploadPage() {
         Photograph an item, find comparable listings, and get a sell /
         give-away / throw-away recommendation.
       </p>
-
-      <SignOutControl />
 
       <p className="mt-4">
         <Link to="/inventory" className="link">

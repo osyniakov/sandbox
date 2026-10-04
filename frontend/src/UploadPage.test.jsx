@@ -359,11 +359,6 @@ describe('UploadPage photo capture/upload flow', () => {
     expect(screen.queryByText(/not authenticated/i)).not.toBeInTheDocument()
   })
 
-  it('renders a reachable sign-out control', () => {
-    renderUploadPage()
-    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
-  })
-
   it('uploads the prepared (downscaled) file rather than the raw selection', async () => {
     const user = userEvent.setup()
     const prepared = new File([new Uint8Array([9])], 'small.jpg', { type: 'image/jpeg' })
