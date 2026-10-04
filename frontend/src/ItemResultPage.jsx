@@ -2,7 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch } from './api.js'
 import { useAuthedImageUrl } from './useAuthedImageUrl.js'
-import SignOutControl from './SignOutControl.jsx'
+import {
+  AlertCircle,
+  AlertTriangle,
+  Check,
+  ChevronLeft,
+  Copy,
+  ExternalLink,
+  Gift,
+  Tag,
+  Trash,
+} from './icons.jsx'
+import { DECISION_PRIMARY_STATUS, STATUS_ACTION_LABELS, patchItemStatus } from './itemsApi.js'
+import PricePosition from './PricePosition.jsx'
+import { formatPrice } from './format.js'
 
 // `Item.status` values that mean "the pipeline is done with this item"
 // (see backend/app/pipeline.py's "Polling contract for GET /items/{id}"
@@ -59,49 +72,178 @@ const POLL_INTERVAL_MS = 2500
 // seconds), so it should never fire for a healthy item, only a stuck one.
 const MAX_POLL_MS = 2 * 60 * 1000
 
-// Each decision maps to a Tailwind utility triple built from the
-// sell-/give-away-/throw-away-/pending- design tokens defined in
-// index.css's `@theme` block (sandbox-zlt.2), so the badge's
-// background/text/border colors stay in sync with that shared palette
-// instead of hardcoding hex values here.
+// Each decision maps to the soft pill colours from index.css's semantic
+// tokens (sell/give/toss) plus an inline-SVG icon component. `pending` has
+// no icon and is only ever the DB column default (see app/models.py); it
+// should never be reached once `status` is terminal, but this keeps
+// rendering safe (no crash, no "undefined") rather than assuming the
+// backend invariant always holds.
 const DECISION_INFO = {
-  sell: {
-    label: 'Sell',
-    icon: '\u{1F4B0}',
-    className: 'bg-sell-bg text-sell-text border-sell-border',
-  },
-  give_away: {
-    label: 'Give Away',
-    icon: '\u{1F381}',
-    className: 'bg-give-away-bg text-give-away-text border-give-away-border',
-  },
-  throw_away: {
-    label: 'Throw Away',
-    icon: '\u{1F5D1}\u{FE0F}',
-    className: 'bg-throw-away-bg text-throw-away-text border-throw-away-border',
-  },
-  // `pending` is only ever the DB column default (see app/models.py) and
-  // should never actually be reached once `status` is terminal, but this
-  // keeps rendering safe (no crash, no "undefined") rather than assuming
-  // the backend invariant always holds.
-  pending: {
-    label: 'Pending',
-    icon: '…',
-    className: 'bg-pending-bg text-pending-text border-pending-border',
-  },
+  sell: { label: 'Sell', Icon: Tag, className: 'bg-sell-soft text-sell' },
+  give_away: { label: 'Give Away', Icon: Gift, className: 'bg-give-soft text-give' },
+  throw_away: { label: 'Throw Away', Icon: Trash, className: 'bg-toss-soft text-toss' },
+  pending: { label: 'Pending', Icon: null, className: 'bg-sunken text-muted' },
 }
 
-// How long the "Copied!" feedback stays visible on a CopyButton after a
-// successful copy before reverting to its normal label.
+// Processing stepper: the three pipeline stages in order, and which one is
+// currently active for each non-terminal status. Unknown non-terminal
+// statuses fall back to step 0 (first step active).
+const PROCESSING_STEPS = [
+  'Identify item',
+  'Search Kleinanzeigen for comparables',
+  'Decide and price',
+]
+const ACTIVE_STEP_BY_STATUS = {
+  pending_identification: 0,
+  pending_search: 1,
+  pending_decision: 2,
+}
+
+function activeStepIndex(status) {
+  return ACTIVE_STEP_BY_STATUS[status] ?? 0
+}
+
+function ProcessingCard({ item, stuck }) {
+  const active = activeStepIndex(item.status)
+  return (
+    <div
+      className="mt-8 rounded-2xl border border-line bg-surface p-5 shadow-card"
+      role="status"
+    >
+      <p className="font-semibold">Working on it…</p>
+      <p className="text-sm text-muted">
+        This page updates by itself. You can leave and come back.
+      </p>
+      <ol className="mt-5 space-y-4">
+        {PROCESSING_STEPS.map((label, i) => {
+          const state = i < active ? 'done' : i === active ? 'active' : 'upcoming'
+          return (
+            <li
+              key={label}
+              data-step-state={state}
+              className={`flex items-center gap-3 ${state === 'upcoming' ? 'text-muted' : ''}`}
+            >
+              {state === 'done' ? (
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-sell text-white">
+                  <Check size={14} />
+                </span>
+              ) : state === 'active' ? (
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-primary-soft">
+                  <span className="pulse h-2.5 w-2.5 rounded-full bg-primary" />
+                </span>
+              ) : (
+                <span className="grid h-7 w-7 place-items-center rounded-full border-2 border-line" />
+              )}
+              <span>
+                <span className={state === 'active' || state === 'done' ? 'font-medium' : ''}>
+                  {label}
+                </span>
+                {i === 0 && item.identified_name && (
+                  <span className="text-sm text-muted"> · {item.identified_name}</span>
+                )}
+              </span>
+            </li>
+          )
+        })}
+      </ol>
+      {stuck && (
+        <p className="mt-4 text-sm text-warn">
+          This is taking longer than expected. The pipeline may have
+          gotten stuck -- feel free to check back later.
+        </p>
+      )}
+    </div>
+  )
+}
+
+// "Done something with it?" panel, shown only while the item is `decided`.
+// The action matching the decision is the primary pill. On success the parent
+// replaces its item with the PATCH response (status is no longer `decided`,
+// so this panel unmounts); on failure the error shows and buttons re-enable.
+function StatusActions({ item, onUpdated }) {
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const controllerRef = useRef(null)
+
+  useEffect(() => {
+    return () => controllerRef.current?.abort()
+  }, [])
+
+  async function handleClick(targetStatus) {
+    const controller = new AbortController()
+    controllerRef.current = controller
+    setBusy(true)
+    setError('')
+    try {
+      const updated = await patchItemStatus(item.id, targetStatus, controller.signal)
+      if (controller.signal.aborted) return
+      onUpdated(updated)
+    } catch (err) {
+      if (controller.signal.aborted || err.name === 'AbortError') return
+      setError(err.message || 'Could not update status.')
+      setBusy(false)
+    }
+  }
+
+  const primaryStatus = DECISION_PRIMARY_STATUS[item.decision]
+  return (
+    <div className="flex flex-wrap gap-2 rounded-2xl bg-sunken p-4">
+      <p className="w-full text-sm text-muted">Done something with it?</p>
+      {Object.entries(STATUS_ACTION_LABELS).map(([targetStatus, label]) => (
+        <button
+          key={targetStatus}
+          type="button"
+          disabled={busy}
+          onClick={() => handleClick(targetStatus)}
+          className={`cursor-pointer rounded-full px-4 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50 ${
+            targetStatus === primaryStatus
+              ? 'border border-primary bg-primary text-white hover:bg-primary-hover'
+              : 'border border-line bg-surface text-ink hover:bg-ground'
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+      {error && (
+        <div
+          className="flex w-full gap-2.5 rounded-xl bg-toss-soft px-3.5 py-3 text-sm text-toss"
+          role="alert"
+        >
+          <AlertCircle size={16} className="mt-0.5 shrink-0" />
+          <p>{error}</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BackLink() {
+  return (
+    <Link
+      to="/inventory"
+      aria-label="Back to inventory"
+      className="inline-flex items-center gap-1 text-sm font-medium text-muted hover:text-ink"
+    >
+      <ChevronLeft size={16} />
+      Inventory
+    </Link>
+  )
+}
+
+// How long the "Copied" / "Copy failed" feedback stays visible on a
+// CopyButton before reverting to its normal label.
 const COPY_FEEDBACK_MS = 2000
 
 // A small button that copies `text` to the clipboard via the browser's
-// `navigator.clipboard.writeText` API and shows brief "Copied!" feedback
-// (reverting after COPY_FEEDBACK_MS) on success. Used for both the
-// suggested title and suggested description below, independently -- each
-// instance tracks its own `copied` state.
+// `navigator.clipboard.writeText` API and shows brief "Copied" feedback
+// (reverting after COPY_FEEDBACK_MS) on success, or "Copy failed" if the
+// Clipboard API is missing (e.g. insecure context) or the write is rejected
+// (e.g. permission denied). Used for the suggested title, description and
+// search query independently -- each instance tracks its own state.
+// The accessible name stays "Copy <label>" via aria-label regardless of the
+// visible text; the outcome is announced through a polite live region.
 function CopyButton({ text, label }) {
-  const [copied, setCopied] = useState(false)
+  const [feedback, setFeedback] = useState(null) // null | 'copied' | 'failed'
   const timeoutIdRef = useRef(null)
 
   useEffect(() => {
@@ -113,20 +255,37 @@ function CopyButton({ text, label }) {
   }, [])
 
   async function handleClick() {
-    await navigator.clipboard.writeText(text)
-    setCopied(true)
+    let outcome = 'copied'
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch {
+      // Covers both a missing `navigator.clipboard` (TypeError) and a
+      // rejected writeText promise.
+      outcome = 'failed'
+    }
+    setFeedback(outcome)
     if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current)
-    timeoutIdRef.current = setTimeout(() => setCopied(false), COPY_FEEDBACK_MS)
+    timeoutIdRef.current = setTimeout(() => setFeedback(null), COPY_FEEDBACK_MS)
   }
 
+  const visible = feedback === 'copied' ? 'Copied' : feedback === 'failed' ? 'Copy failed' : 'Copy'
   return (
-    <button
-      type="button"
-      onClick={handleClick}
-      className="ml-2 shrink-0 rounded border border-border px-2 py-1 text-sm"
-    >
-      {copied ? 'Copied!' : `Copy ${label}`}
-    </button>
+    <>
+      <button
+        type="button"
+        onClick={handleClick}
+        aria-label={`Copy ${label}`}
+        className={`inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 text-xs font-semibold hover:bg-sunken ${
+          feedback === 'failed' ? 'text-toss' : feedback === 'copied' ? 'text-sell' : ''
+        }`}
+      >
+        {feedback === 'copied' ? <Check size={14} /> : <Copy size={14} />}
+        {visible}
+      </button>
+      <span className="sr-only" aria-live="polite">
+        {feedback === 'copied' ? 'Copied' : feedback === 'failed' ? 'Copy failed' : ''}
+      </span>
+    </>
   )
 }
 
@@ -238,26 +397,23 @@ function ItemResultPage() {
 
   if (loadError) {
     return (
-      <div className="max-w-md mx-auto my-16 px-4 text-center">
+      <div className="mx-auto max-w-2xl">
+        <BackLink />
         <div
-          className="mt-4 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
+          className="mt-4 flex gap-2.5 rounded-xl bg-toss-soft px-3.5 py-3 text-sm text-toss"
           role="alert"
         >
+          <AlertCircle size={16} className="mt-0.5 shrink-0" />
           <p>{loadError}</p>
         </div>
-        <p className="mt-4">
-          <Link to="/" className="link">
-            Upload another photo
-          </Link>
-        </p>
       </div>
     )
   }
 
   if (!item) {
     return (
-      <div className="max-w-md mx-auto my-16 px-4 text-center">
-        <p className="italic text-text" role="status">
+      <div className="mx-auto max-w-2xl">
+        <p className="text-sm text-muted" role="status">
           Loading item #{id}...
         </p>
       </div>
@@ -272,119 +428,126 @@ function ItemResultPage() {
   // never crashes on `.length`/`.map` below.
   const comparableListings = item.comparable_listings ?? []
 
+  // Query for the listing card's "Open Kleinanzeigen" link: the exact query
+  // the search used, else the identified name; no link if neither exists.
+  const listingSearchQuery = (item.search_query_used || item.identified_name || '').trim()
+
+  const photoAlt = item.identified_name
+    ? `Photo of ${item.identified_name}`
+    : `Photo of item #${item.id}`
+  const showPill = isTerminal && !isFailed
+
   return (
-    <div className="max-w-md mx-auto my-16 px-4 text-center">
-      <h1 className="mb-4">Item #{item.id}</h1>
+    <div className="mx-auto max-w-2xl">
+      <BackLink />
 
-      <SignOutControl />
+      <div className="mt-4 grid gap-5 sm:grid-cols-[13rem_1fr] sm:items-start">
+        {/* Photo display: `Item.photo_url` (added in sandbox-yqf.19) is a
+            relative path (e.g. "/uploads/<uuid>.jpg") served by the
+            backend's StaticFiles mount, which now requires an Authorization
+            header (sandbox-dfr.3) -- a plain `<img src>` can't attach one, so
+            `useAuthedImageUrl` (sandbox-dfr.5) fetches the photo bytes
+            authenticated via `apiFetch` and exposes them as a `blob:` object
+            URL instead. While there's no `photo_url` yet, or the
+            authenticated fetch hasn't resolved (or failed) yet,
+            `photoObjectUrl` is `null` and a placeholder renders instead of a
+            broken-image icon. */}
+        {!item.photo_url ? (
+          <div
+            className="grid aspect-square w-full place-items-center rounded-2xl border border-dashed border-line bg-sunken p-4 text-center text-sm text-muted sm:w-52"
+            data-testid="photo-placeholder"
+          >
+            <p>Photo unavailable.</p>
+          </div>
+        ) : photoObjectUrl ? (
+          <img
+            className="aspect-square w-full rounded-2xl bg-sunken object-cover shadow-card sm:w-52"
+            src={photoObjectUrl}
+            alt={photoAlt}
+          />
+        ) : (
+          <div
+            className="grid aspect-square w-full place-items-center rounded-2xl border border-dashed border-line bg-sunken p-4 text-center text-sm text-muted sm:w-52"
+            data-testid="photo-placeholder"
+          >
+            <p>Loading photo...</p>
+          </div>
+        )}
 
-      {/* Photo display: `Item.photo_url` (added in sandbox-yqf.19) is a
-          relative path (e.g. "/uploads/<uuid>.jpg") served by the
-          backend's StaticFiles mount, which now requires an Authorization
-          header (sandbox-dfr.3) -- a plain `<img src>` can't attach one, so
-          `useAuthedImageUrl` (sandbox-dfr.5) fetches the photo bytes
-          authenticated via `apiFetch` and exposes them as a `blob:` object
-          URL instead. While there's no `photo_url` yet, or the
-          authenticated fetch hasn't resolved (or failed) yet,
-          `photoObjectUrl` is `null` and a placeholder renders instead of a
-          broken-image icon. */}
-      {!item.photo_url ? (
-        <div
-          className="my-4 rounded border border-dashed border-border px-4 py-8 italic text-text"
-          data-testid="photo-placeholder"
-        >
-          <p>Photo unavailable.</p>
-        </div>
-      ) : photoObjectUrl ? (
-        <img
-          className="my-4 block max-h-80 max-w-full rounded object-contain mx-auto"
-          src={photoObjectUrl}
-          alt={item.identified_name ? `Photo of ${item.identified_name}` : `Photo of item #${item.id}`}
-        />
-      ) : (
-        <div
-          className="my-4 rounded border border-dashed border-border px-4 py-8 italic text-text"
-          data-testid="photo-placeholder"
-        >
-          <p>Loading photo...</p>
-        </div>
-      )}
+        <div className="min-w-0">
+          <h1 className="text-xs font-semibold uppercase tracking-wider text-muted">
+            Item #{item.id}
+            {item.category ? ` · ${item.category}` : ''}
+          </h1>
+          {item.identified_name && (
+            <h2 className="mt-1 font-display text-2xl font-bold leading-tight tracking-tight sm:text-3xl">
+              {item.identified_name}
+            </h2>
+          )}
+          {item.hint && <p className="mt-1.5 text-sm text-muted">Your hint: {item.hint}</p>}
 
-      {(item.identified_name || item.category) && (
-        <div className="mb-2">
-          {item.identified_name && <h2 className="mb-1">{item.identified_name}</h2>}
-          {item.category && <p className="mt-0 text-sm text-text">{item.category}</p>}
-        </div>
-      )}
+          {showPill && (
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              {/* Decision pill. role="status" + visible label text (not just
+                  colour) so screen readers announce it and e2e can find it. */}
+              <div
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm font-semibold ${decisionInfo.className}`}
+                role="status"
+              >
+                {decisionInfo.Icon && <decisionInfo.Icon size={15} />}
+                {decisionInfo.label}
+              </div>
 
-      {item.hint && <p className="mt-0 text-sm text-text">Your hint: {item.hint}</p>}
+              {/* Low-confidence pill (sandbox-8jm.6/.7) -- `decision_confidence`
+                  is only ever "low" once a decision has been reached; "high"
+                  or null/undefined (older items) renders nothing. */}
+              {item.decision_confidence === 'low' && (
+                <div
+                  className="inline-flex items-center gap-1.5 rounded-full bg-warn-soft px-3 py-1 text-sm font-medium text-warn"
+                  role="status"
+                >
+                  <AlertTriangle size={14} />
+                  {item.decision === 'throw_away' && comparableListings.length === 0
+                    ? 'No comparable listings found — double-check'
+                    : 'Few comparable listings — double-check the price'}
+                </div>
+              )}
+            </div>
+          )}
 
-      {!isTerminal && (
-        <div
-          className="mt-6 rounded border border-sell-border bg-sell-bg px-4 py-3 text-sell-text"
-          role="status"
-        >
-          <p>Still working on this item (status: {item.status})...</p>
-          {stuck && (
-            <p className="mt-2">
-              This is taking longer than expected. The pipeline may have
-              gotten stuck -- feel free to check back later.
+          {showPill && item.decision === 'sell' && item.suggested_price != null && (
+            <p className="mt-3 flex items-baseline gap-2">
+              <span className="font-display text-4xl font-bold tracking-tight tabular-nums">
+                {formatPrice(item.suggested_price)}
+              </span>
+              <span className="text-sm text-muted">suggested price</span>
             </p>
           )}
         </div>
-      )}
+      </div>
+
+      {!isTerminal && <ProcessingCard item={item} stuck={stuck} />}
 
       {/* `identification_failed`/`search_failed` (sandbox-khm.1) are
           terminal but never reach a real decision -- `item.decision` stays
-          at the DB default (`pending`), so rendering the decision-badge/
-          comparable-listings block below for them would show a
-          nonsensical "... Pending" badge. Render a distinct error block
-          instead, reusing the same visual language (role="alert" +
-          throw-away-colored border/background) as the top-level
-          `loadError` block above for consistency. */}
+          at the DB default (`pending`), so they get this distinct error card
+          instead of the decision-pill/comparable-listings block below. */}
       {isFailed && (
-        <div
-          className="mt-6 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
-          role="alert"
-        >
-          <p>{FAILURE_MESSAGES[item.status]}</p>
+        <div className="mt-8 rounded-2xl bg-toss-soft p-5 text-toss" role="alert">
+          <p className="font-semibold">{FAILURE_MESSAGES[item.status]}</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link
+              to="/"
+              className="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover"
+            >
+              Retake photo
+            </Link>
+          </div>
         </div>
       )}
 
       {isTerminal && !isFailed && (
         <>
-          <div
-            className={`inline-block my-4 rounded-full border px-4 py-2 font-semibold ${decisionInfo.className}`}
-            role="status"
-          >
-            <span aria-hidden="true">{decisionInfo.icon}</span> {decisionInfo.label}
-          </div>
-
-          {/* Low-confidence badge (sandbox-8jm.6/.7) -- `decision_confidence`
-              is only ever "low" once a decision has actually been reached
-              (this block is already gated on isTerminal && !isFailed above),
-              and is "high" or null/undefined (older items predating this
-              field) otherwise, in which case nothing renders here. Uses a
-              distinct visible text span (not just a color) plus role="status"
-              so screen readers announce it, matching the decision badge's
-              own accessibility pattern above. */}
-          {item.decision_confidence === 'low' && (
-            <div
-              className="inline-block my-2 ml-2 rounded-full border border-pending-border bg-pending-bg px-3 py-1 text-sm text-pending-text"
-              role="status"
-            >
-              {item.decision === 'throw_away' && comparableListings.length === 0
-                ? 'No comparable listings found — double-check'
-                : 'Few comparable listings — double-check the price'}
-            </div>
-          )}
-
-          {item.decision === 'sell' && item.suggested_price != null && (
-            <p className="font-semibold">
-              Suggested price: {item.suggested_price.toFixed(2)} EUR
-            </p>
-          )}
-
           {/* Suggested Kleinanzeigen title/description (sandbox-dwl.5) --
               only generated for sell/give_away decisions (see
               backend/app/pipeline.py), and only rendered here once both
@@ -392,80 +555,131 @@ function ItemResultPage() {
               conditionally-rendered-optional-field convention as
               `item.hint` above. Plain JSX text interpolation only (never
               dangerouslySetInnerHTML) since this is LLM-generated text. */}
-          {(item.decision === 'sell' || item.decision === 'give_away') &&
-            item.suggested_title &&
-            item.suggested_description && (
-              <div className="mt-6 text-left">
-                <h3 className="mb-2">Suggested Kleinanzeigen listing</h3>
+          <div className="mt-6 space-y-6">
+            <PricePosition
+              decision={item.decision}
+              suggestedPrice={item.suggested_price}
+              comparableListings={comparableListings}
+            />
 
-                <div className="mb-3 flex items-start justify-between gap-2">
-                  <p className="font-semibold">{item.suggested_title}</p>
-                  <CopyButton text={item.suggested_title} label="title" />
+            {(item.decision === 'sell' || item.decision === 'give_away') &&
+              item.suggested_title &&
+              item.suggested_description && (
+                /* e2e (helpers/decision.js) walks heading -> parent -> `p`
+                   descendants: title <p> first, description <p> second, so
+                   the row labels are <span>s, not <p>s, and the heading and
+                   the "Open Kleinanzeigen" link are direct children of this
+                   card (a two-column grid) rather than wrapped in a header
+                   div. */
+                <div className="grid grid-cols-[1fr_auto] overflow-hidden rounded-2xl border border-line bg-surface text-left shadow-card">
+                  <h3
+                    className={`border-b border-line px-5 py-3 font-semibold ${
+                      listingSearchQuery ? '' : 'col-span-2'
+                    }`}
+                  >
+                    Suggested Kleinanzeigen listing
+                  </h3>
+                  {listingSearchQuery && (
+                    <a
+                      href={buildKleinanzeigenSearchUrl(listingSearchQuery)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 border-b border-line px-5 py-3 text-sm font-medium text-primary hover:text-primary-hover"
+                    >
+                      Open Kleinanzeigen
+                      <ExternalLink size={14} />
+                    </a>
+                  )}
+
+                  <div className="col-span-2 divide-y divide-line">
+                    <div className="flex items-start gap-3 px-5 py-4">
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-xs font-semibold uppercase tracking-wider text-muted">
+                          Title
+                        </span>
+                        <p className="mt-1 font-medium">{item.suggested_title}</p>
+                      </div>
+                      <CopyButton text={item.suggested_title} label="title" />
+                    </div>
+                    <div className="flex items-start gap-3 px-5 py-4">
+                      <div className="min-w-0 flex-1">
+                        <span className="block text-xs font-semibold uppercase tracking-wider text-muted">
+                          Description
+                        </span>
+                        <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed">
+                          {item.suggested_description}
+                        </p>
+                      </div>
+                      <CopyButton text={item.suggested_description} label="description" />
+                    </div>
+                  </div>
                 </div>
+              )}
 
-                <div className="flex items-start justify-between gap-2">
-                  <p className="flex-1 whitespace-pre-wrap">{item.suggested_description}</p>
-                  <CopyButton text={item.suggested_description} label="description" />
-                </div>
-              </div>
-            )}
-
-          {/* The actual Kleinanzeigen search query used to find the
-              comparable listings below (sandbox-b9a.1/.2) -- only rendered
-              when a non-empty string, since a search may never have been
-              attempted (e.g. identification failed, or never produced
-              usable keywords). Placed just above "Comparable listings" so
-              it's clear which query produced them. */}
-          {item.search_query_used && (
-            <div className="mt-6 text-left">
-              <div className="flex items-start justify-between gap-2">
-                <p>Kleinanzeigen search used: {item.search_query_used}</p>
+            {/* The actual Kleinanzeigen search query used to find the
+                comparable listings below (sandbox-b9a.1/.2) -- only rendered
+                when a non-empty string, since a search may never have been
+                attempted. Placed just above "Comparable listings" so it's
+                clear which query produced them. */}
+            {item.search_query_used && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-left">
+                <p className="text-sm text-muted">
+                  Searched:{' '}
+                  <span className="font-mono text-xs text-ink">{item.search_query_used}</span>
+                </p>
                 <CopyButton text={item.search_query_used} label="search query" />
-              </div>
-              <p className="mt-1">
                 <a
                   href={buildKleinanzeigenSearchUrl(item.search_query_used)}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="link"
+                  className="inline-flex items-center gap-1 text-sm font-medium text-primary hover:text-primary-hover"
                 >
-                  Search on Kleinanzeigen ↗
+                  Search on Kleinanzeigen
+                  <ExternalLink size={14} />
                 </a>
-              </p>
-            </div>
-          )}
-
-          <div className="mt-6 text-left">
-            <h3 className="mb-2">Comparable listings</h3>
-            {comparableListings.length === 0 ? (
-              <p>No comparable listings found.</p>
-            ) : (
-              <ul className="list-disc pl-5">
-                {comparableListings.map((listing) => (
-                  <li key={listing.id} className="mb-2">
-                    <a href={listing.url} target="_blank" rel="noopener noreferrer" className="link">
-                      {listing.title}
-                    </a>{' '}
-                    &mdash; {listing.price.toFixed(2)} EUR
-                    {listing.condition && `, ${listing.condition}`}
-                    {listing.location && `, ${listing.location}`}
-                  </li>
-                ))}
-              </ul>
+              </div>
             )}
+
+            <div className="text-left">
+              <h3 className="font-semibold">Comparable listings</h3>
+              {comparableListings.length === 0 ? (
+                <p className="mt-3 text-sm text-muted">No comparable listings found.</p>
+              ) : (
+                <ul className="mt-3 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+                  {comparableListings.map((listing) => (
+                    /* DOM order is title, price, then condition/location:
+                       e2e slices the <li> text after "EUR" to inspect the
+                       condition, so the price must precede it in the DOM
+                       even though the grid places the meta line below. */
+                    <li
+                      key={listing.id}
+                      className="grid grid-cols-[1fr_auto] items-baseline gap-x-3 px-4 py-3"
+                    >
+                      <a
+                        href={listing.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="min-w-0 truncate font-medium hover:underline"
+                      >
+                        {listing.title}
+                      </a>
+                      <span className="text-right font-mono text-sm tabular-nums">
+                        {typeof listing.price === 'number' ? `${listing.price.toFixed(2)} EUR` : ''}
+                      </span>
+                      <span className="text-sm text-muted">
+                        {[listing.condition, listing.location].filter(Boolean).join(' · ')}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+
+            {item.status === 'decided' && <StatusActions item={item} onUpdated={setItem} />}
           </div>
         </>
       )}
 
-      <p className="mt-6">
-        <Link to="/" className="link">
-          Upload another photo
-        </Link>
-        {' | '}
-        <Link to="/inventory" className="link">
-          View basement inventory
-        </Link>
-      </p>
     </div>
   )
 }

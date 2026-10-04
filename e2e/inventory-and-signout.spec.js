@@ -113,12 +113,11 @@ test('an uploaded item appears in /inventory and a manual status transition upda
   // Failed items are not `decided`, so no manual transition applies to them.
   const targetStatus = outcome.kind === 'decision' ? DECISION_TO_TARGET_STATUS[outcome.decision] : null
 
-  // ItemResultPage.jsx always renders a "View basement inventory" link
-  // (`<Link to="/inventory">`) once the item has loaded, outside any
-  // terminal-only conditional -- navigate via it rather than a raw
-  // `page.goto('/inventory')` so this exercises the app's own
-  // client-side routing, same as a real user would use.
-  await page.getByRole('link', { name: /view basement inventory/i }).click()
+  // Navigate via the app shell's "Inventory" nav link rather than a raw
+  // `page.goto('/inventory')` so this exercises the app's own client-side
+  // routing, same as a real user would use. (ItemResultPage's back link has
+  // aria-label "Back to inventory", so this exact-name locator stays unique.)
+  await page.getByRole('link', { name: 'Inventory', exact: true }).click()
   await expect(page).toHaveURL(/\/inventory$/)
 
   // InventoryPage.jsx renders each item as an `<li>` containing a
@@ -168,25 +167,27 @@ test('an uploaded item appears in /inventory and a manual status transition upda
 test('signing out reverts to the sign-in gate and survives a page reload', async ({ page }) => {
   await signInAs(page)
 
-  // UploadPage.jsx's "View basement inventory" link -- land on
+  // the app shell's top-bar "Inventory" nav link -- land on
   // /inventory specifically (rather than staying on `/`) since it has
   // its own unambiguous heading ("Basement Inventory") to assert on
-  // before AND after sign-out, unlike `/` (UploadPage.jsx) and the
-  // sign-in gate (SignInPage.jsx), which both render an identical
-  // "Basement Declutter" <h1> and so can't be told apart by that text
-  // alone (see smoke.spec.js's same observation).
-  await page.getByRole('link', { name: /view basement inventory/i }).click()
+  // before AND after sign-out, unlike `/` (UploadPage.jsx, whose
+  // <h1> is "What did you find down there?") and the sign-in gate
+  // (SignInPage.jsx), whose headings differ from /inventory's.
+  await page.getByRole('link', { name: 'Inventory', exact: true }).click()
   await expect(page).toHaveURL(/\/inventory$/)
 
   const inventoryHeading = page.getByRole('heading', { name: /^Basement Inventory$/ })
   const signedInText = page.getByText(/^Signed in as /)
-  const signOutButton = page.getByRole('button', { name: /^Sign out$/ })
+  const signOutButton = page.getByRole('menuitem', { name: /^Sign out$/ })
   // SignInPage.jsx's own distinguishing copy -- not rendered by any
   // authenticated page, so its ABSENCE here is exactly what proves the
   // authenticated app (not the sign-in gate) is what's currently shown.
   const signInGateText = page.getByText(/sign in with your google account/i)
 
   await expect(inventoryHeading).toBeVisible()
+  // Sign-out lives in the AppLayout account menu (sandbox-2pc.2): closed
+  // by default, so open it before asserting on its contents.
+  await page.getByRole('button', { name: 'Account menu' }).click()
   await expect(signedInText).toBeVisible()
   await expect(signOutButton).toBeVisible()
   await expect(signInGateText).toHaveCount(0)
@@ -204,6 +205,7 @@ test('signing out reverts to the sign-in gate and survives a page reload', async
   await expect(inventoryHeading).toHaveCount(0)
   await expect(signedInText).toHaveCount(0)
   await expect(signOutButton).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Account menu' })).toHaveCount(0)
 
   // THE core proof that the session token was actually cleared from
   // localStorage (not just hidden in React state): read it straight back

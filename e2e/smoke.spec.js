@@ -25,12 +25,12 @@ test('signed-in E2E test identity sees the upload page, not the sign-in gate', a
   // the app's own "Loading..." state, takes a moment.
 
   // The upload page (frontend/src/UploadPage.jsx) renders a "Take or
-  // choose a photo" file input and a "Sign out" control that the sign-in
+  // choose a photo" file input and an "Account menu" button that the sign-in
   // gate (frontend/src/SignInPage.jsx) never renders -- assert on those
   // rather than the "Basement Declutter" <h1>, which BOTH pages render
   // and so can't distinguish between them.
   await expect(page.getByLabel(/take or choose a photo/i)).toBeVisible()
-  await expect(page.getByRole('button', { name: /sign out/i })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Account menu' })).toBeVisible()
 
   // Belt-and-suspenders: explicitly assert the sign-in gate's own
   // distinguishing copy is NOT present, i.e. the sign-in gate itself is

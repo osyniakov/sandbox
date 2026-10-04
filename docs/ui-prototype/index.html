@@ -1,0 +1,554 @@
+<title>Basement Declutter Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap">
+<script src="https://cdn.tailwindcss.com/3.4.16"></script>
+<script>
+  // Token-backed Tailwind theme: every utility (bg-surface, text-ink, ...) resolves
+  // to a CSS variable, so light/dark is handled once in :root below.
+  tailwind.config = {
+    theme: {
+      extend: {
+        colors: {
+          ground: 'var(--ground)', surface: 'var(--surface)', sunken: 'var(--sunken)',
+          ink: 'var(--ink)', muted: 'var(--muted)', line: 'var(--line)',
+          primary: { DEFAULT: 'var(--primary)', hover: 'var(--primary-hover)', soft: 'var(--primary-soft)', ink: 'var(--primary-ink)' },
+          sell: { DEFAULT: 'var(--sell)', soft: 'var(--sell-soft)' },
+          give: { DEFAULT: 'var(--give)', soft: 'var(--give-soft)' },
+          toss: { DEFAULT: 'var(--toss)', soft: 'var(--toss-soft)' },
+          warn: { DEFAULT: 'var(--warn)', soft: 'var(--warn-soft)' },
+        },
+        fontFamily: {
+          display: ['"Bricolage Grotesque"', 'system-ui', 'sans-serif'],
+          sans: ['Figtree', 'system-ui', '"Segoe UI"', 'sans-serif'],
+          mono: ['"JetBrains Mono"', 'ui-monospace', 'Consolas', 'monospace'],
+        },
+        boxShadow: { card: 'var(--shadow)' },
+      },
+    },
+  }
+</script>
+<style>
+  /* Layout: mobile-first app shell — top bar + content column (max 42rem), bottom tab bar on phones.
+     Palette keeps the existing purple brand and green/blue/red decision semantics, refined. */
+  :root {
+    --ground: #f7f6f9;  --surface: #ffffff;  --sunken: #f0eef4;
+    --ink: #17141f;     --muted: #6b6578;    --line: #e4e1ea;
+    --primary: #8b2ff0; --primary-hover: #7420d6; --primary-soft: #f2e9fe; --primary-ink: #5b16b0;
+    --sell: #16794a;    --sell-soft: #e3f5eb;
+    --give: #1f5fc9;    --give-soft: #e5eefc;
+    --toss: #b3372b;    --toss-soft: #fbe9e6;
+    --warn: #8a5a00;    --warn-soft: #fdf3dc;
+    --shadow: 0 1px 2px rgb(23 20 31 / .05), 0 4px 16px -4px rgb(23 20 31 / .08);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #121016;  --surface: #1b1820;  --sunken: #241f2b;
+      --ink: #f1eef6;     --muted: #a29bb0;    --line: #2f2a37;
+      --primary: #b57bff; --primary-hover: #c796ff; --primary-soft: #2c1f42; --primary-ink: #d6b6ff;
+      --sell: #5fd197;    --sell-soft: #15301f;
+      --give: #7fb0ff;    --give-soft: #172540;
+      --toss: #ff8a7d;    --toss-soft: #3a1a17;
+      --warn: #f2c25b;    --warn-soft: #332608;
+      --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 6px 20px -6px rgb(0 0 0 / .5);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #121016;  --surface: #1b1820;  --sunken: #241f2b;
+    --ink: #f1eef6;     --muted: #a29bb0;    --line: #2f2a37;
+    --primary: #b57bff; --primary-hover: #c796ff; --primary-soft: #2c1f42; --primary-ink: #d6b6ff;
+    --sell: #5fd197;    --sell-soft: #15301f;
+    --give: #7fb0ff;    --give-soft: #172540;
+    --toss: #ff8a7d;    --toss-soft: #3a1a17;
+    --warn: #f2c25b;    --warn-soft: #332608;
+    --shadow: 0 1px 2px rgb(0 0 0 / .4), 0 6px 20px -6px rgb(0 0 0 / .5);
+    color-scheme: dark;
+  }
+  body { background: var(--ground); color: var(--ink); font-family: Figtree, system-ui, sans-serif; font-size: 15px; }
+  h1, h2, h3 { text-wrap: balance; }
+  .tnum { font-variant-numeric: tabular-nums; }
+  :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 6px; }
+  .photo { background:
+      radial-gradient(120% 80% at 30% 20%, rgb(255 255 255 / .35), transparent 60%),
+      linear-gradient(135deg, var(--c1), var(--c2)); }
+  @keyframes pulse-dot { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
+  .pulse { animation: pulse-dot 1.4s ease-in-out infinite; }
+  @keyframes bar { from { transform: translateX(-100%) } to { transform: translateX(250%) } }
+  .indeterminate { animation: bar 1.3s ease-in-out infinite; }
+  @media (prefers-reduced-motion: reduce) { .pulse, .indeterminate { animation: none } }
+</style>
+
+<!-- ================= Prototype controls (not part of the app) ================= -->
+<div class="border-b border-dashed border-line bg-sunken px-4 py-2 text-xs text-muted">
+  <div class="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2">
+    <span class="font-semibold uppercase tracking-wider">Prototype</span>
+    <div class="flex flex-wrap gap-1" id="screen-tabs" role="tablist" aria-label="Screen"></div>
+    <div class="flex flex-wrap items-center gap-1" id="state-tabs" aria-label="State"></div>
+  </div>
+</div>
+
+<!-- ================= Sign-in screen ================= -->
+<section data-screen="signin" class="px-4 py-16 sm:py-24" hidden>
+  <div class="mx-auto max-w-sm">
+    <div class="mb-8 flex items-center gap-2.5">
+      <span class="grid h-10 w-10 place-items-center rounded-xl bg-primary text-white">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>
+      </span>
+      <span class="font-display text-lg font-bold tracking-tight">Basement Declutter</span>
+    </div>
+    <h1 class="font-display text-4xl font-bold leading-[1.05] tracking-tight">Sell it, gift it, or bin it.</h1>
+    <p class="mt-3 text-muted">Snap a photo of anything in the basement. We identify it, check what it goes for on Kleinanzeigen, and tell you what to do with it.</p>
+
+    <div class="mt-8 rounded-2xl border border-line bg-surface p-5 shadow-card">
+      <button class="flex w-full items-center justify-center gap-3 rounded-full border border-line bg-surface px-4 py-2.5 font-medium hover:bg-sunken">
+        <svg width="18" height="18" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
+        Sign in with Google
+      </button>
+      <p class="mt-3 text-center text-xs text-muted">Only invited accounts can sign in.</p>
+      <div data-state-only="signin:error" class="mt-4 flex gap-2.5 rounded-xl bg-toss-soft px-3.5 py-3 text-sm text-toss" role="alert" hidden>
+        <svg class="mt-0.5 shrink-0" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        <p><b class="font-semibold">alex@example.com isn't on the guest list.</b> Ask the owner to add your email, then try again.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ================= App shell (signed in) ================= -->
+<div data-shell hidden>
+  <header class="sticky z-20 border-b border-line bg-surface/90 backdrop-blur" style="top: env(safe-area-inset-top, 0px)">
+    <div class="mx-auto flex h-14 max-w-5xl items-center gap-6 px-4">
+      <a href="#" data-go="capture" class="flex items-center gap-2">
+        <span class="grid h-8 w-8 place-items-center rounded-lg bg-primary text-white">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>
+        </span>
+        <span class="font-display font-bold tracking-tight">Basement Declutter</span>
+      </a>
+      <nav class="hidden gap-1 sm:flex" aria-label="Main">
+        <a href="#" data-go="capture" data-nav="capture" class="rounded-lg px-3 py-1.5 text-sm font-medium">Add item</a>
+        <a href="#" data-go="inventory" data-nav="inventory" class="rounded-lg px-3 py-1.5 text-sm font-medium">Inventory</a>
+      </nav>
+      <div class="relative ml-auto">
+        <button id="avatar-btn" class="flex items-center gap-2 rounded-full py-1 pl-1 pr-2 hover:bg-sunken" aria-haspopup="menu" aria-expanded="false">
+          <span class="grid h-7 w-7 place-items-center rounded-full bg-primary-soft text-xs font-bold text-primary-ink">AS</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-muted"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div id="avatar-menu" class="absolute right-0 mt-2 w-60 rounded-xl border border-line bg-surface p-1.5 shadow-card" role="menu" hidden>
+          <p class="px-3 py-2 text-xs text-muted">Signed in as<br><span class="text-sm font-medium text-ink">alexey@example.com</span></p>
+          <button class="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-sunken" role="menuitem" data-go="signin">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+            Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-5xl px-4 pb-28 pt-6 sm:pb-16 sm:pt-10">
+
+    <!-- ================= Capture / upload ================= -->
+    <section data-screen="capture" class="mx-auto max-w-xl" hidden>
+      <p class="text-xs font-semibold uppercase tracking-wider text-primary">New item</p>
+      <h1 class="mt-1 font-display text-3xl font-bold tracking-tight sm:text-4xl">What did you find down there?</h1>
+      <p class="mt-2 text-muted">Take a clear photo of one item. We'll handle the rest in about 20 seconds.</p>
+
+      <!-- Idle drop zone -->
+      <label for="photo-input" data-state-only="capture:idle capture:error" class="group mt-8 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-line bg-surface px-6 py-12 text-center transition hover:border-primary hover:bg-primary-soft/40">
+        <span class="grid h-14 w-14 place-items-center rounded-full bg-primary text-white shadow-card transition group-hover:scale-105">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></svg>
+        </span>
+        <span class="mt-4 font-semibold">Take or choose a photo</span>
+        <span class="mt-1 text-sm text-muted">On your phone this opens the camera</span>
+        <input id="photo-input" type="file" accept="image/*" class="sr-only">
+      </label>
+
+      <!-- Busy: preparing / uploading -->
+      <div data-state-only="capture:uploading" class="mt-8 overflow-hidden rounded-2xl border border-line bg-surface shadow-card" role="status" hidden>
+        <div class="flex items-center gap-4 p-4">
+          <div class="photo h-16 w-16 shrink-0 rounded-xl" style="--c1:#c9653b;--c2:#5a2a1a"></div>
+          <div class="min-w-0 flex-1">
+            <p class="font-semibold">Uploading photo…</p>
+            <p class="truncate text-sm text-muted">IMG_4821.jpg · resized to 1.2 MB</p>
+          </div>
+        </div>
+        <div class="h-1 overflow-hidden bg-sunken"><div class="indeterminate h-full w-2/5 rounded-full bg-primary"></div></div>
+      </div>
+
+      <!-- Error -->
+      <div data-state-only="capture:error" class="mt-4 flex gap-2.5 rounded-xl bg-toss-soft px-3.5 py-3 text-sm text-toss" role="alert" hidden>
+        <svg class="mt-0.5 shrink-0" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        <div class="flex-1"><p><b class="font-semibold">Upload stalled.</b> Could not reach the server. Check your connection and try again.</p></div>
+        <button class="shrink-0 self-start rounded-lg bg-surface px-2.5 py-1 text-xs font-semibold text-ink shadow-card">Try again</button>
+      </div>
+
+      <div class="mt-6">
+        <label for="hint-input" class="text-sm font-semibold">Hint <span class="font-normal text-muted">(optional)</span></label>
+        <input id="hint-input" type="text" maxlength="500" placeholder="e.g. Bosch drill, orange casing" class="mt-1.5 w-full rounded-xl border border-line bg-surface px-3.5 py-2.5 placeholder:text-muted/70 focus:border-primary focus:outline-none focus:ring-4 focus:ring-primary-soft">
+        <p class="mt-1.5 text-xs text-muted">Brand, model, or anything the photo can't show. Helps with tricky items.</p>
+      </div>
+
+      <div class="mt-10 border-t border-line pt-6">
+        <div class="flex items-baseline justify-between">
+          <h2 class="text-sm font-semibold">Recently added</h2>
+          <a href="#" data-go="inventory" class="text-sm font-medium text-primary hover:text-primary-hover">See all →</a>
+        </div>
+        <ul id="recent-list" class="mt-3 grid grid-cols-3 gap-3"></ul>
+      </div>
+    </section>
+
+    <!-- ================= Item result ================= -->
+    <section data-screen="result" class="mx-auto max-w-2xl" hidden>
+      <a href="#" data-go="inventory" class="inline-flex items-center gap-1 text-sm font-medium text-muted hover:text-ink">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m15 18-6-6 6-6"/></svg>
+        Inventory
+      </a>
+
+      <div class="mt-4 grid gap-5 sm:grid-cols-[13rem_1fr] sm:items-start">
+        <div class="photo aspect-square w-full max-w-full rounded-2xl shadow-card sm:w-52" style="--c1:#e08a3c;--c2:#3e5a2a"></div>
+        <div class="min-w-0">
+          <p class="text-xs font-semibold uppercase tracking-wider text-muted">Item #42 · Tools</p>
+          <h1 class="mt-1 font-display text-2xl font-bold leading-tight tracking-tight sm:text-3xl" data-result-title>Bosch PSB 500 RE impact drill</h1>
+          <p class="mt-1.5 text-sm text-muted">Your hint: “Bosch drill, orange casing”</p>
+
+          <!-- Decision summary (decided) -->
+          <div data-state-only="result:sell result:lowconf" class="mt-4 flex flex-wrap items-center gap-2">
+            <span class="inline-flex items-center gap-1.5 rounded-full bg-sell-soft px-3 py-1 text-sm font-semibold text-sell">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>
+              Sell
+            </span>
+            <span data-state-only="result:lowconf" class="inline-flex items-center gap-1.5 rounded-full bg-warn-soft px-3 py-1 text-sm font-medium text-warn" role="status" hidden>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+              Few comparables, double-check the price
+            </span>
+          </div>
+          <p data-state-only="result:sell result:lowconf" class="mt-3 flex items-baseline gap-2">
+            <span class="font-display text-4xl font-bold tracking-tight tnum">€35</span>
+            <span class="text-sm text-muted">suggested price</span>
+          </p>
+        </div>
+      </div>
+
+      <!-- Processing -->
+      <div data-state-only="result:processing" class="mt-8 rounded-2xl border border-line bg-surface p-5 shadow-card" role="status" hidden>
+        <p class="font-semibold">Working on it…</p>
+        <p class="text-sm text-muted">This page updates by itself. You can leave and come back.</p>
+        <ol class="mt-5 space-y-4">
+          <li class="flex items-center gap-3">
+            <span class="grid h-7 w-7 place-items-center rounded-full bg-sell text-white"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg></span>
+            <span><span class="font-medium">Identify item</span> <span class="text-sm text-muted">· Bosch PSB 500 RE</span></span>
+          </li>
+          <li class="flex items-center gap-3">
+            <span class="grid h-7 w-7 place-items-center rounded-full bg-primary-soft"><span class="pulse h-2.5 w-2.5 rounded-full bg-primary"></span></span>
+            <span class="font-medium">Search Kleinanzeigen for comparables</span>
+          </li>
+          <li class="flex items-center gap-3 text-muted">
+            <span class="grid h-7 w-7 place-items-center rounded-full border-2 border-line"></span>
+            <span>Decide and price</span>
+          </li>
+        </ol>
+      </div>
+
+      <!-- Failed -->
+      <div data-state-only="result:failed" class="mt-8 rounded-2xl bg-toss-soft p-5 text-toss" role="alert" hidden>
+        <p class="font-semibold">We couldn't identify this item from the photo.</p>
+        <p class="mt-1 text-sm">Try a clearer photo in better light, or add a hint with the brand or model.</p>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <a href="#" data-go="capture" class="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover">Retake photo</a>
+          <button class="rounded-full border border-toss/30 px-4 py-2 text-sm font-semibold hover:bg-surface/60">Delete item</button>
+        </div>
+      </div>
+
+      <!-- Decided details -->
+      <div data-state-only="result:sell result:lowconf" class="mt-8 space-y-6">
+
+        <!-- Price context strip -->
+        <div class="rounded-2xl border border-line bg-surface p-5 shadow-card">
+          <div class="flex items-baseline justify-between">
+            <h2 class="font-semibold">Where €35 sits</h2>
+            <span class="text-sm text-muted tnum" data-comp-count>6 comparables</span>
+          </div>
+          <div class="relative mt-6 h-12" aria-hidden="true">
+            <div class="absolute inset-x-0 top-4 h-1.5 rounded-full bg-sunken"></div>
+            <div id="price-dots"></div>
+            <div class="absolute top-0 -translate-x-1/2" id="price-marker">
+              <div class="h-[1.375rem] w-1 rounded-full bg-primary"></div>
+            </div>
+            <div class="absolute inset-x-0 top-8 flex justify-between text-xs text-muted tnum"><span id="price-min"></span><span id="price-max"></span></div>
+          </div>
+        </div>
+
+        <!-- Listing draft -->
+        <div class="rounded-2xl border border-line bg-surface shadow-card">
+          <div class="flex items-center justify-between border-b border-line px-5 py-3">
+            <h2 class="font-semibold">Ready-to-post listing</h2>
+            <a href="https://www.kleinanzeigen.de/s-bosch-psb-500-re/k0" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 text-sm font-medium text-primary hover:text-primary-hover">
+              Open Kleinanzeigen
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17 17 7M7 7h10v10"/></svg>
+            </a>
+          </div>
+          <div class="divide-y divide-line">
+            <div class="flex items-start gap-3 px-5 py-4">
+              <div class="min-w-0 flex-1">
+                <p class="text-xs font-semibold uppercase tracking-wider text-muted">Title</p>
+                <p class="mt-1 font-medium" id="draft-title">Bosch PSB 500 RE Schlagbohrmaschine, 500 W, voll funktionsfähig</p>
+              </div>
+              <button data-copy="draft-title" class="copy-btn shrink-0 rounded-lg border border-line px-2.5 py-1.5 text-xs font-semibold hover:bg-sunken">Copy</button>
+            </div>
+            <div class="flex items-start gap-3 px-5 py-4">
+              <div class="min-w-0 flex-1">
+                <p class="text-xs font-semibold uppercase tracking-wider text-muted">Description</p>
+                <p class="mt-1 whitespace-pre-line text-sm leading-relaxed" id="draft-desc">Verkaufe meine Bosch PSB 500 RE Schlagbohrmaschine. Läuft einwandfrei, normale Gebrauchsspuren am Gehäuse.
+Mit Zusatzhandgriff und Tiefenanschlag. Abholung in Köln oder Versand gegen Aufpreis.</p>
+              </div>
+              <button data-copy="draft-desc" class="copy-btn shrink-0 rounded-lg border border-line px-2.5 py-1.5 text-xs font-semibold hover:bg-sunken">Copy</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Comparables -->
+        <div>
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h2 class="font-semibold">Comparable listings</h2>
+            <p class="text-sm text-muted">Searched: <span class="font-mono text-xs text-ink">bosch psb 500 re</span></p>
+          </div>
+          <ul id="comp-list" class="mt-3 divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface"></ul>
+        </div>
+
+        <!-- Act on it -->
+        <div class="flex flex-wrap gap-2 rounded-2xl bg-sunken p-4">
+          <p class="w-full text-sm text-muted">Done something with it?</p>
+          <button class="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover">Mark as listed</button>
+          <button class="rounded-full border border-line bg-surface px-4 py-2 text-sm font-semibold hover:bg-ground">Given away</button>
+          <button class="rounded-full border border-line bg-surface px-4 py-2 text-sm font-semibold hover:bg-ground">Disposed</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ================= Inventory ================= -->
+    <section data-screen="inventory" hidden>
+      <div class="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 class="font-display text-3xl font-bold tracking-tight sm:text-4xl">Inventory</h1>
+          <p class="mt-1 text-muted tnum" id="inv-summary"></p>
+        </div>
+        <a href="#" data-go="capture" class="hidden items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-card hover:bg-primary-hover sm:inline-flex">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><path d="M12 5v14M5 12h14"/></svg>
+          Add item
+        </a>
+      </div>
+
+      <!-- Summary tiles double as decision filter -->
+      <div class="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4" id="decision-tiles"></div>
+
+      <div class="mt-4 flex flex-wrap items-center gap-2">
+        <span class="text-sm text-muted">Status</span>
+        <div class="flex flex-wrap gap-1.5" id="status-chips"></div>
+      </div>
+
+      <div data-state-only="inventory:loaded" class="mt-5">
+        <ul id="inv-list" class="grid gap-3 lg:grid-cols-2"></ul>
+      </div>
+      <div data-state-only="inventory:empty" class="mt-5 rounded-2xl border-2 border-dashed border-line px-6 py-14 text-center" hidden>
+        <p class="font-semibold">Nothing here yet</p>
+        <p class="mt-1 text-sm text-muted">Photograph your first basement item to get a recommendation.</p>
+        <a href="#" data-go="capture" class="mt-4 inline-flex rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover">Add item</a>
+      </div>
+    </section>
+  </main>
+
+  <!-- Mobile bottom tab bar -->
+  <nav class="fixed inset-x-0 bottom-0 z-20 border-t border-line bg-surface/95 backdrop-blur sm:hidden" style="padding-bottom: env(safe-area-inset-bottom, 0px)" aria-label="Main">
+    <div class="mx-auto grid max-w-md grid-cols-2">
+      <a href="#" data-go="capture" data-nav="capture" class="flex flex-col items-center gap-0.5 py-2.5 text-xs font-medium">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3z"/><circle cx="12" cy="13" r="3"/></svg>
+        Add item
+      </a>
+      <a href="#" data-go="inventory" data-nav="inventory" class="flex flex-col items-center gap-0.5 py-2.5 text-xs font-medium">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="M3 8l9 5 9-5M12 13v8"/></svg>
+        Inventory
+      </a>
+    </div>
+  </nav>
+</div>
+
+<!-- Delete confirmation sheet -->
+<div id="confirm" class="fixed inset-0 z-30 flex items-end justify-center bg-ink/40 p-4 sm:items-center" hidden>
+  <div class="w-full max-w-sm rounded-2xl bg-surface p-5 shadow-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+    <p id="confirm-title" class="font-semibold">Delete this item?</p>
+    <p class="mt-1 text-sm text-muted" id="confirm-body"></p>
+    <div class="mt-5 flex justify-end gap-2">
+      <button id="confirm-cancel" class="rounded-full px-4 py-2 text-sm font-semibold hover:bg-sunken">Cancel</button>
+      <button id="confirm-ok" class="rounded-full bg-toss px-4 py-2 text-sm font-semibold text-white">Delete</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  // ---------- Example data (illustrative only) ----------
+  const ITEMS = [
+    { id: 42, name: 'Bosch PSB 500 RE impact drill', cat: 'Tools', decision: 'sell', status: 'decided', price: 35, c: ['#e08a3c', '#3e5a2a'] },
+    { id: 41, name: 'IKEA Expedit shelf, 2×4, white', cat: 'Furniture', decision: 'give_away', status: 'decided', c: ['#d8d2c4', '#8a8475'] },
+    { id: 40, name: 'Canon PIXMA MP250 printer', cat: 'Electronics', decision: 'throw_away', status: 'disposed', c: ['#55575c', '#1f2024'] },
+    { id: 39, name: 'Kettler kids bike, 20″', cat: 'Sports', decision: 'sell', status: 'listed', price: 60, low: true, c: ['#2f7dd1', '#173a63'] },
+    { id: 38, name: 'Box of Asterix comics (12)', cat: 'Books', decision: 'sell', status: 'decided', price: 24, c: ['#f2c94c', '#b5482c'] },
+    { id: 37, name: 'Unknown cable bundle', cat: '', decision: 'pending', status: 'pending_search', c: ['#7d7484', '#3a3340'] },
+    { id: 36, name: 'Tefal raclette grill', cat: 'Kitchen', decision: 'give_away', status: 'given_away', c: ['#a33b2f', '#3d1612'] },
+  ]
+  const COMPS = [
+    { t: 'Bosch PSB 500 RE mit Koffer', p: 45, cond: 'Gut', loc: 'Köln' },
+    { t: 'Schlagbohrmaschine Bosch PSB 500', p: 30, cond: 'In Ordnung', loc: 'Bonn' },
+    { t: 'Bosch PSB 500 RE, kaum benutzt', p: 50, cond: 'Sehr gut', loc: 'Leverkusen' },
+    { t: 'Bosch Bohrmaschine grün 500 W', p: 25, cond: 'In Ordnung', loc: 'Düsseldorf' },
+    { t: 'Bosch PSB 500 RE', p: 35, cond: 'Gut', loc: 'Köln' },
+    { t: 'Bohrmaschine Bosch PSB defekt', p: 10, cond: 'Defekt', loc: 'Brühl' },
+  ]
+  const DECISION = {
+    sell:       { label: 'Sell',       cls: 'bg-sell-soft text-sell' },
+    give_away:  { label: 'Give away',  cls: 'bg-give-soft text-give' },
+    throw_away: { label: 'Throw away', cls: 'bg-toss-soft text-toss' },
+    pending:    { label: 'Pending',    cls: 'bg-sunken text-muted' },
+  }
+  const STATUS = {
+    pending_identification: 'Identifying', pending_search: 'Searching', pending_decision: 'Deciding',
+    decided: 'To do', listed: 'Listed', given_away: 'Given away', disposed: 'Disposed',
+  }
+  const STATE_SETS = {
+    signin: [['idle', 'Default'], ['error', 'Not allowed']],
+    capture: [['idle', 'Idle'], ['uploading', 'Uploading'], ['error', 'Error']],
+    result: [['sell', 'Decided: sell'], ['lowconf', 'Low confidence'], ['processing', 'Processing'], ['failed', 'Failed']],
+    inventory: [['loaded', 'With items'], ['empty', 'Empty']],
+  }
+  const SCREENS = [['signin', 'Sign in'], ['capture', 'Add item'], ['result', 'Item result'], ['inventory', 'Inventory']]
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
+
+  let screen = 'capture', state = 'idle', decisionFilter = '', statusFilter = ''
+
+  // ---------- Prototype switcher ----------
+  const pill = (active) => `rounded-full px-2.5 py-1 font-medium ${active ? 'bg-ink text-ground' : 'hover:bg-surface'}`
+  function renderControls() {
+    document.getElementById('screen-tabs').innerHTML = SCREENS.map(([k, l]) =>
+      `<button class="${pill(k === screen)}" data-screen-btn="${k}">${l}</button>`).join('')
+    document.getElementById('state-tabs').innerHTML = '<span class="mx-1 opacity-50">/</span>' + STATE_SETS[screen].map(([k, l]) =>
+      `<button class="${pill(k === state)}" data-state-btn="${k}">${l}</button>`).join('')
+  }
+  function show(s, st) {
+    screen = s; state = st || STATE_SETS[s][0][0]
+    document.querySelectorAll('[data-screen]').forEach(el => el.hidden = el.dataset.screen !== screen)
+    document.querySelector('[data-shell]').hidden = screen === 'signin'
+    document.querySelectorAll('[data-state-only]').forEach(el => {
+      const keys = el.dataset.stateOnly.split(' ')
+      if (keys.some(k => k.startsWith(screen + ':'))) el.hidden = !keys.includes(screen + ':' + state)
+    })
+    document.querySelectorAll('[data-nav]').forEach(el => {
+      const on = el.dataset.nav === screen || (screen === 'result' && el.dataset.nav === 'inventory')
+      el.classList.toggle('text-primary', on); el.classList.toggle('bg-primary-soft', on && el.closest('header'))
+      el.classList.toggle('text-muted', !on)
+    })
+    document.getElementById('avatar-menu').hidden = true
+    renderControls(); window.scrollTo(0, 0)
+  }
+
+  // ---------- Renderers ----------
+  const photo = (it, size) => `<div class="photo ${size} shrink-0 rounded-xl" style="--c1:${it.c[0]};--c2:${it.c[1]}" role="img" aria-label="Photo of ${esc(it.name)}"></div>`
+  const badge = (d) => `<span class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${DECISION[d].cls}">${DECISION[d].label}</span>`
+
+  function renderRecent() {
+    document.getElementById('recent-list').innerHTML = ITEMS.slice(0, 3).map(it => `
+      <li><a href="#" data-go="result" class="block">
+        <div class="photo aspect-square w-full max-w-full rounded-xl" style="--c1:${it.c[0]};--c2:${it.c[1]}"></div>
+        <p class="mt-1.5 truncate text-sm font-medium">${esc(it.name)}</p>
+        <div class="mt-0.5">${badge(it.decision)}</div>
+      </a></li>`).join('')
+  }
+
+  function renderResult() {
+    const prices = COMPS.map(c => c.p), min = Math.min(...prices), max = Math.max(...prices)
+    const pos = v => ((v - min) / (max - min)) * 100
+    document.getElementById('price-min').textContent = '€' + min
+    document.getElementById('price-max').textContent = '€' + max
+    document.getElementById('price-dots').innerHTML = prices.map(p =>
+      `<span class="absolute top-[0.8rem] h-3 w-3 -translate-x-1/2 rounded-full border-2 border-surface bg-muted" style="left:${pos(p)}%"></span>`).join('')
+    document.getElementById('price-marker').style.left = pos(35) + '%'
+    document.getElementById('comp-list').innerHTML = COMPS.map(c => `
+      <li><a href="https://www.kleinanzeigen.de/" target="_blank" rel="noopener noreferrer" class="flex items-center gap-3 px-4 py-3 hover:bg-sunken">
+        <div class="min-w-0 flex-1">
+          <p class="truncate font-medium">${esc(c.t)}</p>
+          <p class="text-sm text-muted">${esc(c.cond)} · ${esc(c.loc)}</p>
+        </div>
+        <span class="font-mono text-sm tnum">€${c.p.toFixed(2)}</span>
+      </a></li>`).join('')
+  }
+
+  function renderInventory() {
+    const counts = { sell: 0, give_away: 0, throw_away: 0, pending: 0 }
+    ITEMS.forEach(i => counts[i.decision]++)
+    const todo = ITEMS.filter(i => i.status === 'decided').length
+    const value = ITEMS.filter(i => i.decision === 'sell' && i.status !== 'disposed').reduce((s, i) => s + (i.price || 0), 0)
+    document.getElementById('inv-summary').textContent = `${ITEMS.length} items · ${todo} waiting on you · ~€${value} to sell`
+
+    document.getElementById('decision-tiles').innerHTML = Object.keys(counts).map(d => {
+      const on = decisionFilter === d
+      return `<button data-dfilter="${d}" aria-pressed="${on}" class="rounded-2xl border p-3.5 text-left transition ${on ? 'border-primary ring-4 ring-primary-soft' : 'border-line hover:border-muted/40'} bg-surface">
+        <span class="inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${DECISION[d].cls}">${DECISION[d].label}</span>
+        <span class="mt-2 block font-display text-2xl font-bold tnum">${counts[d]}</span>
+      </button>`
+    }).join('')
+
+    const chip = (k, l) => `<button data-sfilter="${k}" class="rounded-full border px-3 py-1 text-sm ${statusFilter === k ? 'border-ink bg-ink font-semibold text-ground' : 'border-line bg-surface hover:bg-sunken'}">${l}</button>`
+    document.getElementById('status-chips').innerHTML = chip('', 'All') + ['decided', 'listed', 'given_away', 'disposed', 'pending_search'].map(k => chip(k, STATUS[k])).join('')
+
+    const list = ITEMS.filter(i => (!decisionFilter || i.decision === decisionFilter) && (!statusFilter || i.status === statusFilter))
+    const el = document.getElementById('inv-list')
+    if (!list.length) { el.innerHTML = `<li class="rounded-2xl border border-dashed border-line px-4 py-10 text-center text-sm text-muted lg:col-span-2">No items match these filters. <button data-clear class="font-semibold text-primary">Clear filters</button></li>`; return }
+    el.innerHTML = list.map(it => {
+      const done = ['listed', 'given_away', 'disposed'].includes(it.status)
+      const working = it.status.startsWith('pending')
+      const next = it.decision === 'sell' ? ['listed', 'Mark listed'] : it.decision === 'give_away' ? ['given_away', 'Mark given away'] : ['disposed', 'Mark disposed']
+      return `<li class="flex gap-3 rounded-2xl border border-line bg-surface p-3 shadow-card ${done ? 'opacity-70' : ''}">
+        <a href="#" data-go="result">${photo(it, 'h-20 w-20')}</a>
+        <div class="flex min-w-0 flex-1 flex-col">
+          <div class="flex items-start gap-2">
+            <a href="#" data-go="result" class="min-w-0 flex-1 font-semibold leading-snug hover:text-primary">${esc(it.name)}</a>
+            ${it.price ? `<span class="font-mono text-sm tnum">€${it.price}</span>` : ''}
+          </div>
+          <div class="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
+            ${badge(it.decision)}
+            ${it.low ? '<span class="inline-flex rounded-full bg-warn-soft px-2 py-0.5 font-semibold text-warn" title="Few comparable listings, double-check the price">Check price</span>' : ''}
+            <span class="inline-flex items-center gap-1">${working ? '<span class="pulse h-1.5 w-1.5 rounded-full bg-primary"></span>' : done ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6 9 17l-5-5"/></svg>' : ''}${STATUS[it.status]}</span>
+            ${it.cat ? `<span>· ${esc(it.cat)}</span>` : ''}
+          </div>
+          <div class="mt-auto flex items-center gap-2 pt-2">
+            ${it.status === 'decided' ? `<button class="rounded-full bg-primary px-3 py-1 text-xs font-semibold text-white hover:bg-primary-hover">${next[1]}</button>` : ''}
+            <button data-delete="${it.id}" class="ml-auto rounded-full p-1.5 text-muted hover:bg-toss-soft hover:text-toss" aria-label="Delete ${esc(it.name)}">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6"/></svg>
+            </button>
+          </div>
+        </div>
+      </li>`
+    }).join('')
+  }
+
+  // ---------- Events ----------
+  document.addEventListener('click', e => {
+    const t = e.target.closest('button, a'); if (!t) return
+    if (t.dataset.screenBtn) return show(t.dataset.screenBtn)
+    if (t.dataset.stateBtn) return show(screen, t.dataset.stateBtn)
+    if (t.dataset.go) { e.preventDefault(); return show(t.dataset.go) }
+    if (t.id === 'avatar-btn') { const m = document.getElementById('avatar-menu'); m.hidden = !m.hidden; t.setAttribute('aria-expanded', String(!m.hidden)); return }
+    if (t.dataset.dfilter !== undefined) { decisionFilter = decisionFilter === t.dataset.dfilter ? '' : t.dataset.dfilter; return renderInventory() }
+    if (t.dataset.sfilter !== undefined) { statusFilter = t.dataset.sfilter; return renderInventory() }
+    if (t.hasAttribute('data-clear')) { decisionFilter = statusFilter = ''; return renderInventory() }
+    if (t.dataset.delete) {
+      const it = ITEMS.find(i => i.id === +t.dataset.delete)
+      document.getElementById('confirm-body').textContent = `“${it.name}” and its photo will be removed for good.`
+      document.getElementById('confirm').hidden = false; return
+    }
+    if (t.id === 'confirm-cancel' || t.id === 'confirm-ok') { document.getElementById('confirm').hidden = true; return }
+    if (t.dataset.copy) {
+      const text = document.getElementById(t.dataset.copy).textContent
+      const done = () => { t.textContent = 'Copied'; t.classList.add('text-sell'); setTimeout(() => { t.textContent = 'Copy'; t.classList.remove('text-sell') }, 2000) }
+      navigator.clipboard?.writeText(text).then(done, done) ?? done()
+    }
+  })
+
+  renderRecent(); renderResult(); renderInventory(); show('capture')
+</script>

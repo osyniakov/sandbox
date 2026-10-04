@@ -1,54 +1,38 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { apiFetch } from './api.js'
-import { useAuthedImageUrl } from './useAuthedImageUrl.js'
-import SignOutControl from './SignOutControl.jsx'
-
-const STATUS_ACTION_LABELS = {
-  listed: 'Mark as listed on Kleinanzeigen',
-  given_away: 'Mark as given away',
-  disposed: 'Mark as disposed',
-}
+import { formatPrice } from './format.js'
+import { Check, Plus, Trash } from './icons.jsx'
+import {
+  DECISION_LABELS,
+  DECISION_PILL_CLASSES,
+  DECISION_PRIMARY_STATUS,
+  STATUS_ACTION_LABELS,
+  patchItemStatus,
+} from './itemsApi.js'
+import ItemPhoto from './ItemPhoto.jsx'
 
 const STATUS_LABELS = {
-  pending_identification: 'Pending identification',
-  pending_search: 'Pending search',
-  pending_decision: 'Pending decision',
-  decided: 'Decided',
+  decided: 'To do',
   listed: 'Listed',
   given_away: 'Given away',
   disposed: 'Disposed',
-}
-
-const DECISION_LABELS = {
-  pending: 'Pending',
-  sell: 'Sell',
-  give_away: 'Give away',
-  throw_away: 'Throw away',
+  pending_identification: 'Pending identification',
+  pending_search: 'Pending search',
+  pending_decision: 'Pending decision',
+  identification_failed: "Couldn't identify",
+  search_failed: 'Search failed',
 }
 
 const STATUS_FILTER_OPTIONS = Object.keys(STATUS_LABELS)
 const DECISION_FILTER_OPTIONS = Object.keys(DECISION_LABELS)
 
-// Maps each `Item.decision` value to the shared semantic decision-color
-// tokens defined in index.css (sandbox-zlt.2's @theme block), so the
-// badge below reuses the same sell=green / give_away=blue /
-// throw_away=red / pending=neutral meaning as the rest of the app.
-const DECISION_BADGE_CLASSES = {
-  pending: 'bg-pending-bg text-pending-text border-pending-border',
-  sell: 'bg-sell-bg text-sell-text border-sell-border',
-  give_away: 'bg-give-away-bg text-give-away-text border-give-away-border',
-  throw_away: 'bg-throw-away-bg text-throw-away-text border-throw-away-border',
-}
+const DONE_STATUSES = ['listed', 'given_away', 'disposed']
 
-async function fetchItems(statusFilter, decisionFilter, signal) {
-  const params = new URLSearchParams()
-  if (statusFilter) params.set('status', statusFilter)
-  if (decisionFilter) params.set('decision', decisionFilter)
-  const query = params.toString()
-  const response = await apiFetch(`/items${query ? `?${query}` : ''}`, {
-    signal,
-  })
+// One unfiltered request: the decision tiles need counts for every decision
+// regardless of the active filters, so filtering happens in memory.
+async function fetchItems(signal) {
+  const response = await apiFetch('/items', { signal })
   if (!response.ok) {
     // A 401 means the session expired while this page was open -- apiFetch
     // (api.js) has already cleared the stale token and dispatched
@@ -60,32 +44,6 @@ async function fetchItems(statusFilter, decisionFilter, signal) {
       throw new Error('Your session has expired. Please sign in again.')
     }
     throw new Error(`Failed to load items (${response.status} ${response.statusText})`)
-  }
-  return response.json()
-}
-
-async function patchItemStatus(id, status, signal) {
-  const response = await apiFetch(`/items/${id}/status`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status }),
-    signal,
-  })
-  if (!response.ok) {
-    // Same session-expired handling as fetchItems above.
-    if (response.status === 401) {
-      throw new Error('Your session has expired. Please sign in again.')
-    }
-    let detail = `Failed to update status (${response.status} ${response.statusText})`
-    try {
-      const body = await response.json()
-      if (body && typeof body.detail === 'string') {
-        detail = body.detail
-      }
-    } catch {
-      // Body wasn't JSON -- fall back to the generic message above.
-    }
-    throw new Error(detail)
   }
   return response.json()
 }
@@ -114,46 +72,15 @@ async function deleteItem(id, signal) {
   return response.json()
 }
 
-// Renders a single inventory item's photo thumbnail (or a "no photo"/
-// loading placeholder), extracted into its own component because
-// `useAuthedImageUrl` is a hook and hooks can't be called inside the
-// `.map()` below (one call per rendered `<li>`, sandbox-dfr.5). Handles the
-// same "no photo yet" / "still loading" / "ready" states ItemResultPage.jsx
-// handles for its single photo -- see useAuthedImageUrl.js for the full
-// authenticated-blob-URL rationale.
-function InventoryItemPhoto({ item }) {
-  const photoObjectUrl = useAuthedImageUrl(item.photo_url)
-  const alt = item.identified_name
-    ? `Photo of ${item.identified_name}`
-    : `Photo of item #${item.id}`
-
-  if (!item.photo_url) {
-    return (
-      <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded border border-dashed border-border text-center text-xs text-text">
-        No photo
-      </div>
-    )
-  }
-
-  if (!photoObjectUrl) {
-    return (
-      <div
-        className="flex h-16 w-16 shrink-0 items-center justify-center rounded border border-dashed border-border text-center text-xs text-text"
-        data-testid="photo-placeholder"
-      >
-        Loading...
-      </div>
-    )
-  }
-
-  return (
-    <img className="h-16 w-16 shrink-0 rounded object-cover" src={photoObjectUrl} alt={alt} />
-  )
+function lowConfidenceCopy(item) {
+  return item.decision === 'throw_away' && (item.comparable_listings || []).length === 0
+    ? 'No comparable listings found — double-check'
+    : 'Few comparable listings — double-check the price'
 }
 
 // The basement inventory list, rendered at `/inventory` (sandbox-yqf.11).
-// Lists every `Item` (photo thumbnail, decision, status), filterable by
-// `status`/`decision` via `GET /items` query params, with per-item
+// Lists every `Item` (photo thumbnail, decision, status), filterable in
+// memory by status (chips) and decision (tiles), with per-item
 // buttons to manually advance status to any currently-valid next state
 // via `PATCH /items/{id}/status`. Which statuses are valid next states is
 // NOT duplicated here -- it's read directly from each item's
@@ -170,13 +97,17 @@ function InventoryPage() {
   const [updateError, setUpdateError] = useState('')
   const [deletingId, setDeletingId] = useState(null)
   const [deleteError, setDeleteError] = useState('')
+  const [confirmItem, setConfirmItem] = useState(null)
+  const deleteTriggerRef = useRef(null)
+  const cancelRef = useRef(null)
+  const dialogRef = useRef(null)
 
   const loadItems = useCallback(
     async (signal) => {
       setLoading(true)
       setLoadError('')
       try {
-        const data = await fetchItems(statusFilter, decisionFilter, signal)
+        const data = await fetchItems(signal)
         setItems(data)
       } catch (err) {
         if (err.name === 'AbortError') return
@@ -185,7 +116,7 @@ function InventoryPage() {
         setLoading(false)
       }
     },
-    [statusFilter, decisionFilter],
+    [],
   )
 
   useEffect(() => {
@@ -207,10 +138,19 @@ function InventoryPage() {
     }
   }
 
+  function openDeleteDialog(item, trigger) {
+    deleteTriggerRef.current = trigger
+    setConfirmItem(item)
+  }
+
+  function closeDeleteDialog() {
+    setConfirmItem(null)
+    const trigger = deleteTriggerRef.current
+    deleteTriggerRef.current = null
+    if (trigger && trigger.isConnected) trigger.focus()
+  }
+
   async function handleDelete(item) {
-    if (!window.confirm('Delete this item? This cannot be undone.')) {
-      return
-    }
     setDeletingId(item.id)
     setDeleteError('')
     try {
@@ -223,170 +163,332 @@ function InventoryPage() {
     }
   }
 
+  const dialogOpen = confirmItem !== null
+  useEffect(() => {
+    if (!dialogOpen) return undefined
+    cancelRef.current?.focus()
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        closeDeleteDialog()
+      } else if (event.key === 'Tab' && dialogRef.current) {
+        const buttons = dialogRef.current.querySelectorAll('button')
+        const first = buttons[0]
+        const last = buttons[buttons.length - 1]
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault()
+          last.focus()
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault()
+          first.focus()
+        }
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+    // closeDeleteDialog only touches state setters and refs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogOpen])
+
+  const decisionCounts = { sell: 0, give_away: 0, throw_away: 0, pending: 0 }
+  let waitingCount = 0
+  let sellValue = 0
+  for (const item of items) {
+    if (item.decision in decisionCounts) decisionCounts[item.decision] += 1
+    if (item.status === 'decided') waitingCount += 1
+    if (item.decision === 'sell' && (item.status === 'decided' || item.status === 'listed')) {
+      sellValue += Number(item.suggested_price) || 0
+    }
+  }
+  const visibleItems = items.filter(
+    (item) =>
+      (!decisionFilter || item.decision === decisionFilter) &&
+      (!statusFilter || item.status === statusFilter),
+  )
+  const loaded = !loading && !loadError
+  const alertClasses = 'mt-4 rounded-2xl border border-toss bg-toss-soft px-4 py-3 text-sm text-toss'
+
+  function clearFilters() {
+    setStatusFilter('')
+    setDecisionFilter('')
+  }
+
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8 text-center">
-      <h1>Basement Inventory</h1>
-
-      <SignOutControl />
-
-      <p className="mt-2">
-        <Link to="/" className="link">
-          Upload another photo
+    <div>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="font-display text-3xl font-bold tracking-tight text-ink sm:text-4xl">
+            Basement Inventory
+          </h1>
+          {loaded && (
+            <p className="mt-1 text-muted">
+              {items.length} {items.length === 1 ? 'item' : 'items'} · {waitingCount} waiting on
+              you
+              {sellValue > 0 && <> · ~{formatPrice(Math.round(sellValue))} to sell</>}
+            </p>
+          )}
+        </div>
+        <Link
+          to="/"
+          className="hidden items-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-semibold text-white shadow-card hover:bg-primary-hover sm:inline-flex"
+        >
+          <Plus size={16} strokeWidth={2.4} />
+          Add item
         </Link>
-      </p>
-
-      <div className="mt-6 mb-6 flex flex-wrap justify-center gap-6">
-        <label
-          htmlFor="status-filter"
-          className="flex flex-col items-start gap-1 text-sm font-semibold text-heading"
-        >
-          Status
-          <select
-            id="status-filter"
-            className="form-select"
-            value={statusFilter}
-            onChange={(event) => setStatusFilter(event.target.value)}
-          >
-            <option value="">All statuses</option>
-            {STATUS_FILTER_OPTIONS.map((value) => (
-              <option key={value} value={value}>
-                {STATUS_LABELS[value]}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label
-          htmlFor="decision-filter"
-          className="flex flex-col items-start gap-1 text-sm font-semibold text-heading"
-        >
-          Decision
-          <select
-            id="decision-filter"
-            className="form-select"
-            value={decisionFilter}
-            onChange={(event) => setDecisionFilter(event.target.value)}
-          >
-            <option value="">All decisions</option>
-            {DECISION_FILTER_OPTIONS.map((value) => (
-              <option key={value} value={value}>
-                {DECISION_LABELS[value]}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
 
+      {loaded && items.length > 0 && (
+        <>
+          <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {DECISION_FILTER_OPTIONS.map((value) => {
+              const on = decisionFilter === value
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setDecisionFilter(on ? '' : value)}
+                  className={`cursor-pointer rounded-2xl border bg-surface p-3.5 text-left transition ${
+                    on ? 'border-primary ring-4 ring-primary-soft' : 'border-line hover:border-muted'
+                  }`}
+                >
+                  <span
+                    className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${DECISION_PILL_CLASSES[value]}`}
+                  >
+                    {DECISION_LABELS[value]}
+                  </span>
+                  <span className="mt-2 block font-display text-2xl font-bold text-ink">
+                    {decisionCounts[value]}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted">Status</span>
+            <div className="flex flex-wrap gap-1.5">
+              {['', ...STATUS_FILTER_OPTIONS].map((value) => {
+                const on = statusFilter === value
+                return (
+                  <button
+                    key={value || 'all'}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => setStatusFilter(value)}
+                    className={`cursor-pointer rounded-full border px-3 py-1 text-sm ${
+                      on
+                        ? 'border-ink bg-ink font-semibold text-ground'
+                        : 'border-line bg-surface text-ink hover:bg-sunken'
+                    }`}
+                  >
+                    {value ? STATUS_LABELS[value] : 'All'}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        </>
+      )}
+
       {updateError && (
-        <div
-          className="mb-4 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
-          role="alert"
-        >
+        <div className={alertClasses} role="alert">
           <p>{updateError}</p>
         </div>
       )}
 
       {deleteError && (
-        <div
-          className="mb-4 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
-          role="alert"
-        >
+        <div className={alertClasses} role="alert">
           <p>{deleteError}</p>
         </div>
       )}
 
       {loadError && (
-        <div
-          className="mb-4 rounded border border-throw-away-border bg-throw-away-bg px-4 py-3 text-throw-away-text"
-          role="alert"
-        >
+        <div className={alertClasses} role="alert">
           <p>{loadError}</p>
         </div>
       )}
 
       {loading && (
-        <p className="italic text-text" role="status">
+        <p className="mt-5 text-muted" role="status">
           Loading inventory...
         </p>
       )}
 
-      {!loading && !loadError && items.length === 0 && <p>No items match these filters.</p>}
+      {loaded && items.length === 0 && (
+        <div className="mt-5 rounded-2xl border-2 border-dashed border-line px-6 py-14 text-center">
+          <p className="font-semibold text-ink">Nothing here yet</p>
+          <p className="mt-1 text-sm text-muted">
+            Photograph your first basement item to get a recommendation.
+          </p>
+          <Link
+            to="/"
+            className="mt-4 inline-flex rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-hover"
+          >
+            Add item
+          </Link>
+        </div>
+      )}
 
-      {!loading && !loadError && items.length > 0 && (
-        <ul className="m-0 list-none p-0 text-left">
-          {items.map((item) => {
+      {loaded && items.length > 0 && visibleItems.length === 0 && (
+        <div className="mt-5 rounded-2xl border border-dashed border-line px-4 py-10 text-center text-sm text-muted">
+          <p>No items match these filters.</p>
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="mt-2 cursor-pointer font-semibold text-primary hover:text-primary-hover"
+          >
+            Clear filters
+          </button>
+        </div>
+      )}
+
+      {loaded && visibleItems.length > 0 && (
+        <ul className="mt-5 grid list-none gap-3 p-0 text-left lg:grid-cols-2">
+          {visibleItems.map((item) => {
             const nextStatuses = item.valid_next_statuses || []
             const decisionBadgeClasses =
-              DECISION_BADGE_CLASSES[item.decision] || DECISION_BADGE_CLASSES.pending
+              DECISION_PILL_CLASSES[item.decision] || DECISION_PILL_CLASSES.pending
+            const done = DONE_STATUSES.includes(item.status)
+            const working = item.status.startsWith('pending')
+            const busy = updatingId === item.id || deletingId === item.id
+            const primaryStatus = DECISION_PRIMARY_STATUS[item.decision]
+            const hasPrice = item.suggested_price !== null && item.suggested_price !== undefined && item.suggested_price !== ''
             return (
               <li
                 key={item.id}
-                className="flex flex-wrap items-start gap-4 border-b border-border py-4 last:border-b-0 sm:items-center"
+                className={`flex gap-3 rounded-2xl border border-line bg-surface p-3 shadow-card ${
+                  done ? 'opacity-70' : ''
+                }`}
               >
-                <div className="flex min-w-[200px] flex-1 items-center gap-4">
-                  <InventoryItemPhoto item={item} />
+                <Link to={`/items/${item.id}`} tabIndex={-1} className="shrink-0">
+                  <ItemPhoto item={item} />
+                </Link>
 
-                  <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-1 flex-col">
+                  <div className="flex items-start gap-2">
                     <Link
                       to={`/items/${item.id}`}
-                      className="link block font-medium break-words"
+                      className="min-w-0 flex-1 font-semibold leading-snug break-words [overflow-wrap:anywhere] hover:text-primary"
                     >
                       {item.identified_name || `Item #${item.id}`}
                     </Link>
-                    <p className="mt-1">
-                      <span
-                        className={`inline-block rounded-full border px-2 py-0.5 text-xs font-semibold ${decisionBadgeClasses}`}
-                      >
-                        {DECISION_LABELS[item.decision] || item.decision}
+                    {hasPrice && (
+                      <span className="font-mono text-sm text-ink">
+                        {formatPrice(Number(item.suggested_price))}
                       </span>
-                      {/* Low-confidence badge (sandbox-8jm.7) -- same
-                          decision_confidence field as ItemResultPage.jsx,
-                          fits inline right after the decision badge without
-                          restructuring this row's layout. */}
-                      {item.decision_confidence === 'low' && (
-                        <span
-                          className="ml-1 inline-block rounded-full border border-pending-border bg-pending-bg px-2 py-0.5 text-xs font-semibold text-pending-text"
-                          role="status"
-                        >
-                          {item.decision === 'throw_away' &&
-                          (item.comparable_listings || []).length === 0
-                            ? 'No comparable listings found — double-check'
-                            : 'Few comparable listings — double-check the price'}
-                        </span>
-                      )}
-                    </p>
-                    <p className="mt-1 text-sm text-text">
-                      Status: {STATUS_LABELS[item.status] || item.status}
-                    </p>
+                    )}
                   </div>
-                </div>
 
-                <div className="flex w-full flex-col gap-1.5 sm:w-48">
-                  {nextStatuses.map((targetStatus) => (
-                    <button
-                      key={targetStatus}
-                      type="button"
-                      disabled={updatingId === item.id || deletingId === item.id}
-                      onClick={() => handleAdvance(item, targetStatus)}
-                      className="cursor-pointer rounded border border-primary bg-primary px-3 py-1.5 text-sm font-medium whitespace-nowrap text-white hover:border-primary-hover hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-muted">
+                    <span
+                      className={`inline-flex rounded-full px-2 py-0.5 font-semibold ${decisionBadgeClasses}`}
                     >
-                      {STATUS_ACTION_LABELS[targetStatus]}
-                    </button>
-                  ))}
+                      {DECISION_LABELS[item.decision] || item.decision}
+                    </span>
+                    {/* Low-confidence badge (sandbox-8jm.7): short visible
+                        label, full copy kept as accessible text and title. */}
+                    {item.decision_confidence === 'low' && (
+                      <span
+                        className="inline-flex rounded-full bg-warn-soft px-2 py-0.5 font-semibold text-warn"
+                        role="status"
+                        title={lowConfidenceCopy(item)}
+                      >
+                        <span aria-hidden="true">Check price</span>
+                        <span className="sr-only">{lowConfidenceCopy(item)}</span>
+                      </span>
+                    )}
+                    <span className="inline-flex items-center gap-1">
+                      {working && (
+                        <span className="pulse h-1.5 w-1.5 rounded-full bg-primary" aria-hidden="true" />
+                      )}
+                      {done && <Check size={12} strokeWidth={3} />}
+                      <span>Status: {STATUS_LABELS[item.status] || item.status}</span>
+                    </span>
+                    {item.category && <span>· {item.category}</span>}
+                  </div>
 
-                  <button
-                    type="button"
-                    disabled={updatingId === item.id || deletingId === item.id}
-                    onClick={() => handleDelete(item)}
-                    className="cursor-pointer rounded border border-throw-away-border bg-throw-away-bg px-3 py-1.5 text-sm font-medium whitespace-nowrap text-throw-away-text hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {deletingId === item.id ? 'Deleting...' : 'Delete'}
-                  </button>
+                  <div className="mt-auto flex flex-wrap items-center gap-2 pt-2">
+                    {nextStatuses.map((targetStatus) => {
+                      const primary = targetStatus === primaryStatus
+                      return (
+                        <button
+                          key={targetStatus}
+                          type="button"
+                          disabled={busy}
+                          onClick={() => handleAdvance(item, targetStatus)}
+                          className={`cursor-pointer rounded-full px-3 py-1 text-xs font-semibold whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-50 ${
+                            primary
+                              ? 'border border-primary bg-primary text-white hover:bg-primary-hover'
+                              : 'border border-line bg-surface text-ink hover:bg-sunken'
+                          }`}
+                        >
+                          {STATUS_ACTION_LABELS[targetStatus]}
+                        </button>
+                      )
+                    })}
+
+                    <button
+                      type="button"
+                      disabled={busy}
+                      aria-label={deletingId === item.id ? 'Deleting...' : 'Delete'}
+                      title={deletingId === item.id ? 'Deleting...' : 'Delete'}
+                      onClick={(event) => openDeleteDialog(item, event.currentTarget)}
+                      className="ml-auto cursor-pointer rounded-full p-1.5 text-muted hover:bg-toss-soft hover:text-toss disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      <Trash size={16} />
+                    </button>
+                  </div>
                 </div>
               </li>
             )
           })}
         </ul>
+      )}
+
+      {confirmItem && (
+        <div
+          className="fixed inset-0 z-30 flex items-end justify-center bg-ink/40 p-4 sm:items-center"
+          onClick={closeDeleteDialog}
+        >
+          <div
+            ref={dialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-dialog-title"
+            className="w-full max-w-sm rounded-2xl bg-surface p-5 text-ink shadow-card"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <p id="delete-dialog-title" className="font-semibold">
+              Delete this item?
+            </p>
+            <p className="mt-1 text-sm text-muted">
+              “{confirmItem.identified_name || `Item #${confirmItem.id}`}” and its photo will be
+              removed for good.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                ref={cancelRef}
+                type="button"
+                onClick={closeDeleteDialog}
+                className="cursor-pointer rounded-full px-4 py-2 text-sm font-semibold hover:bg-sunken"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const item = confirmItem
+                  closeDeleteDialog()
+                  handleDelete(item)
+                }}
+                className="cursor-pointer rounded-full bg-toss px-4 py-2 text-sm font-semibold text-white"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

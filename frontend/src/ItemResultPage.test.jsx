@@ -261,7 +261,7 @@ describe('ItemResultPage', () => {
     })
 
     expect(screen.getByText(/sell/i)).toBeInTheDocument()
-    expect(screen.getByText(/45\.50/)).toBeInTheDocument()
+    expect(screen.getByText('€45.50')).toBeInTheDocument()
 
     const links = screen.getAllByRole('link', { name: /bosch/i })
     expect(links).toHaveLength(2)
@@ -278,9 +278,9 @@ describe('ItemResultPage', () => {
     const listItems = screen.getAllByRole('listitem')
     expect(listItems).toHaveLength(2)
     expect(listItems[0]).toHaveTextContent(
-      'Bosch cordless drill, good condition — 45.00 EUR, good, Berlin',
+      'Bosch cordless drill, good condition45.00 EURgood · Berlin',
     )
-    expect(listItems[1]).toHaveTextContent('Bosch drill set — 46.00 EUR, good, Munich')
+    expect(listItems[1]).toHaveTextContent('Bosch drill set46.00 EURgood · Munich')
   })
 
   it('renders the give_away decision with comparable listings but no suggested price', async () => {
@@ -331,15 +331,81 @@ describe('ItemResultPage', () => {
     fireEvent.click(copyTitleButton)
     expect(writeText).toHaveBeenCalledWith(SELL_ITEM_WITH_SUGGESTION.suggested_title)
     await waitFor(() => {
-      expect(copyTitleButton).toHaveTextContent('Copied!')
+      expect(copyTitleButton).toHaveTextContent('Copied')
     })
 
     const copyDescriptionButton = screen.getByRole('button', { name: /copy description/i })
     fireEvent.click(copyDescriptionButton)
     expect(writeText).toHaveBeenCalledWith(SELL_ITEM_WITH_SUGGESTION.suggested_description)
     await waitFor(() => {
-      expect(copyDescriptionButton).toHaveTextContent('Copied!')
+      expect(copyDescriptionButton).toHaveTextContent('Copied')
     })
+  })
+
+  it('shows "Copy failed" (no unhandled rejection) when the clipboard write is rejected, then reverts', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM_WITH_SUGGESTION })
+    const writeText = vi.fn().mockRejectedValue(new Error('denied'))
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      configurable: true,
+      writable: true,
+    })
+
+    renderAtItem(1)
+    const button = await screen.findByRole('button', { name: 'Copy title' })
+
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      fireEvent.click(button)
+      await waitFor(() => expect(button).toHaveTextContent('Copy failed'))
+      // Accessible name is stable while the visible text changes.
+      expect(screen.getByRole('button', { name: 'Copy title' })).toBe(button)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000)
+      })
+      expect(button).toHaveTextContent(/^Copy$/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shows "Copy failed" when navigator.clipboard is missing', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM_WITH_SUGGESTION })
+    Object.defineProperty(navigator, 'clipboard', {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    })
+
+    renderAtItem(1)
+    const button = await screen.findByRole('button', { name: 'Copy description' })
+    fireEvent.click(button)
+    await waitFor(() => expect(button).toHaveTextContent('Copy failed'))
+  })
+
+  it('renders the price-position strip for a sell decision with 2+ priced comparables', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => SELL_ITEM })
+    renderAtItem(1)
+    expect(await screen.findByRole('heading', { name: 'Where €45.50 sits' })).toBeInTheDocument()
+  })
+
+  it('omits the price-position strip for give_away decisions', async () => {
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => GIVE_AWAY_ITEM })
+    renderAtItem(2)
+    await screen.findByText(/old board game/i)
+    expect(screen.queryByTestId('price-position')).not.toBeInTheDocument()
+  })
+
+  it('links "Open Kleinanzeigen" in the listing card to the search URL', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ...SELL_ITEM_WITH_SUGGESTION, search_query_used: 'bosch cordless drill' }),
+    })
+    renderAtItem(1)
+    const link = await screen.findByRole('link', { name: /open kleinanzeigen/i })
+    expect(link).toHaveAttribute('href', buildKleinanzeigenSearchUrl('bosch cordless drill'))
+    expect(link).toHaveAttribute('target', '_blank')
   })
 
   it('shows the suggested title/description with copy-to-clipboard for a give_away decision', async () => {
@@ -363,14 +429,14 @@ describe('ItemResultPage', () => {
     fireEvent.click(copyTitleButton)
     expect(writeText).toHaveBeenCalledWith(GIVE_AWAY_ITEM_WITH_SUGGESTION.suggested_title)
     await waitFor(() => {
-      expect(copyTitleButton).toHaveTextContent('Copied!')
+      expect(copyTitleButton).toHaveTextContent('Copied')
     })
 
     const copyDescriptionButton = screen.getByRole('button', { name: /copy description/i })
     fireEvent.click(copyDescriptionButton)
     expect(writeText).toHaveBeenCalledWith(GIVE_AWAY_ITEM_WITH_SUGGESTION.suggested_description)
     await waitFor(() => {
-      expect(copyDescriptionButton).toHaveTextContent('Copied!')
+      expect(copyDescriptionButton).toHaveTextContent('Copied')
     })
   })
 
@@ -395,14 +461,14 @@ describe('ItemResultPage', () => {
     renderAtItem(1)
 
     await waitFor(() => {
-      expect(screen.getByText(/kleinanzeigen search used: bosch cordless drill/i)).toBeInTheDocument()
+      expect(screen.getByText('bosch cordless drill')).toBeInTheDocument()
     })
 
     const copyQueryButton = screen.getByRole('button', { name: /copy search query/i })
     fireEvent.click(copyQueryButton)
     expect(writeText).toHaveBeenCalledWith('bosch cordless drill')
     await waitFor(() => {
-      expect(copyQueryButton).toHaveTextContent('Copied!')
+      expect(copyQueryButton).toHaveTextContent('Copied')
     })
 
     const searchLink = screen.getByRole('link', { name: /search on kleinanzeigen/i })
@@ -423,7 +489,7 @@ describe('ItemResultPage', () => {
       expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
     })
 
-    expect(screen.queryByText(/kleinanzeigen search used/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/^searched:/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /copy search query/i })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /search on kleinanzeigen/i })).not.toBeInTheDocument()
 
@@ -571,9 +637,13 @@ describe('ItemResultPage', () => {
     expect(screen.getByText(/throw away/i)).toBeInTheDocument()
     expect(screen.queryByText(/suggested price/i)).not.toBeInTheDocument()
     expect(screen.getByText(/no comparable listings found/i)).toBeInTheDocument()
-    // "Upload another photo" + "View basement inventory" nav links
-    // (sandbox-yqf.11) -- no comparable-listing links since there are none.
-    expect(screen.queryAllByRole('link')).toHaveLength(2)
+    // Only the "Inventory" back link -- no comparable-listing links since
+    // there are none.
+    expect(screen.queryAllByRole('link')).toHaveLength(1)
+    expect(screen.getByRole('link', { name: /back to inventory/i })).toHaveAttribute(
+      'href',
+      '/inventory',
+    )
   })
 
   it('shows a pending indicator (not broken/missing fields) while status is non-terminal', async () => {
@@ -582,7 +652,7 @@ describe('ItemResultPage', () => {
     renderAtItem(4)
 
     await waitFor(() => {
-      expect(screen.getByRole('status')).toHaveTextContent(/still working on this item/i)
+      expect(screen.getByRole('status')).toHaveTextContent(/working on it/i)
     })
 
     // None of the decided-only fields should render while pending.
@@ -590,6 +660,42 @@ describe('ItemResultPage', () => {
     expect(screen.queryByText(/comparable listings/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/sell|give away|throw away/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/undefined/i)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['pending_identification', ['active', 'upcoming', 'upcoming']],
+    ['pending_search', ['done', 'active', 'upcoming']],
+    ['pending_decision', ['done', 'done', 'active']],
+    ['some_unknown_status', ['active', 'upcoming', 'upcoming']],
+  ])('renders the processing stepper for %s', async (status, expected) => {
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ ...PROCESSING_ITEM, id: 8, status, identified_name: 'Cordless Drill' }),
+    })
+
+    renderAtItem(8)
+
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent(/working on it/i)
+    })
+    const steps = screen.getAllByRole('listitem')
+    expect(steps.map((li) => li.getAttribute('data-step-state'))).toEqual(expected)
+    expect(steps[0]).toHaveTextContent('Identify item')
+    expect(steps[0]).toHaveTextContent('Cordless Drill')
+  })
+
+  it('links the failed card to retake the photo', async () => {
+    fetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => IDENTIFICATION_FAILED_ITEM,
+    })
+
+    renderAtItem(5)
+
+    const link = await screen.findByRole('link', { name: /retake photo/i })
+    expect(link).toHaveAttribute('href', '/')
   })
 
   it('shows a distinct error message (not a decision badge) for identification_failed, and stops polling immediately', async () => {
@@ -604,7 +710,7 @@ describe('ItemResultPage', () => {
       /couldn't identify this item from the photo/i,
     )
     expect(screen.queryByText(/pending/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/still working on this item/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/working on it/i)).not.toBeInTheDocument()
     expect(itemFetchCallCount()).toBe(1)
 
     // Terminal by construction (identification_failed is now in
@@ -627,7 +733,7 @@ describe('ItemResultPage', () => {
       /couldn't find comparable listings right now/i,
     )
     expect(screen.queryByText(/pending/i)).not.toBeInTheDocument()
-    expect(screen.queryByText(/still working on this item/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/working on it/i)).not.toBeInTheDocument()
     expect(itemFetchCallCount()).toBe(1)
 
     await advanceAndFlush(POLL_INTERVAL_MS * 5)
@@ -724,18 +830,6 @@ describe('ItemResultPage', () => {
       expect(screen.getByRole('alert')).toHaveTextContent(/session has expired/i)
     })
     expect(screen.queryByText(/not authenticated/i)).not.toBeInTheDocument()
-  })
-
-  it('renders a reachable sign-out control once the item has loaded', async () => {
-    mockItemAndPhotoFetch(SELL_ITEM)
-
-    renderAtItem(1)
-
-    await waitFor(() => {
-      expect(screen.getByRole('heading', { name: /cordless drill/i })).toBeInTheDocument()
-    })
-
-    expect(screen.getByRole('button', { name: /sign out/i })).toBeInTheDocument()
   })
 
   it('shows the user-provided hint when present', async () => {
@@ -851,6 +945,110 @@ describe('ItemResultPage', () => {
     expect(screen.getByText(/taking longer than expected/i)).toBeInTheDocument()
 
     vi.useRealTimers()
+  })
+})
+
+describe('ItemResultPage status actions', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn())
+    localStorage.clear()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    localStorage.clear()
+    cleanup()
+  })
+
+  const ACTION_NAMES = [
+    'Mark as listed on Kleinanzeigen',
+    'Mark as given away',
+    'Mark as disposed',
+  ]
+
+  function mockWithPatch(item, patchResponse) {
+    fetch.mockImplementation((url, options) => {
+      if (typeof url === 'string' && url.includes('/uploads/')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          blob: async () => new Blob(['x'], { type: 'image/jpeg' }),
+        })
+      }
+      if (options?.method === 'PATCH') return patchResponse(url, options)
+      return Promise.resolve({ ok: true, status: 200, json: async () => item })
+    })
+  }
+
+  it('shows the panel for a decided item, with the decision-matching button primary', async () => {
+    mockWithPatch(SELL_ITEM, () => new Promise(() => {}))
+    renderAtItem(1)
+
+    expect(await screen.findByText('Done something with it?')).toBeInTheDocument()
+    for (const name of ACTION_NAMES) {
+      expect(screen.getByRole('button', { name })).toBeInTheDocument()
+    }
+    expect(screen.getByRole('button', { name: ACTION_NAMES[0] })).toHaveClass('bg-primary')
+    expect(screen.getByRole('button', { name: ACTION_NAMES[1] })).not.toHaveClass('bg-primary')
+  })
+
+  it('does not show the panel for a non-decided item', async () => {
+    mockWithPatch({ ...SELL_ITEM, status: 'listed' }, () => new Promise(() => {}))
+    renderAtItem(1)
+
+    await screen.findByRole('heading', { name: /cordless drill/i })
+    expect(screen.queryByText('Done something with it?')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Mark as/ })).not.toBeInTheDocument()
+  })
+
+  it('PATCHes the status, disables the buttons while pending, and hides the panel on success', async () => {
+    let resolvePatch
+    mockWithPatch(
+      SELL_ITEM,
+      () =>
+        new Promise((resolve) => {
+          resolvePatch = () =>
+            resolve({ ok: true, status: 200, json: async () => ({ ...SELL_ITEM, status: 'given_away' }) })
+        }),
+    )
+    renderAtItem(1)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Mark as given away' }))
+
+    for (const name of ACTION_NAMES) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
+    const patchCall = fetch.mock.calls.find(([, options]) => options?.method === 'PATCH')
+    expect(patchCall[0]).toBe(`${API_BASE_URL}/items/1/status`)
+    expect(JSON.parse(patchCall[1].body)).toEqual({ status: 'given_away' })
+
+    await act(async () => {
+      resolvePatch()
+    })
+    await waitFor(() => {
+      expect(screen.queryByText('Done something with it?')).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows an alert and re-enables the buttons when the PATCH fails', async () => {
+    mockWithPatch(SELL_ITEM, () =>
+      Promise.resolve({
+        ok: false,
+        status: 409,
+        statusText: 'Conflict',
+        json: async () => ({ detail: 'Cannot change status.' }),
+      }),
+    )
+    renderAtItem(1)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Mark as disposed' }))
+
+    expect(await screen.findByText('Cannot change status.')).toBeInTheDocument()
+    expect(screen.getByText('Cannot change status.').closest('[role="alert"]')).toBeInTheDocument()
+    for (const name of ACTION_NAMES) {
+      expect(screen.getByRole('button', { name })).toBeEnabled()
+    }
+    expect(screen.getByText('Done something with it?')).toBeInTheDocument()
   })
 })
 
