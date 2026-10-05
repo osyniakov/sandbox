@@ -20,6 +20,7 @@ regression guard proving this.
 
 from __future__ import annotations
 
+import pytest
 import sqlalchemy
 
 from app.db_migrate import upgrade_to_head
@@ -391,3 +392,125 @@ def test_upgrade_to_head_ignores_app_default_db(tmp_path, monkeypatch) -> None:
     assert "user_hint" in columns
     assert _alembic_version(target_engine) == _head_revision()
     target_engine.dispose()
+
+
+# ---------------------------------------------------------------------------
+# Marker-based stamping of unstamped legacy DBs (sandbox-8v6)
+# ---------------------------------------------------------------------------
+
+
+def _chain_post_baseline() -> list[str]:
+    """Post-baseline revision ids in chain order (oldest first)."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    from app.db_migrate import ALEMBIC_INI_PATH
+
+    script_dir = ScriptDirectory.from_config(Config(str(ALEMBIC_INI_PATH)))
+    revs = list(script_dir.walk_revisions())  # newest first
+    revs.reverse()
+    assert revs[0].down_revision is None
+    return [r.revision for r in revs[1:]]
+
+
+def test_revision_markers_cover_chain_in_order() -> None:
+    """Drift guard: every post-baseline migration needs a marker entry, in chain order."""
+    from app.db_migrate import REVISION_MARKERS
+
+    assert list(REVISION_MARKERS) == _chain_post_baseline()
+    for revision, markers in REVISION_MARKERS.items():
+        assert markers, f"revision {revision} has no markers"
+
+
+def _build_unstamped_at(database_url: str, revision: str) -> None:
+    """Upgrade a fresh DB to ``revision`` then drop alembic_version (unstamped)."""
+    from alembic import command
+
+    from app.db_migrate import _build_config
+
+    command.upgrade(_build_config(database_url), revision)
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO items (photo_path, decision, status, created_at, updated_at) "
+                    "VALUES ('a.jpg', 'sell', 'new', '2024-01-01', '2024-01-01')"
+                )
+            )
+            connection.execute(sqlalchemy.text("DROP TABLE alembic_version"))
+    finally:
+        engine.dispose()
+
+
+def _all_marker_columns_present(engine: sqlalchemy.engine.Engine) -> bool:
+    from app.db_migrate import REVISION_MARKERS
+
+    return all(
+        column in _table_columns(engine, table)
+        for markers in REVISION_MARKERS.values()
+        for table, column in markers
+    )
+
+
+@pytest.mark.parametrize("start_index", range(-1, 5))
+def test_unstamped_db_at_intermediate_schema_reaches_head(tmp_path, monkeypatch, start_index) -> None:
+    """Unstamped DB at baseline (-1) or any post-baseline revision ends at head, data kept."""
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    from app.db_migrate import ALEMBIC_INI_PATH
+
+    chain = _chain_post_baseline()
+    if start_index == -1:
+        script_dir = ScriptDirectory.from_config(Config(str(ALEMBIC_INI_PATH)))
+        start = next(r.revision for r in script_dir.walk_revisions() if r.down_revision is None)
+    else:
+        start = chain[start_index]
+
+    database_url = _make_database_url(tmp_path, monkeypatch, f"unstamped_{start_index}.db")
+    _build_unstamped_at(database_url, start)
+
+    upgrade_to_head(database_url)
+
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        assert _alembic_version(engine) == _head_revision()
+        assert _all_marker_columns_present(engine)
+        with engine.connect() as connection:
+            rows = connection.execute(sqlalchemy.text("SELECT photo_path FROM items")).fetchall()
+        assert [r[0] for r in rows] == ["a.jpg"]
+    finally:
+        engine.dispose()
+
+
+def test_already_stamped_intermediate_db_unchanged_behaviour(tmp_path, monkeypatch) -> None:
+    """A stamped DB behind head is simply upgraded (markers are not consulted)."""
+    from alembic import command
+
+    from app.db_migrate import _build_config
+
+    database_url = _make_database_url(tmp_path, monkeypatch, "stamped.db")
+    command.upgrade(_build_config(database_url), _chain_post_baseline()[1])
+    upgrade_to_head(database_url)
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        assert _alembic_version(engine) == _head_revision()
+        assert _all_marker_columns_present(engine)
+    finally:
+        engine.dispose()
+
+
+def test_unstamped_out_of_order_markers_fail_loudly(tmp_path, monkeypatch) -> None:
+    """Later column present but an earlier one missing: stamp prefix, upgrade fails (no silent skip)."""
+    database_url = _make_database_url(tmp_path, monkeypatch, "ooo.db")
+    _build_unstamped_at(database_url, _chain_post_baseline()[0])  # has user_hint only
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            connection.execute(sqlalchemy.text("ALTER TABLE items ADD COLUMN search_query_used VARCHAR"))
+    finally:
+        engine.dispose()
+
+    with pytest.raises(sqlalchemy.exc.OperationalError, match="duplicate column"):
+        upgrade_to_head(database_url)
