@@ -7,6 +7,7 @@ network calls are made and no ``ANTHROPIC_API_KEY`` is required.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -168,6 +169,41 @@ def test_identification_error_from_provider_is_caught() -> None:
 
     assert ok is False
     assert item.status == ItemStatus.IDENTIFICATION_FAILED
+
+
+class _RawProvider:
+    """Returns whatever it is given verbatim (including non-dicts)."""
+
+    def __init__(self, value: Any) -> None:
+        self._value = value
+
+    def identify(self, photo_path: str, hint: str | None = None) -> Any:
+        return self._value
+
+
+@pytest.mark.parametrize(
+    ("value", "type_name"),
+    [(None, "NoneType"), ("a string", "str"), (42, "int"), (["list"], "list")],
+)
+def test_non_dict_provider_response_is_treated_as_failure(
+    value: Any, type_name: str, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # alembic's fileConfig (run by other tests) disables pre-existing loggers.
+    monkeypatch.setattr(logging.getLogger("app.identification"), "disabled", False)
+    item = _make_item()
+    service = ItemIdentificationService(provider=_RawProvider(value))
+
+    with caplog.at_level("ERROR", logger="app.identification"):
+        ok = service.identify_item(item)
+
+    assert ok is False
+    assert item.status == ItemStatus.IDENTIFICATION_FAILED
+    assert item.identified_name is None
+    assert item.category is None
+    assert item.brand is None
+    assert item.condition is None
+    assert item.search_keywords is None
+    assert any(type_name in r.getMessage() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

@@ -328,6 +328,16 @@ class ItemIdentificationService:
             item.status = ItemStatus.IDENTIFICATION_FAILED
             return False
 
+        if not isinstance(raw, dict):
+            logger.error(
+                "Identification provider returned unexpected type %s for item id=%s; "
+                "expected dict",
+                type(raw).__name__,
+                getattr(item, "id", None),
+            )
+            item.status = ItemStatus.IDENTIFICATION_FAILED
+            return False
+
         raw_name = raw.get("name")
         raw_name = raw_name.strip() if isinstance(raw_name, str) else ""
         low_confidence = _is_low_confidence(raw)

@@ -300,6 +300,15 @@ class ListingTextService:
             )
             return False
 
+        if not isinstance(raw, dict):
+            logger.error(
+                "Listing text provider returned unexpected type %s for item id=%s; "
+                "expected dict",
+                type(raw).__name__,
+                getattr(item, "id", None),
+            )
+            return False
+
         title = raw.get("title")
         description = raw.get("description")
 
