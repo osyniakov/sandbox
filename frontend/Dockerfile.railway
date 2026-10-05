@@ -46,6 +46,10 @@ FROM node:22-slim
 
 WORKDIR /app
 
+# Install `serve` at BUILD time (pinned) so container start needs no npm
+# registry access and no per-start download.
+RUN npm install -g serve@14.2.6 && npm cache clean --force
+
 # Only the built static output is needed at runtime -- no source, no
 # node_modules from the build stage.
 COPY --from=build /app/dist ./dist
@@ -59,8 +63,7 @@ EXPOSE 3000
 # literal "$PORT". Docker implicitly wraps shell-form CMD in
 # `/bin/sh -c`, which does expand ${PORT:-3000} at container start.
 # Railway injects PORT at runtime; ${PORT:-3000} falls back to 3000 when
-# PORT is unset (e.g. running this image outside Railway). `npx serve` is
-# used rather than a separately installed dependency to keep this image
-# minimal and avoid adding a runtime dependency to package.json purely for
-# deployment.
-CMD npx serve -s dist -l ${PORT:-3000}
+# PORT is unset (e.g. running this image outside Railway). serve is
+# installed globally at build time (see above), so starting the container
+# does not need npm registry access.
+CMD serve -s dist -l ${PORT:-3000}
