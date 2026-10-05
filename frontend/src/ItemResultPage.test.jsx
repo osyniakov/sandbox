@@ -801,7 +801,7 @@ describe('ItemResultPage', () => {
     })
   })
 
-  it('keeps showing a placeholder (not a broken-image icon) when the authenticated photo fetch fails', async () => {
+  it('shows a distinct Photo unavailable state (not endless Loading, not a broken image) when the authenticated photo fetch fails', async () => {
     mockItemAndPhotoFetch(SELL_ITEM, { photoOk: false })
 
     renderAtItem(1)
@@ -811,8 +811,10 @@ describe('ItemResultPage', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByTestId('photo-placeholder')).toBeInTheDocument()
+      expect(screen.getByTestId('photo-error')).toHaveTextContent(/photo unavailable/i)
     })
+    expect(screen.queryByTestId('photo-placeholder')).not.toBeInTheDocument()
+    expect(screen.queryByText(/loading photo/i)).not.toBeInTheDocument()
     expect(screen.queryByRole('img')).not.toBeInTheDocument()
   })
 

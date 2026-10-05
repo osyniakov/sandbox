@@ -18,10 +18,10 @@ import { apiFetch } from './api.js'
 // Given a `photoUrl` (the relative `/uploads/<file>` path from the API --
 // e.g. `Item.photo_url`, see backend/app/models.py -- or `null`/`undefined`
 // if the item has no photo yet, same as before this hook existed), returns
-// the resulting object URL once it's ready, or `null` while it isn't (no
-// `photoUrl` at all, the fetch is still in flight, or it failed) so callers
-// can render a placeholder instead of a broken-image icon during the brief
-// authenticated round-trip.
+// `{ url, status }`: `status` is 'idle' (no photoUrl), 'loading' (fetch in
+// flight), 'loaded' (`url` is the blob: object URL) or 'error' (non-OK
+// response incl. 404/401, or network failure; `url` is null). Callers render
+// a loading placeholder only for 'loading' and "Photo unavailable" for 'error'.
 //
 // A 401 from `apiFetch` here is exactly the same "session expired mid-use"
 // failure mode as any other authenticated request in this app -- `apiFetch`
@@ -29,36 +29,38 @@ import { apiFetch } from './api.js'
 // `SESSION_EXPIRED_EVENT` itself on a 401, which `AuthContext` listens for
 // to flip the whole app back to the sign-in gate. This hook deliberately
 // does NOT build a second error-handling mechanism on top of that: it just
-// leaves the object URL as `null` (so the caller shows a placeholder, never
-// a broken image) and lets that shared mechanism take over.
+// reports status 'error' (so the caller shows a placeholder, never a
+// broken image) and lets that shared mechanism take over.
 export function useAuthedImageUrl(photoUrl) {
-  const [objectUrl, setObjectUrl] = useState(null)
+  // `key` records which photoUrl the result belongs to, so a render right
+  // after photoUrl changes never exposes the previous photo's (revoked) URL.
+  const [result, setResult] = useState({ key: null, url: null, status: 'idle' })
 
   useEffect(() => {
-    if (!photoUrl) {
-      setObjectUrl(null)
-      return undefined
-    }
+    if (!photoUrl) return undefined
 
     let cancelled = false
     let createdUrl = null
-    setObjectUrl(null)
+    setResult({ key: photoUrl, url: null, status: 'loading' })
 
     async function load() {
       try {
         const response = await apiFetch(photoUrl)
+        if (cancelled) return
         if (!response.ok) {
-          // Includes the 401 case described above -- apiFetch has already
-          // reacted to it; nothing further to do here besides not setting
-          // an object URL (leaving the caller's placeholder in place).
+          // Includes 404 and the 401 case described above (apiFetch has
+          // already reacted to the 401): a terminal failure for this image.
+          setResult({ key: photoUrl, url: null, status: 'error' })
           return
         }
         const blob = await response.blob()
         if (cancelled) return
         createdUrl = URL.createObjectURL(blob)
-        setObjectUrl(createdUrl)
+        setResult({ key: photoUrl, url: createdUrl, status: 'loaded' })
       } catch {
-        // Network error, etc. -- leave objectUrl as null (placeholder).
+        // Network error, etc. Aborted/cancelled requests (unmount or
+        // photoUrl change) must not report an error.
+        if (!cancelled) setResult({ key: photoUrl, url: null, status: 'error' })
       }
     }
 
@@ -75,5 +77,7 @@ export function useAuthedImageUrl(photoUrl) {
     }
   }, [photoUrl])
 
-  return objectUrl
+  if (!photoUrl) return { url: null, status: 'idle' }
+  if (result.key !== photoUrl) return { url: null, status: 'loading' }
+  return { url: result.url, status: result.status }
 }
