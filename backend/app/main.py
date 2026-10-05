@@ -32,6 +32,7 @@ wiring, scheduling the background task, and read serialization).
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -59,6 +60,9 @@ from app.db import engine, get_session, init_db
 from app.models import ComparableListing, Decision, Item, ItemStatus
 from app.pipeline import run_pipeline_with_new_session
 from app.pricing import is_usable_comparable
+
+logger = logging.getLogger(__name__)
+
 
 def _default_upload_dir() -> Path:
     """Compute the default uploads directory.
@@ -291,7 +295,17 @@ def auth_google(body: GoogleAuthRequest) -> dict[str, str]:
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
-    token = issue_session_token(email)
+    try:
+        token = issue_session_token(email)
+    except RuntimeError as exc:
+        # SESSION_SECRET unset/empty: a server misconfiguration, not a
+        # client error. Log details server-side only; keep the response
+        # generic (503) so nothing about the config leaks.
+        logger.error("Cannot issue session token: %s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail="Sign-in is temporarily unavailable: the server is misconfigured.",
+        ) from exc
     return {"token": token, "email": email}
 
 
