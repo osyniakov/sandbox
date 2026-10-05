@@ -1,7 +1,7 @@
 # E2E test suite (sandbox-634 epic)
 
 Playwright suite that drives a real browser against the
-**already-deployed real frontend + backend** (Railway) -- real Google-auth-
+**already-deployed real frontend + backend** (on Railway) -- real Google-auth-
 bypass sign-in (see `helpers/auth.js`), real Claude vision/listing-text
 generation, and real Kleinanzeigen search all happen for real against the
 real backend, exactly as for a real user. This suite never starts a local
@@ -19,6 +19,17 @@ npx playwright install chromium   # only needed if not using PLAYWRIGHT_CHROMIUM
 
 ## Running
 
+### Via GitHub Actions (canonical)
+
+Runs are manual -- there is no automatic run on merge, so trigger it after
+a deploy finishes: GitHub -> Actions -> "E2E Tests" -> Run workflow
+(`.github/workflows/e2e-ci.yml`, `workflow_dispatch`). It needs these
+repository secrets (Settings -> Secrets and variables -> Actions):
+`E2E_FRONTEND_URL`, `E2E_SESSION_SECRET`, `E2E_TEST_EMAIL` (meanings in
+the table below). The suite is no longer deployed as a Railway service.
+
+### Locally
+
 ```sh
 npm run test:e2e
 ```
@@ -34,7 +45,7 @@ npm run test:e2e
 Obtaining `E2E_SESSION_SECRET` and ensuring `E2E_TEST_EMAIL` is
 whitelisted is **out of scope for this suite** -- it consumes both,
 supplied externally (e.g. by whoever runs the suite, pulling the real
-value from the Railway service's configured environment). It never
+value from the backend Railway service's configured environment). It never
 invents, guesses, or hardcodes either.
 
 ## Optional environment variables (timeouts / local browser path)

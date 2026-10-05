@@ -1,3 +1,10 @@
+# Canonical way to run the e2e suite: trigger manually (Actions -> "E2E Tests"
+# -> Run workflow) after a deploy finishes. It does not run automatically on
+# merge. Required repository secrets (Settings -> Secrets and variables ->
+# Actions):
+#   E2E_FRONTEND_URL   - base URL of the deployed frontend under test
+#   E2E_SESSION_SECRET - deployed backend's real SESSION_SECRET
+#   E2E_TEST_EMAIL     - test identity email (must be in ALLOWED_EMAILS)
 name: E2E Tests
 
 on:

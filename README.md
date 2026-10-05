@@ -135,9 +135,10 @@ setting it only as a runtime env var has no effect on the built image.
 The backend keeps its SQLite database (`declutter.db`) and uploaded photos
 under `DATA_DIR`. On Railway, `DATA_DIR=/data` and a persistent volume
 (`backend-data`) is mounted at `/data` on the backend service. Without that
-volume, every deploy starts with an empty database. All three Railway
-services (backend, frontend, e2e-tests) deploy from `master`, so every push
-to `master` redeploys them.
+volume, every deploy starts with an empty database. The two deployed
+Railway services (backend, frontend) deploy from `master`, so every push
+to `master` redeploys them. The e2e suite is no longer auto-deployed on
+Railway; it is run manually from GitHub Actions (see "End-to-end tests").
 
 ## Access control
 
@@ -214,12 +215,23 @@ real `/auth/google` handler already call. Because it exercises real
 Claude and real Kleinanzeigen search, it's not deterministic which
 decision (sell/give_away/throw_away) a given test upload lands on, so
 its assertions are written to be structurally correct for whichever
-real outcome occurs rather than forcing a specific one. In practice
-it's packaged as a Docker image (`e2e/Dockerfile`) and deployed as a
-one-shot Railway service, since this project's own sandbox development
-environment can't reach the deployed app's network at all, let alone
-Kleinanzeigen. See `e2e/README.md` for full setup, environment
-variables, and how the auth bypass works.
+real outcome occurs rather than forcing a specific one.
+
+**How it runs:** manually from GitHub Actions (Actions → "E2E Tests" →
+Run workflow, `.github/workflows/e2e-ci.yml`) against the deployed app.
+There is no automatic run on merge, so trigger it after a deploy finishes.
+The workflow needs these repository secrets (Settings → Secrets and
+variables → Actions):
+
+- `E2E_FRONTEND_URL` — base URL of the deployed frontend to test.
+- `E2E_SESSION_SECRET` — the deployed backend's real `SESSION_SECRET`,
+  used to mint the test session token.
+- `E2E_TEST_EMAIL` — the test identity's email; must be in the backend's
+  `ALLOWED_EMAILS`.
+
+`e2e/Dockerfile` remains available for running the suite in a container,
+but it is no longer deployed as a Railway service. See `e2e/README.md` for
+full setup, environment variables, and how the auth bypass works.
 
 ## Running natively (fallback / local development)
 

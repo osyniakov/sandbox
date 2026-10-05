@@ -1,3 +1,7 @@
+# NOTE: this image is no longer deployed as a Railway service. E2E now runs
+# via the manual workflow_dispatch workflow .github/workflows/e2e-ci.yml;
+# this Dockerfile remains for running the suite in a container.
+#
 # Standalone image for the E2E test suite (sandbox-634 epic). Unlike
 # ../backend/Dockerfile.railway and ../frontend/Dockerfile.railway, this
 # image is NOT a long-running service -- its CMD runs the full Playwright
