@@ -104,24 +104,19 @@ def upgrade_to_head(database_url: str) -> None:
                 #   name: user_hint``.
                 #
                 # We distinguish the two by checking for the specific
-                # column that the (currently only) post-baseline migration
-                # adds. If it's already present, this DB in fact matches
-                # HEAD's schema already, so we stamp at head (a true
-                # no-op) instead of baseline.
-                #
-                # This column-existence check is proportionate to today's
-                # single-migration chain, not a general schema differ. If
-                # a THIRD migration is added later, this same pattern
-                # generalizes: check, in migration order, whether the
-                # specific column(s)/table(s) each subsequent migration
-                # would add already exist in the legacy DB, and stamp at
-                # the latest revision whose changes are already present.
-                # That generalization isn't built here -- only extend it
-                # if/when a second post-baseline migration actually exists.
+                # column that the first post-baseline migration adds
+                # (``user_hint``). If it's already present, we ASSUME the
+                # DB was created by ``create_all()`` from a model that
+                # already had every column, and stamp at head instead of
+                # baseline. This is a heuristic, not a schema differ: it
+                # does not check columns added by later migrations, so an
+                # unstamped DB that has ``user_hint`` but lacks a later
+                # column would be stamped at head and skip that migration
+                # (tracked as sandbox-8v6).
                 items_columns = {col["name"] for col in inspector.get_columns("items")}
                 if "user_hint" in items_columns:
-                    # Already matches HEAD's schema; stamp at head so the
-                    # `upgrade head` call below is correctly a no-op.
+                    # Assumed to match HEAD's schema (see above); stamp at
+                    # head so the `upgrade head` call below is a no-op.
                     command.stamp(config, "head")
                 else:
                     # Genuinely pre-hint baseline shape: stamp at baseline

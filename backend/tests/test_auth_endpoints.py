@@ -141,3 +141,22 @@ def test_auth_logout_valid_session_returns_200(client: TestClient) -> None:
 def test_auth_logout_no_session_returns_401(client: TestClient) -> None:
     response = client.post("/auth/logout")
     assert response.status_code == 401
+
+
+def test_auth_google_missing_session_secret_returns_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        main_module, "verify_google_id_token", _fake_verify_success("alice@example.com")
+    )
+    monkeypatch.delenv("SESSION_SECRET", raising=False)
+
+    response = client.post("/auth/google", json={"id_token": "fake-valid-token"})
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "Sign-in is temporarily unavailable: the server is misconfigured."
+    }
+    assert "Traceback" not in response.text
+    assert "RuntimeError" not in response.text
+    assert "SESSION_SECRET" not in response.text

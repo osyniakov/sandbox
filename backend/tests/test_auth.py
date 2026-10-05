@@ -159,10 +159,27 @@ def test_session_token_round_trip(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_session_token_tampered_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SESSION_SECRET", "super-secret")
     token = issue_session_token("alice@example.com")
-    # Flip a character in the token to invalidate the signature.
-    tampered_char = "x" if token[-1] != "x" else "y"
-    tampered = token[:-1] + tampered_char
-    assert verify_session_token(tampered) is None
+    # Token format is payload.timestamp.signature. Mutate a character that is
+    # guaranteed to change the decoded bytes. The FINAL character of the
+    # signature is avoided: it carries non-canonical base64 padding bits, so
+    # changing it can decode to identical bytes and still verify (flaky).
+    payload, timestamp, signature = token.split(".")
+
+    def _swap(segment: str, index: int) -> str:
+        replacement = "B" if segment[index] == "A" else "A"
+        return segment[:index] + replacement + segment[index + 1 :]
+
+    variants = {
+        "payload": ".".join([_swap(payload, 0), timestamp, signature]),
+        "timestamp": ".".join([payload, _swap(timestamp, 0), signature]),
+        "signature": ".".join([payload, timestamp, _swap(signature, 0)]),
+        "signature_interior": ".".join(
+            [payload, timestamp, _swap(signature, len(signature) // 2)]
+        ),
+    }
+    for name, tampered in variants.items():
+        assert tampered != token, name
+        assert verify_session_token(tampered) is None, name
 
 
 def test_session_token_expired_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
