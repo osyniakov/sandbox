@@ -791,7 +791,19 @@ _MIN_SUBSTRING_UNIT_LEN = 5
 # matching a short (< ``_MIN_SUBSTRING_UNIT_LEN``) matching unit against a
 # title word (bead sandbox-3ht). Mirrors the plural-ish suffixes
 # ``_destem`` strips, plus the empty string for an exact match.
+#
+# Irregular plurals (bead sandbox-vlq) are handled separately, and ONLY for
+# short units that are RAW name tokens (length 3-4, not produced by
+# ``_destem``): for units with no a/o/u, the unit plus ``_RAW_ER_SUFFIX``
+# ("Kind" -> "Kinder"); for units with an a/o/u, ONLY the umlaut-mutated unit
+# (see ``_umlaut_mutate``) plus one of ``_UMLAUT_PLURAL_SUFFIXES`` ("Buch" ->
+# "Bücher", "Topf" -> "Töpfe"). Bare "-er" on a/o/u units is not allowed
+# (Rock/Rocker, Mast/Master, Bau/Bauer). They
+# are deliberately NOT applied to destemmed stems: "Rollen" destems to
+# "roll", and "roll" + "er" would wrongly match "Roller".
 _PLURAL_SUFFIXES = ("", "e", "en", "n", "s")
+_RAW_ER_SUFFIX = "er"
+_UMLAUT_PLURAL_SUFFIXES = ("e", "er")
 
 
 def _fold(text: str, mode: str) -> str:
@@ -817,6 +829,23 @@ def _fold(text: str, mode: str) -> str:
     if mode == "plain":
         return folded.replace("ä", "a").replace("ö", "o").replace("ü", "u")
     raise ValueError(f"Unknown fold mode: {mode!r}")
+
+
+def _umlaut_mutate(unit: str) -> str | None:
+    """Return ``unit`` with its LAST a/o/u umlauted in digraph spelling, else ``None``.
+
+    "au" counts as a single vowel ("haus" -> "haeus"); otherwise a -> "ae",
+    o -> "oe", u -> "ue" (matching ``_fold`` in ``"digraph"`` mode, the only
+    mode in which tokens shorter than ``_MIN_PLAIN_MODE_TOKEN_LEN`` are
+    matched). ``None`` if the unit has no a/o/u.
+    """
+    for i in range(len(unit) - 1, -1, -1):
+        ch = unit[i]
+        if ch in "aou":
+            if ch == "u" and i > 0 and unit[i - 1] == "a":
+                return unit[:i] + "eu" + unit[i + 1 :]
+            return unit[:i] + ch + "e" + unit[i + 1 :]
+    return None
 
 
 def _compact(text: str, mode: str) -> str:
@@ -926,6 +955,15 @@ def _is_relevant(title: str, identified_name: str | None, brand: str | None) -> 
          equality (empty suffix). Only a word-END match counts, so a short
          unit matching merely the START of a longer compound (e.g. "Hose"
          at the start of "Hosenträger") is deliberately NOT accepted.
+         Additionally (bead sandbox-vlq), when the unit is a RAW 3-4 char
+         name token (NOT a ``_destem`` stem), irregular plurals are
+         accepted in "digraph" mode: if the unit has no a/o/u, a word
+         ending in unit + "er" ("Kind" ~ "Kinder", "Ski" ~ "Skier"); if it
+         has one, ONLY a word ending in the umlaut-mutated unit (last
+         a/o/u -> ae/oe/ue, "au" -> "aeu"; see ``_umlaut_mutate``) +
+         "e"/"er" ("Buch" ~ "Bücher", "Rad" ~
+         "Räder", "Topf" ~ "Töpfe", "Haus" ~ "Häuser"). Stems are excluded
+         so "Rollen" (stem "roll") still does not match "Roller".
 
     A title is relevant if ANY name token/stem, in EITHER fold mode
     (checked mode-consistently -- a token/stem folded one way is only
@@ -947,8 +985,9 @@ def _is_relevant(title: str, identified_name: str | None, brand: str | None) -> 
 
     Known limitations (accepted, not fixed by this gate): the plural
     stemming in ``_destem`` is a crude fixed-suffix heuristic, not real
-    German morphology -- it does not handle umlaut-vowel-change plurals
-    (e.g. "Mutter"/"Mütter") or letter-insertion spelling variants (e.g.
+    German morphology -- it does not handle umlaut-vowel-change plurals of
+    tokens of length >= 5 (e.g. "Mutter"/"Mütter"; short raw tokens are
+    covered by the sandbox-vlq rule above) or letter-insertion spelling variants (e.g.
     "Fön"/"Föhn" -- an "h"-insertion, not an umlaut-folding or suffix
     difference, so it is out of scope for both ``_fold`` and ``_destem``
     and this pair still does not match). For matching units of length >=
@@ -959,12 +998,18 @@ def _is_relevant(title: str, identified_name: str | None, brand: str | None) -> 
     END of a title word, so a short unit that is only a compound-START
     match in the title (e.g. "Hose" vs "Hosenträger") is no longer
     accepted -- this is an intentional new limitation traded for far fewer
-    false positives (bead sandbox-3ht).
+    false positives (bead sandbox-3ht). The irregular-plural forms for raw
+    short tokens (bead sandbox-vlq) are also word-END only, so "Bett" vs
+    "Bettgestell" and "Auto" vs "Autositz" remain rejected, and only the
+    "er"/umlaut+"e"/"er" patterns above are covered ("Buch" ~
+    "Bücherregal" is a compound start and is not accepted).
     """
     if not identified_name:
         return True
 
-    match_units: list[tuple[str, str]] = []
+    # (mode, unit, is_raw_short): ``is_raw_short`` marks a 3-4 char raw token
+    # (not a destemmed stem), the only kind eligible for irregular plurals.
+    match_units: list[tuple[str, str, bool]] = []
     for mode in _FOLD_MODES:
         folded_name = _fold(identified_name, mode)
         raw_tokens = re.split(r"[\W_]+", folded_name)
@@ -975,7 +1020,7 @@ def _is_relevant(title: str, identified_name: str | None, brand: str | None) -> 
             if mode == "plain" and len(token) < _MIN_PLAIN_MODE_TOKEN_LEN:
                 continue
             stem = _destem(token) if len(token) >= 5 else None
-            match_units.append((mode, stem or token))
+            match_units.append((mode, stem or token, stem is None and len(token) < _MIN_SUBSTRING_UNIT_LEN))
 
     if not match_units:
         return True
@@ -983,13 +1028,21 @@ def _is_relevant(title: str, identified_name: str | None, brand: str | None) -> 
     compact_titles = {mode: _compact(title, mode) for mode in _FOLD_MODES}
     title_words = {mode: re.split(r"[\W_]+", _fold(title, mode)) for mode in _FOLD_MODES}
 
-    for mode, unit in match_units:
+    for mode, unit, is_raw_short in match_units:
         if len(unit) >= _MIN_SUBSTRING_UNIT_LEN:
             if unit in compact_titles[mode]:
                 return True
         else:
+            endings = [unit + suffix for suffix in _PLURAL_SUFFIXES]
+            if is_raw_short and mode == "digraph":
+                mutated = _umlaut_mutate(unit)
+                if mutated is None:
+                    # No a/o/u: cannot umlaut, so bare "-er" is the plural.
+                    endings.append(unit + _RAW_ER_SUFFIX)
+                else:
+                    endings.extend(mutated + suffix for suffix in _UMLAUT_PLURAL_SUFFIXES)
             for word in title_words[mode]:
-                if any(word.endswith(unit + suffix) for suffix in _PLURAL_SUFFIXES):
+                if any(word.endswith(ending) for ending in endings):
                     return True
     return False
 
