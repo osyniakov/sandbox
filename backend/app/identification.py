@@ -56,6 +56,7 @@ import base64
 import logging
 import mimetypes
 import os
+import re
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -158,6 +159,29 @@ def _extract_text_block(response: Any) -> str:
     return text_block.text
 
 
+_HINT_WHITESPACE_RUN = re.compile(r"[\s\x00-\x1f\x7f-\x9f\u2028\u2029]+")
+
+
+def _collapse_hint_run(match: re.Match[str]) -> str:
+    run = match.group(0)
+    # Leave plain runs of ordinary spaces untouched so benign hints stay
+    # byte-identical; anything containing newline/tab/control/line-separator
+    # characters collapses to one space.
+    return run if run.strip(" ") == "" else " "
+
+
+def _sanitize_hint(hint: str) -> str:
+    """Make a user hint safe for the single-line, double-quoted prompt slot.
+
+    Replaces ``"`` with ``'``, collapses whitespace/control-character runs
+    (newlines, CR, tabs, U+2028/U+2029, ...) into one space, and strips the
+    ends. Hints without such characters are returned unchanged.
+    """
+    cleaned = hint.replace('"', "'")
+    cleaned = _HINT_WHITESPACE_RUN.sub(_collapse_hint_run, cleaned)
+    return cleaned.strip()
+
+
 class ClaudeVisionProvider:
     """Default ``IdentificationProvider`` backed by Anthropic's vision API.
 
@@ -206,6 +230,7 @@ class ClaudeVisionProvider:
         # keeps the response-format instructions intact and makes the hint
         # unable to masquerade as a new instruction.
         prompt_text = _IDENTIFICATION_PROMPT
+        hint = _sanitize_hint(hint) if hint else hint
         if hint:
             prompt_text += (
                 "\n\nThe user has provided the following hint about this item -- "
@@ -299,6 +324,16 @@ class ItemIdentificationService:
                 "Identification failed for item id=%s photo_path=%r",
                 getattr(item, "id", None),
                 item.photo_path,
+            )
+            item.status = ItemStatus.IDENTIFICATION_FAILED
+            return False
+
+        if not isinstance(raw, dict):
+            logger.error(
+                "Identification provider returned unexpected type %s for item id=%s; "
+                "expected dict",
+                type(raw).__name__,
+                getattr(item, "id", None),
             )
             item.status = ItemStatus.IDENTIFICATION_FAILED
             return False

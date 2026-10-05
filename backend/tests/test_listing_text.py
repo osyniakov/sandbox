@@ -7,6 +7,7 @@ network calls are made and no ``ANTHROPIC_API_KEY`` is required.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -151,6 +152,38 @@ def test_provider_exception_returns_false_and_leaves_fields_none() -> None:
     assert ok is False
     assert item.suggested_title is None
     assert item.suggested_description is None
+
+
+class _RawProvider:
+    """Returns whatever it is given verbatim (including non-dicts)."""
+
+    def __init__(self, value: Any) -> None:
+        self._value = value
+
+    def generate(self, item_info: dict[str, Any]) -> Any:
+        return self._value
+
+
+@pytest.mark.parametrize(
+    ("value", "type_name"),
+    [(None, "NoneType"), ("a string", "str"), (42, "int"), (["list"], "list")],
+)
+def test_non_dict_provider_response_returns_false_and_leaves_fields_none(
+    value: Any, type_name: str, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # alembic's fileConfig (run by other tests) disables pre-existing loggers.
+    monkeypatch.setattr(logging.getLogger("app.listing_text"), "disabled", False)
+    item = _make_item(decision=Decision.SELL)
+    service = ListingTextService(provider=_RawProvider(value))
+
+    with caplog.at_level("ERROR", logger="app.listing_text"):
+        ok = service.generate_listing_text(item)
+
+    assert ok is False
+    assert item.suggested_title is None
+    assert item.suggested_description is None
+    assert item.status == ItemStatus.PENDING_DECISION
+    assert any(type_name in r.getMessage() for r in caplog.records)
 
 
 def test_listing_text_error_from_provider_is_caught() -> None:
