@@ -8,8 +8,13 @@ import { API_BASE_URL, SESSION_EXPIRED_EVENT, SESSION_TOKEN_STORAGE_KEY } from '
 // rather than using a renderHook helper this project doesn't already
 // depend on.
 function ProbeComponent({ photoUrl }) {
-  const objectUrl = useAuthedImageUrl(photoUrl)
-  return <p data-testid="object-url">{objectUrl ?? ''}</p>
+  const { url, status } = useAuthedImageUrl(photoUrl)
+  return (
+    <>
+      <p data-testid="object-url">{url ?? ''}</p>
+      <p data-testid="status">{status}</p>
+    </>
+  )
 }
 
 describe('useAuthedImageUrl', () => {
@@ -29,6 +34,7 @@ describe('useAuthedImageUrl', () => {
 
     expect(fetch).not.toHaveBeenCalled()
     expect(screen.getByTestId('object-url')).toHaveTextContent('')
+    expect(screen.getByTestId('status')).toHaveTextContent('idle')
   })
 
   it('fetches the photo via apiFetch (Authorization header attached) and returns a blob: object URL once ready', async () => {
@@ -43,27 +49,59 @@ describe('useAuthedImageUrl', () => {
 
     // Starts in a loading/null state.
     expect(screen.getByTestId('object-url')).toHaveTextContent('')
+    expect(screen.getByTestId('status')).toHaveTextContent('loading')
 
     await waitFor(() => {
       expect(screen.getByTestId('object-url')).toHaveTextContent(/^blob:/)
     })
+    expect(screen.getByTestId('status')).toHaveTextContent('loaded')
 
     expect(fetch).toHaveBeenCalledTimes(1)
     const [url, options] = fetch.mock.calls[0]
     expect(url).toBe(`${API_BASE_URL}/uploads/a.jpg`)
-    expect(options.headers.Authorization).toBe('Bearer my-token')
+    expect(options.headers.get('Authorization')).toBe('Bearer my-token')
   })
 
-  it('stays null (placeholder-friendly) when the fetch fails with a non-401 error', async () => {
+  it('reports status error (404) with a null url', async () => {
     fetch.mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' })
 
     render(<ProbeComponent photoUrl="/uploads/missing.jpg" />)
 
     await waitFor(() => {
-      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('status')).toHaveTextContent('error')
+    })
+    expect(screen.getByTestId('object-url')).toHaveTextContent('')
+  })
+
+  it('reports status error when the fetch rejects (network error)', async () => {
+    fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+
+    render(<ProbeComponent photoUrl="/uploads/a.jpg" />)
+
+    await waitFor(() => {
+      expect(screen.getByTestId('status')).toHaveTextContent('error')
+    })
+    expect(screen.getByTestId('object-url')).toHaveTextContent('')
+  })
+
+  it('does not report an error (or create a URL) when the request is aborted by unmount', async () => {
+    let rejectFetch
+    fetch.mockImplementationOnce(
+      () => new Promise((_, reject) => { rejectFetch = reject }),
+    )
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const { unmount } = render(<ProbeComponent photoUrl="/uploads/a.jpg" />)
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+    unmount()
+    await act(async () => {
+      rejectFetch(new DOMException('Aborted', 'AbortError'))
     })
 
-    expect(screen.getByTestId('object-url')).toHaveTextContent('')
+    // No state-update warnings after unmount, and nothing rendered.
+    expect(errorSpy).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('status')).not.toBeInTheDocument()
+    errorSpy.mockRestore()
   })
 
   it('on a 401, relies on apiFetch/AuthContext session-expired handling instead of building a second mechanism', async () => {
@@ -88,6 +126,7 @@ describe('useAuthedImageUrl', () => {
     // No object URL -- the caller renders a placeholder, never a broken
     // image, while the app-level sign-in gate takes over.
     expect(screen.getByTestId('object-url')).toHaveTextContent('')
+    expect(screen.getByTestId('status')).toHaveTextContent('error')
 
     window.removeEventListener(SESSION_EXPIRED_EVENT, listener)
   })

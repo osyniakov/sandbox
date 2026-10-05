@@ -351,7 +351,7 @@ function ItemResultPage() {
   // `undefined` until the first successful poll response arrives, which
   // the hook already treats as "no photo yet, don't fetch" (see
   // useAuthedImageUrl.js).
-  const photoObjectUrl = useAuthedImageUrl(item?.photo_url)
+  const { url: photoObjectUrl, status: photoStatus } = useAuthedImageUrl(item?.photo_url)
 
   useEffect(() => {
     let cancelled = false
@@ -448,16 +448,26 @@ function ItemResultPage() {
             header (sandbox-dfr.3) -- a plain `<img src>` can't attach one, so
             `useAuthedImageUrl` (sandbox-dfr.5) fetches the photo bytes
             authenticated via `apiFetch` and exposes them as a `blob:` object
-            URL instead. While there's no `photo_url` yet, or the
-            authenticated fetch hasn't resolved (or failed) yet,
-            `photoObjectUrl` is `null` and a placeholder renders instead of a
-            broken-image icon. */}
+            URL instead. With no `photo_url` a placeholder renders; while the
+            fetch is in flight a "Loading photo..." placeholder renders; if it
+            failed (`status === 'error'`, sandbox-dfr.9) a distinct "Photo
+            unavailable" state renders instead of a broken-image icon. */}
         {!item.photo_url ? (
           <div
             className="grid aspect-square w-full place-items-center rounded-2xl border border-dashed border-line bg-sunken p-4 text-center text-sm text-muted sm:w-52"
             data-testid="photo-placeholder"
           >
             <p>Photo unavailable.</p>
+          </div>
+        ) : photoStatus === 'error' ? (
+          <div
+            className="grid aspect-square w-full place-items-center rounded-2xl border border-dashed border-line bg-sunken p-4 text-center text-sm text-muted sm:w-52"
+            data-testid="photo-error"
+          >
+            <div className="flex flex-col items-center gap-1.5">
+              <AlertCircle size={20} />
+              <p>Photo unavailable.</p>
+            </div>
           </div>
         ) : photoObjectUrl ? (
           <img

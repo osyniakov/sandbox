@@ -199,6 +199,23 @@ describe('InventoryPage', () => {
     ).toBeInTheDocument()
   })
 
+  it("shows 'Photo unavailable' on a tile whose authenticated photo fetch fails (404)", async () => {
+    fetch.mockImplementation((url) => {
+      if (typeof url === 'string' && url.includes('/uploads/')) {
+        return Promise.resolve({ ok: false, status: 404, statusText: 'Not Found' })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => [DECIDED_SELL_ITEM] })
+    })
+
+    renderInventoryPage()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('photo-error')).toHaveTextContent(/photo unavailable/i)
+    })
+    expect(screen.queryByTestId('photo-placeholder')).not.toBeInTheDocument()
+    expect(screen.queryByRole('img')).not.toBeInTheDocument()
+  })
+
   it('shows a per-item placeholder (not a broken-image icon) while an authenticated photo fetch is pending, then renders it', async () => {
     let resolvePhotoFetch
     const photoPromise = new Promise((resolve) => {

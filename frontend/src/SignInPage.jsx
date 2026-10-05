@@ -61,7 +61,19 @@ function SignInPage() {
           return
         }
 
-        const body = await result.json()
+        let body
+        try {
+          body = await result.json()
+        } catch {
+          body = null
+        }
+        const isNonEmptyString = (v) => typeof v === 'string' && v.length > 0
+        if (!body || !isNonEmptyString(body.token) || !isNonEmptyString(body.email)) {
+          setErrorMessage(
+            `Sign-in failed (${result.status} ${result.statusText}): unexpected response from the server.`,
+          )
+          return
+        }
         completeSignIn(body.token, body.email)
       } catch {
         // Network error (backend unreachable, offline, etc.).

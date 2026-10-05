@@ -59,10 +59,12 @@ export async function apiFetch(path, options = {}) {
 
   const mergedOptions = { ...options }
   if (token) {
-    mergedOptions.headers = {
-      ...(options.headers || {}),
-      Authorization: `Bearer ${token}`,
-    }
+    // Normalise any HeadersInit shape (Headers, plain object, array of
+    // pairs). `set` overrides any caller-supplied Authorization (same
+    // precedence as before).
+    const headers = new Headers(options.headers)
+    headers.set('Authorization', `Bearer ${token}`)
+    mergedOptions.headers = headers
   }
 
   const response = await fetch(`${API_BASE_URL}${path}`, mergedOptions)
