@@ -7,7 +7,6 @@ network calls are made and no ``ANTHROPIC_API_KEY`` is required.
 from __future__ import annotations
 
 import json
-import logging
 from typing import Any
 
 import pytest
@@ -186,10 +185,8 @@ class _RawProvider:
     [(None, "NoneType"), ("a string", "str"), (42, "int"), (["list"], "list")],
 )
 def test_non_dict_provider_response_is_treated_as_failure(
-    value: Any, type_name: str, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    value: Any, type_name: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    # alembic's fileConfig (run by other tests) disables pre-existing loggers.
-    monkeypatch.setattr(logging.getLogger("app.identification"), "disabled", False)
     item = _make_item()
     service = ItemIdentificationService(provider=_RawProvider(value))
 
