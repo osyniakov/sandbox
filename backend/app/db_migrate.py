@@ -7,16 +7,12 @@ three states it currently starts in:
 1. Fresh/empty DB (no tables at all) -- Alembic runs every migration from
    scratch.
 2. Legacy pre-Alembic DB (already has the app's tables, e.g. ``items``, but
-   no ``alembic_version`` table because it predates Alembic) -- which of two
-   shapes this actually is gets detected by inspecting the existing schema:
-   if it's missing columns that later migrations add (e.g. ``user_hint``),
-   we stamp it at the baseline revision (a no-op, since that revision's
-   schema already matches) and let Alembic apply only the migrations that
-   came after baseline; if it already has those columns (e.g. a DB whose
-   tables were created via ``create_all()`` after the column was added to
-   the models but before Alembic tracking existed), we stamp it straight at
-   head instead, since re-running those migrations would fail against
-   columns that already exist.
+   no ``alembic_version`` row because it predates Alembic or was built by
+   ``Base.metadata.create_all()``) -- the schema may be at ANY historical
+   model version. We inspect the columns, walk ``REVISION_MARKERS`` in chain
+   order, and stamp at the newest revision whose marker columns (and those of
+   every earlier revision) are all present (baseline if none). The final
+   ``upgrade head`` then applies only the remaining migrations.
 3. DB already tracked by Alembic and at (or behind) head -- Alembic upgrades
    it to head, which is a no-op if it's already there.
 
@@ -29,6 +25,7 @@ exists (pending Railway access -- see the sandbox-64f epic notes).
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import sqlalchemy
@@ -37,7 +34,22 @@ from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from alembic.script import ScriptDirectory
 
+logger = logging.getLogger(__name__)
+
 ALEMBIC_INI_PATH = Path(__file__).resolve().parent.parent / "alembic.ini"
+
+# Ordered (oldest first) map: post-baseline revision id -> (table, column)
+# pairs that revision adds. Presence of all of them proves that revision's
+# schema is in place. MUST list every post-baseline revision in chain order;
+# tests/test_db_migrate.py fails if a migration is added without an entry or
+# the order drifts from the Alembic chain.
+REVISION_MARKERS: dict[str, tuple[tuple[str, str], ...]] = {
+    "56db6b756990": (("items", "user_hint"),),
+    "5e5bc01d3d06": (("items", "suggested_title"), ("items", "suggested_description")),
+    "c19b13a0cfc6": (("items", "search_query_used"),),
+    "ed31718d3904": (("comparable_listings", "price_type"),),
+    "85b6c1c63d41": (("items", "decision_confidence"),),
+}
 
 
 def _build_config(database_url: str) -> Config:
@@ -64,6 +76,53 @@ def _baseline_revision_id(config: Config) -> str:
     raise RuntimeError("No baseline revision (down_revision is None) found in alembic script directory")
 
 
+def _detect_stamp_revision(inspector: sqlalchemy.Inspector, baseline_revision: str) -> str:
+    """Return the revision an unstamped legacy DB's schema corresponds to.
+
+    Prefix semantics: walk ``REVISION_MARKERS`` in order and stop at the first
+    revision with any missing marker column; the answer is the last revision
+    fully satisfied (baseline if none).
+
+    Edge cases:
+    - Out-of-order markers (a later revision's column present while an earlier
+      one is missing): we stamp at the satisfied prefix and log a warning. The
+      following ``upgrade head`` then re-adds the later column and fails with
+      a duplicate-column error. This is deliberate: a loud failure on an
+      inconsistent schema beats silently stamping too high and skipping a
+      migration.
+    - A marker's table is missing (e.g. ``comparable_listings``): its columns
+      count as absent, so stamping stops before that revision and the upgrade
+      fails loudly if the table truly does not exist.
+    """
+    columns_cache: dict[str, set[str]] = {}
+
+    def has_column(table: str, column: str) -> bool:
+        if table not in columns_cache:
+            columns_cache[table] = (
+                {c["name"] for c in inspector.get_columns(table)} if inspector.has_table(table) else set()
+            )
+        return column in columns_cache[table]
+
+    stamp_at = baseline_revision
+    broken = False
+    for revision, markers in REVISION_MARKERS.items():
+        satisfied = all(has_column(t, c) for t, c in markers)
+        if broken:
+            if satisfied:
+                logger.warning(
+                    "Unstamped DB has markers for revision %s but is missing an earlier revision's columns; "
+                    "stamping at %s -- the upgrade will likely fail with a duplicate column.",
+                    revision,
+                    stamp_at,
+                )
+            continue
+        if satisfied:
+            stamp_at = revision
+        else:
+            broken = True
+    return stamp_at
+
+
 def upgrade_to_head(database_url: str) -> None:
     """Bring the database at ``database_url`` to Alembic 'head'.
 
@@ -81,51 +140,13 @@ def upgrade_to_head(database_url: str) -> None:
         if current_revision is None:
             inspector = sqlalchemy.inspect(engine)
             if inspector.has_table("items"):
-                # Legacy pre-Alembic DB: tables already exist but were never
-                # tracked by Alembic. This could mean one of two different
-                # actual schema shapes though, and stamping at the wrong one
-                # is not a no-op:
-                #
-                # - The tables match the pre-hint BASELINE shape (the
-                #   original schema, before `user_hint` was added to
-                #   `Item`). This is the common case: a genuinely old DB
-                #   that predates Alembic entirely.
-                # - The tables were actually created via
-                #   ``Base.metadata.create_all()`` against a CURRENT
-                #   ``app.models`` (e.g. the app's own ``init_db()`` ran
-                #   against a fresh file sometime after `user_hint` was
-                #   added to the model but before this Alembic epic
-                #   shipped). Such a DB already has `user_hint` even
-                #   though it was never stamped. Stamping this one at
-                #   baseline would be WRONG: the subsequent `upgrade head`
-                #   would then try to re-run the "add user_hint column"
-                #   migration's DDL against a table that already has that
-                #   column, raising ``OperationalError: duplicate column
-                #   name: user_hint``.
-                #
-                # We distinguish the two by checking for the specific
-                # column that the first post-baseline migration adds
-                # (``user_hint``). If it's already present, we ASSUME the
-                # DB was created by ``create_all()`` from a model that
-                # already had every column, and stamp at head instead of
-                # baseline. This is a heuristic, not a schema differ: it
-                # does not check columns added by later migrations, so an
-                # unstamped DB that has ``user_hint`` but lacks a later
-                # column would be stamped at head and skip that migration
-                # (tracked as sandbox-8v6).
-                items_columns = {col["name"] for col in inspector.get_columns("items")}
-                if "user_hint" in items_columns:
-                    # Assumed to match HEAD's schema (see above); stamp at
-                    # head so the `upgrade head` call below is a no-op.
-                    command.stamp(config, "head")
-                else:
-                    # Genuinely pre-hint baseline shape: stamp at baseline
-                    # (a true no-op against this exact schema -- it must
-                    # NOT execute baseline's DDL, which would fail since
-                    # the tables already exist) so the upgrade below only
-                    # applies migrations after baseline.
-                    baseline_revision = _baseline_revision_id(config)
-                    command.stamp(config, baseline_revision)
+                # Unstamped legacy DB: tables exist but were never tracked by
+                # Alembic, and may match any historical model version. Stamp
+                # at the newest revision whose schema is present (see
+                # _detect_stamp_revision); stamping is a no-op that does not
+                # run DDL, and `upgrade head` below applies the rest.
+                stamp_revision = _detect_stamp_revision(inspector, _baseline_revision_id(config))
+                command.stamp(config, stamp_revision)
             # else: genuinely fresh/empty DB -- nothing to stamp; `upgrade
             # head` below will run every revision from scratch.
     finally:
