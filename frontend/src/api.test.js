@@ -26,7 +26,7 @@ describe('apiFetch', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     const [url, options] = fetch.mock.calls[0]
     expect(url).toBe(`${API_BASE_URL}/items`)
-    expect(options.headers.Authorization).toBe('Bearer my-token')
+    expect(options.headers.get('Authorization')).toBe('Bearer my-token')
   })
 
   it('omits the Authorization header when no token is present', async () => {
@@ -51,9 +51,24 @@ describe('apiFetch', () => {
 
     const [, options] = fetch.mock.calls[0]
     expect(options.method).toBe('PATCH')
-    expect(options.headers['Content-Type']).toBe('application/json')
-    expect(options.headers.Authorization).toBe('Bearer my-token')
+    expect(options.headers.get('Content-Type')).toBe('application/json')
+    expect(options.headers.get('Authorization')).toBe('Bearer my-token')
     expect(options.body).toBe('{}')
+  })
+
+  it.each([
+    ['a Headers instance', () => new Headers({ 'X-Custom': 'abc' })],
+    ['a plain object', () => ({ 'X-Custom': 'abc' })],
+    ['an array of pairs', () => [['X-Custom', 'abc']]],
+  ])('merges Authorization with caller headers given %s', async (_name, makeHeaders) => {
+    localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'my-token')
+    fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
+
+    await apiFetch('/items', { headers: makeHeaders() })
+
+    const [, options] = fetch.mock.calls[0]
+    expect(options.headers.get('X-Custom')).toBe('abc')
+    expect(options.headers.get('Authorization')).toBe('Bearer my-token')
   })
 
   it('clears the stored token and dispatches auth:session-expired on a 401 response', async () => {

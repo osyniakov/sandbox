@@ -51,7 +51,7 @@ describe('useAuthedImageUrl', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
     const [url, options] = fetch.mock.calls[0]
     expect(url).toBe(`${API_BASE_URL}/uploads/a.jpg`)
-    expect(options.headers.Authorization).toBe('Bearer my-token')
+    expect(options.headers.get('Authorization')).toBe('Bearer my-token')
   })
 
   it('stays null (placeholder-friendly) when the fetch fails with a non-401 error', async () => {

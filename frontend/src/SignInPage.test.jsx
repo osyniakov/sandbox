@@ -121,6 +121,33 @@ describe('SignInPage', () => {
     expect(screen.getByTestId('auth-state')).toHaveTextContent('unauthenticated')
   })
 
+  it.each([
+    ['an empty object', async () => ({})],
+    ['an empty token', async () => ({ token: '', email: 'a@example.com' })],
+    ['a missing email', async () => ({ token: 't' })],
+    ['null fields', async () => ({ token: null, email: null })],
+    ['numeric fields', async () => ({ token: 1, email: 2 })],
+    ['a non-JSON body', async () => { throw new SyntaxError('Unexpected token') }],
+  ])('a 200 response with %s shows an error and does not sign in', async (_name, json) => {
+    const gis = stubGoogleIdentityServices()
+    fetch.mockResolvedValueOnce({ ok: true, status: 200, statusText: 'OK', json })
+
+    renderSignInPage()
+
+    await waitFor(() => {
+      expect(gis.initialize).toHaveBeenCalledTimes(1)
+    })
+
+    await gis.triggerCredentialResponse({ credential: 'fake-google-id-token' })
+
+    await waitFor(() => {
+      expect(screen.getByRole('alert')).toHaveTextContent(/sign-in failed/i)
+    })
+
+    expect(localStorage.getItem(SESSION_TOKEN_STORAGE_KEY)).toBeNull()
+    expect(screen.getByTestId('auth-state')).toHaveTextContent('unauthenticated')
+  })
+
   it('shows a load-failure message if window.google never becomes available', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     // Deliberately do NOT stub window.google for this test.
