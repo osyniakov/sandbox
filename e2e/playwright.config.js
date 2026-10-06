@@ -21,9 +21,9 @@
 //                        real GET /auth/me. Not read directly by this
 //                        config file, only by the auth helper at the point
 //                        a test actually calls signInAs().
-//   E2E_TEST_EMAIL       The designated E2E test identity's email. Must
-//                        already be present in the real deployed backend's
-//                        ALLOWED_EMAILS whitelist. Also not read directly
+//   E2E_TEST_EMAIL       The designated E2E test identity's email. No
+//                        whitelisting needed (sign-in is open); tests run
+//                        in this account's own workspace. Also not read directly
 //                        by this file.
 //
 // Optional env vars

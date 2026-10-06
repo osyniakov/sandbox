@@ -261,7 +261,7 @@ def health() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 #
 # Google Sign-In verification, session-token issuance/verification, and the
-# whitelist check itself all live in ``app.auth`` (sandbox-dfr.1) -- this
+# email verification itself all live in ``app.auth`` (sandbox-dfr.1) -- this
 # section is purely the HTTP surface over that module: exchanging a Google
 # ID token for our own session token (``POST /auth/google``), checking a
 # session token (``GET /auth/me``), a symmetric no-op logout

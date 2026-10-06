@@ -19,9 +19,8 @@ test('signed-in E2E test identity sees the upload page, not the sign-in gate', a
   // then flips `isLoading` to false -- so these assertions only pass if
   // the minted token is genuinely valid against the real backend (i.e.
   // E2E_SESSION_SECRET really matches the deployed backend's
-  // SESSION_SECRET, and E2E_TEST_EMAIL is really on its ALLOWED_EMAILS
-  // whitelist). Poll generously (playwright.config.js's
-  // E2E_EXPECT_TIMEOUT_MS-controlled default) since that round trip, plus
+  // SESSION_SECRET; E2E_TEST_EMAIL needs no whitelisting). Poll generously
+  // (playwright.config.js's E2E_EXPECT_TIMEOUT_MS-controlled default) since that round trip, plus
   // the app's own "Loading..." state, takes a moment.
 
   // The upload page (frontend/src/UploadPage.jsx) renders a "Take or

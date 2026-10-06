@@ -102,7 +102,7 @@ describe('SignInPage', () => {
       ok: false,
       status: 401,
       statusText: 'Unauthorized',
-      json: async () => ({ detail: 'not-whitelisted@example.com is not authorized.' }),
+      json: async () => ({ detail: 'Google account email is not verified.' }),
     })
 
     renderSignInPage()
@@ -114,7 +114,7 @@ describe('SignInPage', () => {
     await gis.triggerCredentialResponse({ credential: 'fake-google-id-token' })
 
     await waitFor(() => {
-      expect(screen.getByRole('alert')).toHaveTextContent(/not authorized/i)
+      expect(screen.getByRole('alert')).toHaveTextContent(/not verified/i)
     })
 
     expect(localStorage.getItem(SESSION_TOKEN_STORAGE_KEY)).toBeNull()

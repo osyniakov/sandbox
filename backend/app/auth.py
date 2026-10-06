@@ -66,22 +66,12 @@ def _parse_allowed_emails(raw: str | None) -> list[str]:
     ``b7a2c4d9e1f3`` migration.
 
     Mirrors ``app.main._parse_allowed_origins``'s comma-separated,
-    strip-whitespace parsing convention, with two deliberate
-    differences suited to a security whitelist rather than a CORS
-    origin list:
-
-    - Every entry is lowercased, since email whitelist matching must be
-      case-insensitive (mail providers treat the local part as
-      case-sensitive in theory, but in practice -- and per Google
-      Sign-In behavior -- comparing case-insensitively is the safe,
-      expected behavior here and avoids operators being locked out by
-      a stray capital letter).
-    - Unlike ``ALLOWED_ORIGINS`` (which falls back to a non-empty,
-      known-safe default), ``ALLOWED_EMAILS`` defaults to an **empty**
-      list when ``raw`` is ``None``/empty/blank-only. There is no
-      sensible non-empty default for a security whitelist -- failing
-      closed (nobody is allowed in) is the only safe behavior when this
-      is unconfigured.
+    strip-whitespace parsing convention. ``ALLOWED_EMAILS`` no longer
+    gates sign-in; it is parsed only so its first entry can be used as
+    the owner of pre-multi-tenancy items. Every entry is lowercased to
+    match the lowercased owner emails stored on items, and the result
+    is an empty list when ``raw`` is ``None``/empty/blank-only (no
+    legacy owner configured).
     """
     if not raw:
         return []

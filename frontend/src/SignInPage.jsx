@@ -13,7 +13,7 @@ const GOOGLE_SCRIPT_POLL_TIMEOUT_MS = 8000
 // Extracts a human-readable message from a failed `POST /auth/google`
 // response. Mirrors UploadPage.jsx's `extractErrorMessage` helper: the
 // backend returns FastAPI-style `{"detail": "..."}` bodies for its 4xx
-// errors (e.g. 401 for an email not on the whitelist -- see
+// errors (e.g. 401 for an invalid token or unverified email -- see
 // backend/app/main.py's `auth_google`).
 async function extractErrorMessage(response) {
   try {
@@ -25,7 +25,7 @@ async function extractErrorMessage(response) {
     // Response body wasn't JSON -- fall through to the generic message.
   }
   if (response.status === 401) {
-    return 'This Google account is not authorized to use this app.'
+    return 'Google sign-in failed. Make sure your Google account has a verified email and try again.'
   }
   return `Sign-in failed (${response.status} ${response.statusText})`
 }
@@ -149,7 +149,7 @@ function SignInPage() {
           </p>
           <div className="flex justify-center" ref={buttonContainerRef} />
           <p className="mt-3 text-center text-xs text-muted">
-            Only invited accounts can sign in.
+            Any Google account works — your items stay private to your account.
           </p>
 
           {scriptLoadFailed && (

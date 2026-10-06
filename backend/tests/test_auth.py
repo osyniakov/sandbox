@@ -1,4 +1,4 @@
-"""Tests for ``app.auth``: Google ID token verification, email whitelist
+"""Tests for ``app.auth``: Google ID token verification, ALLOWED_EMAILS
 parsing, and session token issuance/verification.
 
 ``verify_google_id_token`` is exercised via an injectable ``verify_fn``

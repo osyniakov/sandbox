@@ -4,7 +4,7 @@
 # Actions):
 #   E2E_FRONTEND_URL   - base URL of the deployed frontend under test
 #   E2E_SESSION_SECRET - deployed backend's real SESSION_SECRET
-#   E2E_TEST_EMAIL     - test identity email (must be in ALLOWED_EMAILS)
+#   E2E_TEST_EMAIL     - test identity email (no whitelisting needed; runs in its own workspace)
 name: E2E Tests
 
 on:

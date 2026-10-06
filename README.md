@@ -44,7 +44,7 @@ Other environment variables, all optional with sensible defaults:
 | `VITE_API_BASE_URL` | frontend | `http://localhost:8000` | where the frontend calls the backend |
 | `GOOGLE_CLIENT_ID` | backend | — (required for sign-in) | OAuth 2.0 client ID that Google ID tokens must be issued for; see [Access control](#access-control) |
 | `VITE_GOOGLE_CLIENT_ID` | frontend | — (required for sign-in) | same Google OAuth client ID, exposed to the frontend build so it can render the Sign-In button; see [Access control](#access-control) |
-| `ALLOWED_EMAILS` | backend | — (empty = nobody can sign in) | comma-separated whitelist of emails allowed to sign in; see [Access control](#access-control) |
+| `ALLOWED_EMAILS` | backend | — (optional) | no longer restricts sign-in; its first entry owns pre-multi-tenancy items (see [Access control](#access-control)) |
 | `SESSION_SECRET` | backend | — (required) | secret key used to sign/verify this app's own session tokens issued after Google sign-in. Must be set to a real random secret in any real deployment — e.g. generate one with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Leaving it unset is not silently insecure: token issuance raises rather than operating without a secret. |
 
 Kleinanzeigen client overrides (backend, runtime). Leave these unset
@@ -143,14 +143,17 @@ Railway; it is run manually from GitHub Actions (see "End-to-end tests").
 ## Access control
 
 The app requires Google Sign-In to use — there is no anonymous or
-password-based access. After a user signs in with Google, the backend
-only accepts them if their email is on the `ALLOWED_EMAILS` whitelist;
-everyone else is rejected even though they successfully authenticated
-with Google.
+password-based access. Sign-in is open: any Google account with a
+verified email can sign in and gets its own private workspace. Items,
+photos and comparables are scoped per account (the lowercased email from
+the session token); another account's items and photos return 404, the
+same as nonexistent ones.
 
-**Adding/removing a whitelisted user:** edit the `ALLOWED_EMAILS` env
-var (comma-separated list of emails) and redeploy/restart the backend.
-No code change or database migration is needed.
+**`ALLOWED_EMAILS` is now optional and no longer restricts sign-in.**
+Its first entry is used only to claim items that have no owner (data
+created before multi-tenancy): once at migration and at each
+`python -m app.db_migrate` start. After the first deploy has claimed
+them, the variable can be removed.
 
 **Setting up the Google OAuth Client ID** (one-time, per Google Cloud
 project):
@@ -159,8 +162,7 @@ project):
    and create or pick a project.
 2. Under **APIs & Services → OAuth consent screen**, configure it with
    user type **External**. While the app is in **Testing** status, add
-   the Google accounts that need to sign in as test users (in addition
-   to being on `ALLOWED_EMAILS`).
+   the Google accounts that need to sign in as test users.
 3. Under **APIs & Services → Credentials**, click **Create
    Credentials → OAuth client ID**, and choose application type **Web
    application**.
@@ -226,8 +228,8 @@ variables → Actions):
 - `E2E_FRONTEND_URL` — base URL of the deployed frontend to test.
 - `E2E_SESSION_SECRET` — the deployed backend's real `SESSION_SECRET`,
   used to mint the test session token.
-- `E2E_TEST_EMAIL` — the test identity's email; must be in the backend's
-  `ALLOWED_EMAILS`.
+- `E2E_TEST_EMAIL` — the test identity's email; it needs no whitelisting
+  (sign-in is open) and the suite runs in that account's own workspace.
 
 `e2e/Dockerfile` remains available for running the suite in a container,
 but it is no longer deployed as a Railway service. See `e2e/README.md` for

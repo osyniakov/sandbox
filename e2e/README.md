@@ -40,10 +40,10 @@ npm run test:e2e
 | --- | --- |
 | `E2E_FRONTEND_URL` | Base URL of the deployed frontend to test against, e.g. `https://<app>.up.railway.app`. No default -- must be explicitly supplied. |
 | `E2E_SESSION_SECRET` | The real deployed backend's actual `SESSION_SECRET` value. Used by `helpers/mint_token.py` to mint a validly-signed session token for the test identity below. Must exactly match the real backend's configured `SESSION_SECRET`, or the token will fail validation against the real `GET /auth/me`. |
-| `E2E_TEST_EMAIL` | The designated E2E test identity's email. Must already be present in the real deployed backend's `ALLOWED_EMAILS` whitelist. |
+| `E2E_TEST_EMAIL` | The designated E2E test identity's email. No whitelisting is needed (sign-in is open); the suite runs in this account's own private workspace. |
 
-Obtaining `E2E_SESSION_SECRET` and ensuring `E2E_TEST_EMAIL` is
-whitelisted is **out of scope for this suite** -- it consumes both,
+Obtaining `E2E_SESSION_SECRET` and choosing `E2E_TEST_EMAIL` is
+**out of scope for this suite** -- it consumes both,
 supplied externally (e.g. by whoever runs the suite, pulling the real
 value from the backend Railway service's configured environment). It never
 invents, guesses, or hardcodes either.
@@ -89,7 +89,7 @@ deliberately does not add any backend auth-bypass code. Instead:
 3. The frontend's own `AuthContext.jsx` then validates that token against
    the real `GET /auth/me` on mount, exactly as it would for a token
    obtained through the real sign-in flow -- so a broken/mismatched
-   secret or a non-whitelisted email surfaces as a normal sign-in
+   secret surfaces as a normal sign-in
    failure (the sign-in gate stays visible), not a special code path.
 
 ## What has and hasn't been verified for this harness (sandbox-634.2)
@@ -108,7 +108,6 @@ static fixtures shaped like the real UploadPage and SignInPage DOM: it
 passes against the UploadPage-shaped fixture and correctly fails against
 the SignInPage-shaped one, confirming the assertions aren't vacuous. What
 remains unverifiable until sandbox-634.8's real run: that `E2E_SESSION_SECRET`
-matches the deployed backend's actual `SESSION_SECRET`, that `E2E_TEST_EMAIL`
-is really on the deployed backend's `ALLOWED_EMAILS`, and that the real
+matches the deployed backend's actual `SESSION_SECRET`, and that the real
 SPA's mount-time auth flow behaves the same as the fixtures within the
 configured timeouts.
