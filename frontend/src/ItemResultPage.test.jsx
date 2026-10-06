@@ -389,11 +389,25 @@ describe('ItemResultPage', () => {
     expect(await screen.findByRole('heading', { name: 'Where €45.50 sits' })).toBeInTheDocument()
   })
 
-  it('omits the price-position strip for give_away decisions', async () => {
+  it('omits the price-position strip for give_away with fewer than 2 priced comparables', async () => {
     fetch.mockResolvedValue({ ok: true, status: 200, json: async () => GIVE_AWAY_ITEM })
     renderAtItem(2)
     await screen.findByText(/old board game/i)
     expect(screen.queryByTestId('price-position')).not.toBeInTheDocument()
+  })
+
+  it('renders the comparable price strip for give_away with 2+ priced comparables', async () => {
+    const item = {
+      ...GIVE_AWAY_ITEM,
+      comparable_listings: [
+        ...GIVE_AWAY_ITEM.comparable_listings,
+        { ...GIVE_AWAY_ITEM.comparable_listings[0], id: 21, price: 8 },
+      ],
+    }
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => item })
+    renderAtItem(2)
+    expect(await screen.findByRole('heading', { name: 'What similar items sell for' })).toBeInTheDocument()
+    expect(screen.queryByTestId('price-marker')).not.toBeInTheDocument()
   })
 
   it('links "Open Kleinanzeigen" in the listing card to the search URL', async () => {

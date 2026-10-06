@@ -3,12 +3,16 @@ import { formatPrice } from './format.js'
 const clampPercent = (v) => Math.min(100, Math.max(0, v))
 
 // "Where €X sits" strip: shows the suggested price against the range of
-// comparable listing prices. Renders nothing unless the decision is `sell`,
-// a suggested price exists, and at least 2 comparables have numeric prices.
+// comparable listing prices. For `sell` it needs a finite suggested price and
+// shows the price marker. For `give_away` it shows the same strip as
+// "What similar items sell for" with no marker (suggestedPrice is ignored).
+// Any other decision renders nothing, as does fewer than 2 numeric comparables.
 // The drawing is decorative (aria-hidden); a visually hidden sentence
 // carries the same information for assistive tech.
 function PricePosition({ decision, suggestedPrice, comparableListings }) {
-  if (decision !== 'sell' || typeof suggestedPrice !== 'number' || !Number.isFinite(suggestedPrice)) {
+  const isSell = decision === 'sell'
+  if (!isSell && decision !== 'give_away') return null
+  if (isSell && (typeof suggestedPrice !== 'number' || !Number.isFinite(suggestedPrice))) {
     return null
   }
   const prices = (comparableListings ?? [])
@@ -25,13 +29,16 @@ function PricePosition({ decision, suggestedPrice, comparableListings }) {
       className="rounded-2xl border border-line bg-surface p-5 shadow-card"
       data-testid="price-position"
     >
-      <div className="flex items-baseline justify-between">
-        <h3 className="font-semibold">Where {formatPrice(suggestedPrice)} sits</h3>
-        <span className="text-sm tabular-nums text-muted">{prices.length} comparables</span>
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="font-semibold">
+          {isSell ? `Where ${formatPrice(suggestedPrice)} sits` : 'What similar items sell for'}
+        </h3>
+        <span className="shrink-0 whitespace-nowrap text-sm tabular-nums text-muted">{prices.length} comparables</span>
       </div>
       <p className="sr-only">
-        Suggested price {formatPrice(suggestedPrice)}; comparables range from {formatPrice(min)} to{' '}
-        {formatPrice(max)}.
+        {isSell
+          ? `Suggested price ${formatPrice(suggestedPrice)}; comparables range from ${formatPrice(min)} to ${formatPrice(max)}.`
+          : `Comparable listings range from ${formatPrice(min)} to ${formatPrice(max)}.`}
       </p>
       <div className="relative mt-6 h-12" aria-hidden="true">
         <div className="absolute inset-x-0 top-4 h-1.5 rounded-full bg-sunken" />
@@ -43,13 +50,15 @@ function PricePosition({ decision, suggestedPrice, comparableListings }) {
             style={{ left: `${pos(p)}%` }}
           />
         ))}
-        <div
-          data-testid="price-marker"
-          className="absolute top-0 -translate-x-1/2"
-          style={{ left: `${pos(suggestedPrice)}%` }}
-        >
-          <div className="h-[1.375rem] w-1 rounded-full bg-primary" />
-        </div>
+        {isSell && (
+          <div
+            data-testid="price-marker"
+            className="absolute top-0 -translate-x-1/2"
+            style={{ left: `${pos(suggestedPrice)}%` }}
+          >
+            <div className="h-[1.375rem] w-1 rounded-full bg-primary" />
+          </div>
+        )}
         <div className="absolute inset-x-0 top-8 flex justify-between text-xs tabular-nums text-muted">
           <span>{formatPrice(min)}</span>
           <span>{formatPrice(max)}</span>
