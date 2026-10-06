@@ -279,14 +279,11 @@ def auth_google(body: GoogleAuthRequest) -> dict[str, str]:
 
     Verifies ``body.id_token`` via ``app.auth.verify_google_id_token``
     (signature/expiry/audience check against Google, plus the
-    ``email_verified`` and ``ALLOWED_EMAILS`` whitelist checks -- see that
-    module's docstring). Returns 401 if verification fails for any reason
-    (invalid/expired/malformed token, unverified email, or an email not on
-    the whitelist), with ``AuthError``'s own message as the detail --
-    including, for the not-on-the-whitelist case, the email itself. That's
-    acceptable here (unlike e.g. a login-by-password form): the caller has
-    already proven ownership of that email via a real Google-signed token,
-    so echoing it back isn't disclosing anything they didn't already know.
+    ``email_verified`` check -- see that module's docstring). Any verified
+    Google account may sign in; there is no allowlist. Returns 401 if
+    verification fails for any reason (invalid/expired/malformed token,
+    unverified or missing email), with ``AuthError``'s own message as the
+    detail.
 
     On success, issues a session token (``app.auth.issue_session_token``)
     and returns it alongside the verified email.
@@ -334,7 +331,8 @@ def require_user(authorization: str | None = Header(None)) -> str:
     if email is None:
         raise HTTPException(status_code=401, detail="Invalid or expired session token.")
 
-    return email
+    # Normalize: older session tokens may carry a mixed-case email.
+    return email.strip().lower()
 
 
 # ---------------------------------------------------------------------------

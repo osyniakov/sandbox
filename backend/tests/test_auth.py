@@ -66,57 +66,43 @@ def _fake_verify_fn(payload: dict) -> callable:
     return _verify
 
 
-def test_verify_google_id_token_valid_and_whitelisted_returns_email(
+def test_verify_google_id_token_any_verified_email_returns_normalized_email(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
-    monkeypatch.setenv("ALLOWED_EMAILS", "alice@example.com")
+    monkeypatch.delenv("ALLOWED_EMAILS", raising=False)
 
-    fake = _fake_verify_fn({"email": "Alice@Example.com", "email_verified": True})
-    email = verify_google_id_token("some-token", verify_fn=fake)
-    assert email == "alice@example.com"
+    fake = _fake_verify_fn({"email": "  Eve@Example.com ", "email_verified": True})
+    assert verify_google_id_token("some-token", verify_fn=fake) == "eve@example.com"
 
 
-def test_verify_google_id_token_email_not_whitelisted_raises(
+def test_verify_google_id_token_ignores_allowed_emails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
     monkeypatch.setenv("ALLOWED_EMAILS", "alice@example.com")
 
     fake = _fake_verify_fn({"email": "eve@example.com", "email_verified": True})
-    with pytest.raises(AuthError):
-        verify_google_id_token("some-token", verify_fn=fake)
+    assert verify_google_id_token("some-token", verify_fn=fake) == "eve@example.com"
 
 
 def test_verify_google_id_token_email_not_verified_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
-    monkeypatch.setenv("ALLOWED_EMAILS", "alice@example.com")
 
     fake = _fake_verify_fn({"email": "alice@example.com", "email_verified": False})
     with pytest.raises(AuthError):
         verify_google_id_token("some-token", verify_fn=fake)
 
 
-def test_verify_google_id_token_allowed_emails_unset_raises_even_if_otherwise_valid(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("email", [None, "", "   ", 123])
+def test_verify_google_id_token_missing_or_empty_email_raises(
+    monkeypatch: pytest.MonkeyPatch, email: object
 ) -> None:
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
-    monkeypatch.delenv("ALLOWED_EMAILS", raising=False)
 
-    fake = _fake_verify_fn({"email": "alice@example.com", "email_verified": True})
-    with pytest.raises(AuthError):
-        verify_google_id_token("some-token", verify_fn=fake)
-
-
-def test_verify_google_id_token_allowed_emails_empty_string_raises(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
-    monkeypatch.setenv("ALLOWED_EMAILS", "")
-
-    fake = _fake_verify_fn({"email": "alice@example.com", "email_verified": True})
+    fake = _fake_verify_fn({"email": email, "email_verified": True})
     with pytest.raises(AuthError):
         verify_google_id_token("some-token", verify_fn=fake)
 
@@ -125,7 +111,6 @@ def test_verify_google_id_token_google_client_id_unset_raises(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
-    monkeypatch.setenv("ALLOWED_EMAILS", "alice@example.com")
 
     fake = _fake_verify_fn({"email": "alice@example.com", "email_verified": True})
     with pytest.raises(AuthError):
@@ -136,7 +121,6 @@ def test_verify_google_id_token_verify_fn_raises_becomes_autherror(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
-    monkeypatch.setenv("ALLOWED_EMAILS", "alice@example.com")
 
     def _boom(id_token_str, request, audience=None):
         raise ValueError("bad signature")

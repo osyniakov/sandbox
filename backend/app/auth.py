@@ -1,22 +1,14 @@
-"""Google Sign-In verification, email whitelist, and session tokens.
+"""Google Sign-In verification and session tokens.
 
 This module is the authentication core: it verifies Google-issued ID
 tokens (proving the caller actually authenticated with Google and owns
-the associated email), checks the resulting email against an
-operator-controlled whitelist (``ALLOWED_EMAILS``), and issues/verifies
-our own signed session tokens so the frontend doesn't need to re-send
-the Google ID token on every request.
+the associated verified email) and issues/verifies our own signed
+session tokens so the frontend doesn't need to re-send the Google ID
+token on every request. Any verified Google account may sign in; there
+is no email whitelist. The lowercased email is the user's identity.
 
 Fail-closed by design
 ----------------------
-Every piece of this module treats "unconfigured" as "deny", not
-"allow":
-
-- ``ALLOWED_EMAILS`` unset/empty -> the whitelist is empty -> no email
-  can pass -> :func:`verify_google_id_token` always raises
-  :class:`AuthError`. There is no sensible non-empty default for a
-  security whitelist (unlike e.g. ``ALLOWED_ORIGINS`` in ``app.main``,
-  which has a known-safe localhost default).
 - ``GOOGLE_CLIENT_ID`` unset/empty -> we have no audience to verify
   the token against -> :func:`verify_google_id_token` always raises
   :class:`AuthError`.
@@ -32,8 +24,9 @@ in this codebase (e.g. ``app.db._default_db_path``):
 
 - ``GOOGLE_CLIENT_ID``: OAuth 2.0 client ID that Google ID tokens must
   have been issued for (checked via the ``aud`` claim).
-- ``ALLOWED_EMAILS``: comma-separated whitelist of emails allowed to
-  sign in, matched case-insensitively.
+- ``ALLOWED_EMAILS``: optional; NOT a sign-in allowlist. Only its first
+  entry names the owner of legacy (pre-multi-tenancy) data, claimed by
+  ``app.db_migrate`` / the owner_email migration.
 - ``SESSION_SECRET``: secret key used to sign/verify our own session
   tokens.
 """
@@ -57,17 +50,20 @@ _SESSION_SALT = "app.auth.session"
 
 
 class AuthError(Exception):
-    """Raised when Google ID token verification / whitelist checking fails.
+    """Raised when Google ID token verification fails.
 
     Covers a malformed/invalid/expired/signature-invalid token, an
-    unverified email, an email not on the ``ALLOWED_EMAILS`` whitelist,
-    and missing ``GOOGLE_CLIENT_ID``/``ALLOWED_EMAILS`` configuration
-    (see module docstring "Fail-closed by design").
+    unverified or missing email, and missing ``GOOGLE_CLIENT_ID``
+    configuration (see module docstring "Fail-closed by design").
     """
 
 
 def _parse_allowed_emails(raw: str | None) -> list[str]:
-    """Parse the ``ALLOWED_EMAILS`` env var into a lowercased email whitelist.
+    """Parse the ``ALLOWED_EMAILS`` env var into a lowercased email list.
+
+    No longer a sign-in allowlist: used only to find the legacy-data
+    owner (first entry). Kept for ``app.db_migrate`` and the
+    ``b7a2c4d9e1f3`` migration.
 
     Mirrors ``app.main._parse_allowed_origins``'s comma-separated,
     strip-whitespace parsing convention, with two deliberate
@@ -92,17 +88,6 @@ def _parse_allowed_emails(raw: str | None) -> list[str]:
     return [entry.strip().lower() for entry in raw.split(",") if entry.strip()]
 
 
-def _allowed_emails() -> list[str]:
-    """Read+parse ``ALLOWED_EMAILS`` fresh from the environment.
-
-    A small helper (rather than a module-level constant computed once
-    at import) so a redeployed env var change takes effect on a normal
-    restart, matching this codebase's read-at-call-time convention
-    (see module docstring).
-    """
-    return _parse_allowed_emails(os.environ.get("ALLOWED_EMAILS"))
-
-
 def verify_google_id_token(
     id_token_str: str,
     verify_fn: Callable[..., dict[str, Any]] | None = None,
@@ -119,22 +104,21 @@ def verify_google_id_token(
       there is no audience to verify against, so this always raises.
     - the verified payload's ``email_verified`` claim to be exactly
       ``True``.
-    - the verified email (compared case-insensitively) to be present in
-      the current ``ALLOWED_EMAILS`` whitelist (see ``_allowed_emails``
-      above; an unset/empty whitelist always fails this check).
+    - a non-empty ``email`` claim.
+
+    There is no email allowlist: any verified Google account passes.
 
     ``verify_fn`` is injectable so tests can supply a fake that returns
     a canned payload dict without making a real network call to Google;
     it is called as ``verify_fn(id_token_str, request, audience=client_id)``
     matching the real function's signature.
 
-    Returns the verified email, lowercased. Raises :class:`AuthError`
+    Returns the verified email, stripped and lowercased. Raises :class:`AuthError`
     for any failure -- malformed/invalid/expired/bad-signature token
     (whatever ``verify_fn`` raises is caught broadly and re-raised as
     ``AuthError``, matching this codebase's
     ``app.identification.IdentificationError`` pattern of wrapping
-    underlying provider failures), unverified email, or an email not on
-    the whitelist.
+    underlying provider failures), or unverified/missing email.
     """
     client_id = os.environ.get("GOOGLE_CLIENT_ID")
     if not client_id:
@@ -157,10 +141,9 @@ def verify_google_id_token(
     email = payload.get("email")
     if not isinstance(email, str) or not email:
         raise AuthError("Google ID token payload has no email claim")
-    email = email.lower()
-
-    if email not in _allowed_emails():
-        raise AuthError(f"Email {email!r} is not on the allowed list")
+    email = email.strip().lower()
+    if not email:
+        raise AuthError("Google ID token payload has no email claim")
 
     return email
 
