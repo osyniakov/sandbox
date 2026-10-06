@@ -95,7 +95,7 @@ def test_upgrade_head_then_downgrade_one_drops_decision_confidence_column(
     engine.dispose()
 
     config = _build_config(database_url)
-    command.downgrade(config, "-1")
+    command.downgrade(config, "ed31718d3904")  # below decision_confidence (head is now item_photos)
 
     engine = sqlalchemy.create_engine(database_url)
     assert "decision_confidence" not in _table_columns(engine, "items")
@@ -453,7 +453,7 @@ def _all_marker_columns_present(engine: sqlalchemy.engine.Engine) -> bool:
     )
 
 
-@pytest.mark.parametrize("start_index", range(-1, 5))
+@pytest.mark.parametrize("start_index", range(-1, 6))
 def test_unstamped_db_at_intermediate_schema_reaches_head(tmp_path, monkeypatch, start_index) -> None:
     """Unstamped DB at baseline (-1) or any post-baseline revision ends at head, data kept."""
     from alembic.config import Config
@@ -514,3 +514,66 @@ def test_unstamped_out_of_order_markers_fail_loudly(tmp_path, monkeypatch) -> No
 
     with pytest.raises(sqlalchemy.exc.OperationalError, match="duplicate column"):
         upgrade_to_head(database_url)
+
+
+def test_item_photos_backfill_one_row_per_existing_item(tmp_path, monkeypatch) -> None:
+    """Upgrading a DB at the previous head creates one position-0 photo per item."""
+    from alembic import command
+
+    from app.db_migrate import _build_config
+
+    database_url = _make_database_url(tmp_path, monkeypatch, "photos_backfill.db")
+    config = _build_config(database_url)
+    command.upgrade(config, _chain_post_baseline()[-2])
+
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            for name in ("a.jpg", "b.jpg", "c.jpg"):
+                connection.execute(
+                    sqlalchemy.text(
+                        "INSERT INTO items (photo_path, decision, status, created_at, updated_at) "
+                        "VALUES (:p, 'pending', 'pending_identification', '2024-01-01', '2024-01-01')"
+                    ),
+                    {"p": name},
+                )
+        command.upgrade(config, "head")
+        with engine.connect() as connection:
+            items = connection.execute(sqlalchemy.text("SELECT id, photo_path FROM items ORDER BY id")).fetchall()
+            photos = connection.execute(
+                sqlalchemy.text("SELECT item_id, photo_path, position FROM item_photos ORDER BY item_id")
+            ).fetchall()
+        assert [tuple(p) for p in photos] == [(i[0], i[1], 0) for i in items]
+        assert len(photos) == 3
+    finally:
+        engine.dispose()
+
+
+def test_unstamped_db_below_item_photos_is_stamped_and_backfilled(tmp_path, monkeypatch) -> None:
+    """A legacy DB without item_photos is stamped below that revision, then backfilled."""
+    database_url = _make_database_url(tmp_path, monkeypatch, "photos_legacy.db")
+    _build_unstamped_at(database_url, _chain_post_baseline()[-2])
+
+    upgrade_to_head(database_url)
+
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        with engine.connect() as connection:
+            rows = connection.execute(sqlalchemy.text("SELECT photo_path, position FROM item_photos")).fetchall()
+        assert [tuple(r) for r in rows] == [("a.jpg", 0)]
+    finally:
+        engine.dispose()
+
+
+def test_detect_stamp_missing_marker_table_counts_as_absent(tmp_path, monkeypatch) -> None:
+    """With item_photos absent, detection stops at the previous revision."""
+    from app.db_migrate import _detect_stamp_revision
+
+    database_url = _make_database_url(tmp_path, monkeypatch, "photos_detect.db")
+    _build_unstamped_at(database_url, _chain_post_baseline()[-2])
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        stamp = _detect_stamp_revision(sqlalchemy.inspect(engine), "baseline-unused")
+    finally:
+        engine.dispose()
+    assert stamp == _chain_post_baseline()[-2]

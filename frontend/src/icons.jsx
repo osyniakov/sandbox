@@ -47,6 +47,12 @@ export const ChevronLeft = (props) => (
   </Icon>
 )
 
+export const ChevronRight = (props) => (
+  <Icon {...props}>
+    <path d="m9 18 6-6-6-6" />
+  </Icon>
+)
+
 export const LogOut = (props) => (
   <Icon {...props}>
     <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
@@ -110,5 +116,11 @@ export const Gift = (props) => (
     <rect x="3" y="8" width="18" height="4" rx="1" />
     <path d="M12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7" />
     <path d="M7.5 8a2.5 2.5 0 0 1 0-5C11 3 12 8 12 8s1-5 4.5-5a2.5 2.5 0 0 1 0 5" />
+  </Icon>
+)
+
+export const Download = (props) => (
+  <Icon {...props}>
+    <path d="M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
   </Icon>
 )

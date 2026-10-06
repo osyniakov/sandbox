@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { AlertCircle, Camera } from './icons.jsx'
+import { AlertCircle, Camera, Plus, Trash } from './icons.jsx'
 import { apiFetch } from './api.js'
 import { prepareUploadImage } from './imageResize.js'
 import ItemPhoto from './ItemPhoto.jsx'
@@ -9,6 +9,9 @@ import { DECISION_LABELS, DECISION_PILL_CLASSES } from './itemsApi.js'
 // Abort the upload request if it hasn't completed after this long, so a stalled
 // mobile connection doesn't leave the page on "Uploading..." forever.
 export const UPLOAD_TIMEOUT_MS = 60000
+
+// Max photos per item (matches the backend limit).
+export const MAX_PHOTOS = 10
 
 // Extracts a human-readable message from a failed fetch Response.
 // The backend returns FastAPI-style `{"detail": "..."}` bodies for its
@@ -90,6 +93,12 @@ function UploadPage() {
   const [status, setStatus] = useState('idle')
   const [errorMessage, setErrorMessage] = useState('')
   const [hint, setHint] = useState('')
+  // Tray of picked photos: [{ id, file, url }] (url = thumbnail object URL).
+  // trayRef mirrors it so unmount cleanup and handlers see the latest value.
+  const [tray, setTray] = useState([])
+  const [notice, setNotice] = useState('')
+  const trayRef = useRef([])
+  const nextIdRef = useRef(1)
   const fileInputRef = useRef(null)
   const navigate = useNavigate()
   const mountedRef = useRef(true)
@@ -97,7 +106,7 @@ function UploadPage() {
   const timerRef = useRef(null)
 
   // On unmount (e.g. navigating away mid-upload): cancel the in-flight
-  // request and timer, and make handleFileChange skip any further state
+  // request and timer, and make handleSubmit skip any further state
   // updates. Setting true in the effect body keeps StrictMode remounts correct.
   useEffect(() => {
     mountedRef.current = true
@@ -108,27 +117,90 @@ function UploadPage() {
     }
   }, [])
 
-  const busy = status === 'preparing' || status === 'uploading'
+  // Revoke every thumbnail URL still held when the page goes away.
+  useEffect(() => {
+    return () => {
+      trayRef.current.forEach((p) => URL.revokeObjectURL(p.url))
+    }
+  }, [])
 
-  async function handleFileChange(event) {
-    const file = event.target.files?.[0]
-    if (!file) {
+  const busy = status === 'preparing' || status === 'uploading'
+  const count = tray.length
+
+  function updateTray(next) {
+    trayRef.current = next
+    setTray(next)
+  }
+
+  function resetInput() {
+    // Clear the input so picking the same file again fires onChange.
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  // Appends the picked files to the tray (max MAX_PHOTOS total).
+  function handleFileChange(event) {
+    const files = Array.from(event.target.files || [])
+    resetInput()
+    if (files.length === 0 || busy) {
+      return
+    }
+    const room = MAX_PHOTOS - trayRef.current.length
+    const accepted = files.slice(0, Math.max(room, 0))
+    setNotice(files.length > accepted.length ? `Up to ${MAX_PHOTOS} photos per item.` : '')
+    if (accepted.length === 0) {
+      return
+    }
+    const added = accepted.map((file) => ({
+      id: nextIdRef.current++,
+      file,
+      url: URL.createObjectURL(file),
+    }))
+    updateTray([...trayRef.current, ...added])
+    if (status === 'error') {
+      setStatus('idle')
+      setErrorMessage('')
+    }
+  }
+
+  function handleRemove(id) {
+    if (busy) {
+      return
+    }
+    const removed = trayRef.current.find((p) => p.id === id)
+    if (removed) {
+      URL.revokeObjectURL(removed.url)
+    }
+    updateTray(trayRef.current.filter((p) => p.id !== id))
+    setNotice('')
+  }
+
+  // Uploads the whole tray in one request. Also used by "Try again", which
+  // re-submits the same tray.
+  async function handleSubmit() {
+    const photos = trayRef.current
+    if (photos.length === 0 || busy) {
       return
     }
 
     setStatus('preparing')
     setErrorMessage('')
+    setNotice('')
 
-    // Never throws; falls back to the original file.
-    const prepared = await prepareUploadImage(file)
-    if (!mountedRef.current) {
-      return
+    // prepareUploadImage never throws; it falls back to the original file.
+    const prepared = []
+    for (const photo of photos) {
+      prepared.push(await prepareUploadImage(photo.file))
+      if (!mountedRef.current) {
+        return
+      }
     }
 
     setStatus('uploading')
 
     const formData = new FormData()
-    formData.append('photo', prepared)
+    prepared.forEach((file) => formData.append('photos', file))
     formData.append('hint', hint)
 
     const controller = new AbortController()
@@ -139,13 +211,6 @@ function UploadPage() {
       controller.abort()
     }, UPLOAD_TIMEOUT_MS)
     timerRef.current = timer
-
-    // Clear the input so selecting the same file again fires onChange.
-    function resetInput() {
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
-    }
 
     try {
       const response = await apiFetch('/items', {
@@ -160,24 +225,22 @@ function UploadPage() {
         // already cleared the stale token and dispatched
         // SESSION_EXPIRED_EVENT, which AuthContext listens for to flip the
         // app back to the sign-in gate on its next render. Show a message
-        // that actually explains that, rather than treating it like an
-        // unrelated upload failure (extractErrorMessage would otherwise
-        // surface a generic/backend-authored "not authenticated"-style
-        // string here).
+        // that actually explains that, rather than a generic upload failure.
         if (response.status === 401) {
           setErrorMessage('Your session has expired. Please sign in again.')
           setStatus('error')
-          resetInput()
           return
         }
         const message = await extractErrorMessage(response)
         setErrorMessage(message)
         setStatus('error')
-        resetInput()
         return
       }
 
       const data = await response.json()
+      // Uploaded: release the thumbnails before leaving the page.
+      trayRef.current.forEach((p) => URL.revokeObjectURL(p.url))
+      trayRef.current = []
       navigate(`/items/${data.id}`)
     } catch (err) {
       if (!mountedRef.current) {
@@ -193,18 +256,8 @@ function UploadPage() {
         setErrorMessage('Could not reach the server. Check your connection and try again.')
       }
       setStatus('error')
-      resetInput()
     } finally {
       clearTimeout(timer)
-    }
-  }
-
-  function handleReset() {
-    setStatus('idle')
-    setErrorMessage('')
-    setHint('')
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ''
     }
   }
 
@@ -217,9 +270,37 @@ function UploadPage() {
         What did you find down there?
       </h1>
       <p className="mt-2 text-muted">
-        Take a clear photo of one item. We&apos;ll handle the rest in about 20
+        Take clear photos of one item, from a few angles if it helps. We&apos;ll handle the rest in about 20
         seconds.
       </p>
+
+      {count > 0 && (
+        <div className="mt-8">
+          <ul className="grid grid-cols-3 gap-3 sm:grid-cols-4" aria-label="Selected photos">
+            {tray.map((photo, index) => (
+              <li key={photo.id} className="relative min-w-0">
+                <img
+                  src={photo.url}
+                  alt={`Selected photo ${index + 1}`}
+                  className="aspect-square w-full rounded-xl border border-line bg-sunken object-cover"
+                />
+                <button
+                  type="button"
+                  onClick={() => handleRemove(photo.id)}
+                  disabled={busy}
+                  aria-label={`Remove photo ${index + 1}`}
+                  className="absolute right-1.5 top-1.5 grid h-7 w-7 cursor-pointer place-items-center rounded-full bg-surface text-ink shadow-card hover:text-toss disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Trash size={14} />
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-2 text-sm text-muted">
+            {count} of {MAX_PHOTOS}
+          </p>
+        </div>
+      )}
 
       {/* The label stays in the DOM while busy (visually hidden) so the
           input keeps an accessible name; the busy card replaces the zone. */}
@@ -228,11 +309,18 @@ function UploadPage() {
         className={
           busy
             ? 'sr-only'
-            : 'group mt-8 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-line bg-surface px-6 py-12 text-center transition hover:border-primary hover:bg-primary-soft/40 has-[:focus-visible]:border-primary'
+            : count > 0
+              ? 'mt-3 inline-flex cursor-pointer items-center gap-2 rounded-full border border-line bg-surface px-4 py-2 text-sm font-semibold hover:border-primary hover:bg-primary-soft/40 has-[:focus-visible]:border-primary'
+              : 'group mt-8 flex cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-line bg-surface px-6 py-12 text-center transition hover:border-primary hover:bg-primary-soft/40 has-[:focus-visible]:border-primary'
         }
       >
         {busy ? (
           status === 'uploading' ? 'Uploading...' : 'Preparing...'
+        ) : count > 0 ? (
+          <>
+            <Plus size={16} />
+            Add more photos
+          </>
         ) : (
           <>
             <span className="grid h-14 w-14 place-items-center rounded-full bg-primary text-white shadow-card transition group-hover:scale-105">
@@ -250,11 +338,17 @@ function UploadPage() {
         ref={fileInputRef}
         type="file"
         accept="image/*"
+        multiple
         onChange={handleFileChange}
         disabled={busy}
         aria-busy={busy}
         className="sr-only"
       />
+      {notice && (
+        <p className="mt-2 text-sm text-muted" role="note">
+          {notice}
+        </p>
+      )}
 
       {busy && (
         <div
@@ -267,7 +361,9 @@ function UploadPage() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="font-semibold">
-                {status === 'uploading' ? 'Uploading photo…' : 'Preparing photo…'}
+                {status === 'uploading'
+                  ? `Uploading ${count} ${count === 1 ? 'photo' : 'photos'}…`
+                  : 'Preparing photos…'}
               </p>
               <p className="truncate text-sm text-muted">Hang tight, this takes a moment.</p>
             </div>
@@ -290,7 +386,7 @@ function UploadPage() {
           <p className="flex-1">{errorMessage}</p>
           <button
             type="button"
-            onClick={handleReset}
+            onClick={handleSubmit}
             className="shrink-0 self-start cursor-pointer rounded-lg bg-surface px-2.5 py-1 text-xs font-semibold text-ink shadow-card"
           >
             Try again
@@ -316,6 +412,15 @@ function UploadPage() {
           Brand, model, or anything the photo can&apos;t show.
         </p>
       </div>
+
+      <button
+        type="button"
+        onClick={handleSubmit}
+        disabled={count === 0 || busy}
+        className="mt-6 w-full cursor-pointer rounded-full bg-primary px-5 py-3 font-semibold text-white shadow-card transition hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {count === 0 ? 'Upload photos' : `Upload ${count} ${count === 1 ? 'photo' : 'photos'}`}
+      </button>
 
       <RecentlyAdded />
     </div>

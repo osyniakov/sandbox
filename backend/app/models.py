@@ -14,13 +14,16 @@ directly. Alembic runs with ``render_as_batch=True`` so SQLite can
 ALTER/DROP columns (sandbox-mub). See ``app/db.py`` and
 ``app/db_migrate.py`` for details.
 
-Two tables:
+Three tables:
 
 * ``Item`` -- a photographed basement item, tracked from "just
   photographed" through identification, comparable-listing search, and
   a final sell/give-away/throw-away decision.
 * ``ComparableListing`` -- a Kleinanzeigen (or similar) listing found
   to be comparable to a given ``Item``, many-to-one against ``Item``.
+* ``ItemPhoto`` -- one photo of an ``Item`` (ordered by ``position``;
+  position 0 is the cover and mirrors ``Item.photo_path``), many-to-one
+  against ``Item``.
 
 Enum column storage: ``Item.decision`` and ``Item.status`` map to
 ``SAEnum(..., values_callable=lambda e: [m.value for m in e])``. Without
@@ -177,6 +180,12 @@ class Item(Base):
         back_populates="item",
         cascade="all, delete-orphan",
     )
+    photos: Mapped[list["ItemPhoto"]] = relationship(
+        "ItemPhoto",
+        back_populates="item",
+        cascade="all, delete-orphan",
+        order_by="ItemPhoto.position",
+    )
 
 
 class ComparableListing(Base):
@@ -199,3 +208,19 @@ class ComparableListing(Base):
     )
 
     item: Mapped[Item] = relationship("Item", back_populates="comparable_listings")
+
+
+class ItemPhoto(Base):
+    __tablename__ = "item_photos"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    item_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("items.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    photo_path: Mapped[str] = mapped_column(String, nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+    item: Mapped[Item] = relationship("Item", back_populates="photos")

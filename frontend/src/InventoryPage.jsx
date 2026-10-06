@@ -361,8 +361,13 @@ function InventoryPage() {
                   done ? 'opacity-70' : ''
                 }`}
               >
-                <Link to={`/items/${item.id}`} tabIndex={-1} className="shrink-0">
+                <Link to={`/items/${item.id}`} tabIndex={-1} className="relative shrink-0">
                   <ItemPhoto item={item} />
+                  {item.photos?.length > 1 && (
+                    <span className="absolute bottom-1 right-1 rounded-full bg-surface px-1.5 py-0.5 text-[10px] font-semibold text-muted shadow-card">
+                      {item.photos.length} photos
+                    </span>
+                  )}
                 </Link>
 
                 <div className="flex min-w-0 flex-1 flex-col">

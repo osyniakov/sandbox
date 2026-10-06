@@ -6,7 +6,9 @@ network calls are made and no ``ANTHROPIC_API_KEY`` is required.
 
 from __future__ import annotations
 
+import base64
 import json
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -15,8 +17,9 @@ from app.identification import (
     ClaudeVisionProvider,
     IdentificationError,
     ItemIdentificationService,
+    _IDENTIFICATION_PROMPT,
 )
-from app.models import Item, ItemStatus
+from app.models import Item, ItemPhoto, ItemStatus
 
 
 class _StubProvider:
@@ -25,11 +28,11 @@ class _StubProvider:
     def __init__(self, result: dict[str, Any] | None = None, error: Exception | None = None) -> None:
         self._result = result
         self._error = error
-        self.calls: list[str] = []
+        self.calls: list[list[str]] = []
         self.hint_calls: list[str | None] = []
 
-    def identify(self, photo_path: str, hint: str | None = None) -> dict[str, Any]:
-        self.calls.append(photo_path)
+    def identify(self, photo_paths: Sequence[str], hint: str | None = None) -> dict[str, Any]:
+        self.calls.append(list(photo_paths))
         self.hint_calls.append(hint)
         if self._error is not None:
             raise self._error
@@ -68,7 +71,7 @@ def test_well_formed_response_updates_item_and_advances_status() -> None:
     ok = service.identify_item(item)
 
     assert ok is True
-    assert provider.calls == [item.photo_path]
+    assert provider.calls == [[item.photo_path]]
     assert item.identified_name == "Desk Lamp"
     assert item.category == "lighting"
     assert item.brand == "IKEA"
@@ -176,7 +179,7 @@ class _RawProvider:
     def __init__(self, value: Any) -> None:
         self._value = value
 
-    def identify(self, photo_path: str, hint: str | None = None) -> Any:
+    def identify(self, photo_paths: Sequence[str], hint: str | None = None) -> Any:
         return self._value
 
 
@@ -738,3 +741,144 @@ def test_claude_vision_provider_hint_empty_after_sanitizing_is_no_hint(tmp_path)
     provider.identify(str(photo), hint="\n\t\u2028 ")
     sent = fake_client.messages.last_kwargs["messages"][0]["content"][1]["text"]
     assert sent == _IDENTIFICATION_PROMPT
+
+
+# ---------------------------------------------------------------------------
+# Multiple photos (sandbox-duw.3)
+# ---------------------------------------------------------------------------
+
+_OK_JSON = json.dumps(
+    {"name": "Lamp", "category": "lighting", "brand": None, "condition": "good",
+     "search_keywords": ["lamp"], "confidence": "high"}
+)
+
+
+def test_provider_sends_one_image_block_per_photo_in_order(tmp_path) -> None:
+    paths = []
+    for i in range(3):
+        f = tmp_path / f"p{i}.jpg"
+        f.write_bytes(f"bytes-{i}".encode())
+        paths.append(str(f))
+    fake_client = _FakeAnthropicClient(response_text=_OK_JSON)
+
+    ClaudeVisionProvider(client=fake_client).identify(paths)
+
+    content = fake_client.messages.last_kwargs["messages"][0]["content"]
+    assert [b["type"] for b in content] == ["image", "image", "image", "text"]
+    sent = [base64.standard_b64decode(b["source"]["data"]) for b in content[:3]]
+    assert sent == [b"bytes-0", b"bytes-1", b"bytes-2"]
+    assert "3 photos" in content[3]["text"]
+    assert content[3]["text"].startswith(_IDENTIFICATION_PROMPT)
+
+
+def test_provider_single_photo_prompt_unchanged(tmp_path) -> None:
+    f = tmp_path / "a.jpg"
+    f.write_bytes(b"x")
+    fake_client = _FakeAnthropicClient(response_text=_OK_JSON)
+
+    ClaudeVisionProvider(client=fake_client).identify([str(f)])
+
+    content = fake_client.messages.last_kwargs["messages"][0]["content"]
+    assert [b["type"] for b in content] == ["image", "text"]
+    assert content[1]["text"] == _IDENTIFICATION_PROMPT
+
+
+def test_provider_unreadable_second_photo_raises_naming_path(tmp_path) -> None:
+    good = tmp_path / "good.jpg"
+    good.write_bytes(b"x")
+    bad = tmp_path / "missing.jpg"
+    fake_client = _FakeAnthropicClient(response_text=_OK_JSON)
+
+    with pytest.raises(IdentificationError, match="missing.jpg"):
+        ClaudeVisionProvider(client=fake_client).identify([str(good), str(bad)])
+    assert fake_client.messages.last_kwargs is None
+
+
+def test_service_passes_item_photos_in_order_capped_at_five() -> None:
+    item = _make_item(photo_path="/p/0.jpg")
+    item.photos = [ItemPhoto(photo_path=f"/p/{i}.jpg", position=i) for i in range(7)]
+    provider = _StubProvider(result={"name": "Lamp"})
+
+    assert ItemIdentificationService(provider=provider).identify_item(item) is True
+
+    assert provider.calls == [[f"/p/{i}.jpg" for i in range(5)]]
+
+
+def test_service_unreadable_photo_marks_identification_failed(tmp_path) -> None:
+    good = tmp_path / "good.jpg"
+    good.write_bytes(b"x")
+    item = _make_item(photo_path=str(good))
+    item.photos = [
+        ItemPhoto(photo_path=str(good), position=0),
+        ItemPhoto(photo_path=str(tmp_path / "gone.jpg"), position=1),
+    ]
+    provider = ClaudeVisionProvider(client=_FakeAnthropicClient(response_text=_OK_JSON))
+
+    assert ItemIdentificationService(provider=provider).identify_item(item) is False
+    assert item.status == ItemStatus.IDENTIFICATION_FAILED
+
+
+def _write_photos(tmp_path, sizes):
+    paths = []
+    for i, n in enumerate(sizes):
+        f = tmp_path / f"p{i}.jpg"
+        f.write_bytes(b"a" * n)
+        paths.append(str(f))
+    return paths
+
+
+def test_provider_skips_oversized_non_cover_photo(tmp_path, monkeypatch, caplog) -> None:
+    import app.identification as ident
+
+    monkeypatch.setattr(ident, "MAX_ENCODED_IMAGE_BYTES", 100)
+    paths = _write_photos(tmp_path, [30, 300, 30])
+    fake_client = _FakeAnthropicClient(response_text=_OK_JSON)
+
+    with caplog.at_level("WARNING"):
+        ClaudeVisionProvider(client=fake_client).identify(paths)
+
+    content = fake_client.messages.last_kwargs["messages"][0]["content"]
+    assert [b["type"] for b in content] == ["image", "image", "text"]
+    assert "2 photos" in content[2]["text"]
+    assert paths[1] in caplog.text
+
+
+def test_provider_stops_at_total_budget(tmp_path, monkeypatch) -> None:
+    import app.identification as ident
+
+    monkeypatch.setattr(ident, "MAX_TOTAL_ENCODED_BYTES", 100)
+    paths = _write_photos(tmp_path, [30, 30, 30, 30])  # 40 encoded chars each
+    fake_client = _FakeAnthropicClient(response_text=_OK_JSON)
+
+    ClaudeVisionProvider(client=fake_client).identify(paths)
+
+    content = fake_client.messages.last_kwargs["messages"][0]["content"]
+    assert [b["type"] for b in content] == ["image", "image", "text"]
+    assert "2 photos" in content[2]["text"]
+
+
+def test_provider_cover_only_after_skips_matches_single_photo_request(tmp_path, monkeypatch) -> None:
+    import app.identification as ident
+
+    monkeypatch.setattr(ident, "MAX_ENCODED_IMAGE_BYTES", 100)
+    paths = _write_photos(tmp_path, [30, 300, 300])
+    multi = _FakeAnthropicClient(response_text=_OK_JSON)
+    single = _FakeAnthropicClient(response_text=_OK_JSON)
+
+    ClaudeVisionProvider(client=multi).identify(paths)
+    ClaudeVisionProvider(client=single).identify(paths[:1])
+
+    assert multi.messages.last_kwargs == single.messages.last_kwargs
+
+
+def test_provider_oversized_cover_is_still_sent(tmp_path, monkeypatch) -> None:
+    import app.identification as ident
+
+    monkeypatch.setattr(ident, "MAX_ENCODED_IMAGE_BYTES", 100)
+    paths = _write_photos(tmp_path, [300, 30])
+    fake_client = _FakeAnthropicClient(response_text=_OK_JSON)
+
+    ClaudeVisionProvider(client=fake_client).identify(paths)
+
+    content = fake_client.messages.last_kwargs["messages"][0]["content"]
+    assert [b["type"] for b in content] == ["image", "image", "text"]

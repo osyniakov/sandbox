@@ -53,11 +53,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.auth import AuthError, issue_session_token, verify_google_id_token, verify_session_token
 from app.db import engine, get_session, init_db
-from app.models import ComparableListing, Decision, Item, ItemStatus
+from app.models import ComparableListing, Decision, Item, ItemPhoto, ItemStatus
 from app.pipeline import run_pipeline_with_new_session
 from app.pricing import is_usable_comparable
 
@@ -508,45 +508,36 @@ _EXTENSION_BY_SNIFFED_FORMAT: dict[str, str] = {
 }
 
 
-@app.post("/items", status_code=201)
-async def create_item(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    photo: UploadFile | None = File(None),
-    hint: str | None = Form(None),
-    session: Session = Depends(get_session),
-    user: str = Depends(require_user),
-) -> dict[str, object]:
-    """Create a new ``Item`` from an uploaded photo and start the pipeline.
+MAX_PHOTOS_PER_ITEM = 10
 
-    Handles photo storage + ``Item`` creation with
-    ``status=pending_identification`` synchronously (fast: file I/O + one
-    DB insert), then schedules the identify -> search -> decide pipeline
-    (``app/pipeline.py``) to run as a ``BackgroundTask`` *after* this
-    response is sent -- see ``app/pipeline.py``'s module docstring for why
-    this runs in the background rather than inline in this request, and
-    for the ``GET /items/{id}`` polling contract clients should use to
-    observe progress.
-    """
-    if photo is None or not photo.filename:
+
+def _collect_uploads(
+    photos: list[UploadFile] | None, photo: UploadFile | None
+) -> list[UploadFile]:
+    """Combine ``photos`` + legacy ``photo``, dropping empty file parts; 400 on 0 or >10."""
+    uploads = [u for u in [*(photos or []), photo] if u is not None and u.filename]
+    if not uploads:
         raise HTTPException(status_code=400, detail="No photo file was uploaded.")
+    if len(uploads) > MAX_PHOTOS_PER_ITEM:
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {MAX_PHOTOS_PER_ITEM} photos per item.",
+        )
+    return uploads
 
-    # Validate/normalize the optional hint text as early as possible -- before
-    # any of the photo-streaming-to-disk work below -- so a request that's
-    # going to be rejected for a too-long hint doesn't pay for unnecessary
-    # disk I/O first.
-    user_hint: str | None = None
-    if hint is not None:
-        stripped_hint = hint.strip()
-        if stripped_hint:
-            if len(stripped_hint) > 500:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Hint text exceeds the 500 character limit.",
-                )
-            user_hint = stripped_hint
 
-    content_type = photo.content_type or ""
+async def _save_upload(request: Request, upload: UploadFile, file_count: int = 1) -> Path:
+    """Validate and store ONE uploaded photo; return its final path.
+
+    Shared by ``POST /items`` and ``POST /items/{id}/photos``. Raises
+    ``HTTPException`` (400/413) on any validation failure, having already
+    removed any partially written file of its own. ``file_count`` scales the
+    ``Content-Length`` fast-path pre-check (that header covers the whole
+    multipart request, i.e. every file); for one file it is identical to
+    the original single-photo limit. Callers saving several files are
+    responsible for deleting previously saved files if a later one fails.
+    """
+    content_type = upload.content_type or ""
     # Case-insensitive: HTTP media types are case-insensitive per RFC 9110,
     # so e.g. "IMAGE/JPEG" must be accepted just like "image/jpeg". This is
     # a cheap, human-readable first-pass filter only (e.g. it rejects a
@@ -574,7 +565,7 @@ async def create_item(
             content_length = None
         if (
             content_length is not None
-            and content_length > MAX_UPLOAD_BYTES + _CONTENT_LENGTH_SAFETY_MARGIN_BYTES
+            and content_length > MAX_UPLOAD_BYTES * file_count + _CONTENT_LENGTH_SAFETY_MARGIN_BYTES
         ):
             raise HTTPException(
                 status_code=413,
@@ -600,7 +591,7 @@ async def create_item(
     try:
         with dest_path.open("wb") as dest_file:
             while True:
-                chunk = await photo.read(_UPLOAD_READ_CHUNK_BYTES)
+                chunk = await upload.read(_UPLOAD_READ_CHUNK_BYTES)
                 if not chunk:
                     break
                 if not header_bytes:
@@ -611,7 +602,7 @@ async def create_item(
                     break
                 dest_file.write(chunk)
     finally:
-        await photo.close()
+        await upload.close()
 
     if oversized:
         dest_path.unlink(missing_ok=True)
@@ -657,14 +648,69 @@ async def create_item(
     final_path = dest_path.with_name(dest_path.name + extension)
     dest_path.rename(final_path)
     dest_path = final_path
+    return final_path
 
-    item = Item(
-        photo_path=str(dest_path),
-        status=ItemStatus.PENDING_IDENTIFICATION,
-        user_hint=user_hint,
-    )
-    session.add(item)
-    session.commit()
+
+@app.post("/items", status_code=201)
+async def create_item(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    photo: UploadFile | None = File(None),
+    photos: list[UploadFile] | None = File(None),
+    hint: str | None = Form(None),
+    session: Session = Depends(get_session),
+    user: str = Depends(require_user),
+) -> dict[str, object]:
+    """Create a new ``Item`` from 1-10 uploaded photos (repeated ``photos``
+    field and/or legacy single ``photo``; ``photos`` first, then ``photo``;
+    the first one is the cover). Atomic: any failure deletes every file
+    written by this request and creates no row. Then starts the pipeline.
+
+    Handles photo storage + ``Item`` creation with
+    ``status=pending_identification`` synchronously (fast: file I/O + one
+    DB insert), then schedules the identify -> search -> decide pipeline
+    (``app/pipeline.py``) to run as a ``BackgroundTask`` *after* this
+    response is sent -- see ``app/pipeline.py``'s module docstring for why
+    this runs in the background rather than inline in this request, and
+    for the ``GET /items/{id}`` polling contract clients should use to
+    observe progress.
+    """
+    uploads = _collect_uploads(photos, photo)
+
+    # Validate/normalize the optional hint text as early as possible -- before
+    # any of the photo-streaming-to-disk work below -- so a request that's
+    # going to be rejected for a too-long hint doesn't pay for unnecessary
+    # disk I/O first.
+    user_hint: str | None = None
+    if hint is not None:
+        stripped_hint = hint.strip()
+        if stripped_hint:
+            if len(stripped_hint) > 500:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Hint text exceeds the 500 character limit.",
+                )
+            user_hint = stripped_hint
+
+    saved_paths: list[Path] = []
+    try:
+        for upload in uploads:
+            saved_paths.append(await _save_upload(request, upload, len(uploads)))
+        item = Item(
+            photo_path=str(saved_paths[0]),
+            status=ItemStatus.PENDING_IDENTIFICATION,
+            user_hint=user_hint,
+        )
+        item.photos = [
+            ItemPhoto(photo_path=str(p), position=i) for i, p in enumerate(saved_paths)
+        ]
+        session.add(item)
+        session.commit()
+    except BaseException:
+        session.rollback()
+        for p in saved_paths:
+            p.unlink(missing_ok=True)
+        raise
     session.refresh(item)
 
     # ``engine`` is looked up as a module global at call time (not bound
@@ -740,11 +786,35 @@ def _displayable_comparable_listings(
     return list(comparable_listings)
 
 
+def _serialize_photos(item: Item) -> list[dict[str, object]]:
+    """``photos`` JSON list ordered by position.
+
+    Legacy item with no ``ItemPhoto`` rows (created before multi-photo, on a DB
+    that was not backfilled): falls back to ONE entry built from
+    ``photo_path`` with ``id`` null (nothing to delete by id; clients must hide
+    Remove when ``id`` is null). The row is materialized on first add/remove.
+    """
+    if not item.photos:
+        return [{"id": None, "url": _photo_url(item.photo_path), "position": 0}]
+    return [
+        {"id": p.id, "url": _photo_url(p.photo_path), "position": p.position}
+        for p in sorted(item.photos, key=lambda p: p.position)
+    ]
+
+
+def _ensure_photo_rows(session: Session, item: Item) -> None:
+    """Materialize position-0 ``ItemPhoto`` from ``photo_path`` for a legacy item."""
+    if not item.photos:
+        item.photos.append(ItemPhoto(photo_path=item.photo_path, position=0))
+        session.flush()
+
+
 def _serialize_item(item: Item) -> dict[str, object]:
     return {
         "id": item.id,
         "photo_path": item.photo_path,
         "photo_url": _photo_url(item.photo_path),
+        "photos": _serialize_photos(item),
         "identified_name": item.identified_name,
         "category": item.category,
         "brand": item.brand,
@@ -814,7 +884,7 @@ def list_items(
     (via ``_serialize_item``, including ``comparable_listings``), ordered
     by ``id`` ascending for a stable, deterministic response order.
     """
-    query = session.query(Item)
+    query = session.query(Item).options(selectinload(Item.photos))
     if status is not None:
         query = query.filter(Item.status == status)
     if decision is not None:
@@ -971,7 +1041,85 @@ def delete_item(
     if item is None:
         raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
 
-    Path(item.photo_path).unlink(missing_ok=True)
+    for photo_path in {item.photo_path, *(p.photo_path for p in item.photos)}:
+        Path(photo_path).unlink(missing_ok=True)
     session.delete(item)
     session.commit()
     return {"id": item_id, "deleted": True}
+
+
+@app.post("/items/{item_id}/photos")
+async def add_item_photos(
+    item_id: int,
+    request: Request,
+    photos: list[UploadFile] | None = File(None),
+    session: Session = Depends(get_session),
+    user: str = Depends(require_user),
+) -> dict[str, object]:
+    """Append 1+ photos to an item (total after add <= 10; else 400, nothing
+    saved). Does NOT re-run identification/search/pricing or touch status."""
+    item = session.get(Item, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
+    uploads = [u for u in (photos or []) if u.filename]
+    if not uploads:
+        raise HTTPException(status_code=400, detail="No photo file was uploaded.")
+    _ensure_photo_rows(session, item)
+    if len(item.photos) + len(uploads) > MAX_PHOTOS_PER_ITEM:
+        session.rollback()
+        raise HTTPException(
+            status_code=400,
+            detail=f"At most {MAX_PHOTOS_PER_ITEM} photos per item.",
+        )
+    saved_paths: list[Path] = []
+    try:
+        for upload in uploads:
+            saved_paths.append(await _save_upload(request, upload, len(uploads)))
+        start = max(p.position for p in item.photos) + 1
+        for i, path in enumerate(saved_paths):
+            item.photos.append(ItemPhoto(photo_path=str(path), position=start + i))
+        session.commit()
+    except BaseException:
+        session.rollback()
+        for p in saved_paths:
+            p.unlink(missing_ok=True)
+        raise
+    session.refresh(item)
+    return _serialize_item(item)
+
+
+@app.delete("/items/{item_id}/photos/{photo_id}")
+def delete_item_photo(
+    item_id: int,
+    photo_id: int,
+    session: Session = Depends(get_session),
+    user: str = Depends(require_user),
+) -> dict[str, object]:
+    """Remove one photo: 404 if not on this item, 409 if it is the last one.
+    Renumbers positions and promotes the new position-0 photo to cover."""
+    item = session.get(Item, item_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
+    _ensure_photo_rows(session, item)
+    target = next((p for p in item.photos if p.id == photo_id), None)
+    if target is None:
+        session.rollback()
+        raise HTTPException(
+            status_code=404, detail=f"No photo with id {photo_id} on item {item_id}."
+        )
+    if len(item.photos) <= 1:
+        session.rollback()
+        raise HTTPException(
+            status_code=409, detail="An item must keep at least one photo."
+        )
+    removed_path = target.photo_path
+    item.photos.remove(target)
+    session.flush()
+    for i, p in enumerate(sorted(item.photos, key=lambda p: p.position)):
+        p.position = i
+    item.photo_path = min(item.photos, key=lambda p: p.position).photo_path
+    session.commit()
+    if removed_path != item.photo_path:
+        Path(removed_path).unlink(missing_ok=True)
+    session.refresh(item)
+    return _serialize_item(item)

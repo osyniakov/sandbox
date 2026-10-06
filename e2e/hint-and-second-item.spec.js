@@ -79,13 +79,15 @@ test('a hint typed before the photo is stored and echoed back exactly on the res
   await expect(hintInput).toHaveValue(HINT_TEXT)
 
   // Only now select the photo -- frontend/src/UploadPage.jsx renders the
-  // file input as `<input id="photo-input" type="file" ...>`, selecting a
-  // file immediately fires handleFileChange, which POSTs to /items
-  // (including the hint just typed above) and, on success, navigates to
+  // file input as `<input id="photo-input" type="file" multiple ...>`;
+  // selecting a file only adds it to the photo tray, so we then click the
+  // "Upload 1 photo" button, whose handleSubmit POSTs to /items (including
+  // the hint just typed above) and, on success, navigates to
   // `/items/${data.id}`.
   const photoInput = page.locator('#photo-input')
   await expect(photoInput).toBeVisible()
   await photoInput.setInputFiles(HINT_FIXTURE_PHOTO_PATH)
+  await page.getByRole('button', { name: /upload \d+ photos?/i }).click()
 
   await expect(page).toHaveURL(/\/items\/[^/]+$/)
 
@@ -137,6 +139,7 @@ test('a second, independent upload (no hint) reaches a terminal outcome with str
   const photoInput = page.locator('#photo-input')
   await expect(photoInput).toBeVisible()
   await photoInput.setInputFiles(SECOND_FIXTURE_PHOTO_PATH)
+  await page.getByRole('button', { name: /upload \d+ photos?/i }).click()
 
   await expect(page).toHaveURL(/\/items\/[^/]+$/)
 

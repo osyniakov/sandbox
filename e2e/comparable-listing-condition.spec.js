@@ -115,6 +115,7 @@ test('no rendered comparable listing shows an unambiguous "brand new" condition 
   const photoInput = page.locator('#photo-input')
   await expect(photoInput).toBeVisible()
   await photoInput.setInputFiles(FIXTURE_PHOTO_PATH)
+  await page.getByRole('button', { name: /upload \d+ photos?/i }).click()
 
   await expect(page).toHaveURL(/\/items\/[^/]+$/)
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { apiFetch } from './api.js'
-import { useAuthedImageUrl } from './useAuthedImageUrl.js'
+import PhotoCarousel from './PhotoCarousel.jsx'
 import {
   AlertCircle,
   AlertTriangle,
@@ -346,13 +346,6 @@ function ItemResultPage() {
   const [stuck, setStuck] = useState(false)
   const pollStartRef = useRef(null)
 
-  // Called unconditionally (before this component's early `loadError`/
-  // `!item` returns below, per the rules of hooks) -- `item?.photo_url` is
-  // `undefined` until the first successful poll response arrives, which
-  // the hook already treats as "no photo yet, don't fetch" (see
-  // useAuthedImageUrl.js).
-  const { url: photoObjectUrl, status: photoStatus } = useAuthedImageUrl(item?.photo_url)
-
   useEffect(() => {
     let cancelled = false
     const controller = new AbortController()
@@ -432,57 +425,14 @@ function ItemResultPage() {
   // the search used, else the identified name; no link if neither exists.
   const listingSearchQuery = (item.search_query_used || item.identified_name || '').trim()
 
-  const photoAlt = item.identified_name
-    ? `Photo of ${item.identified_name}`
-    : `Photo of item #${item.id}`
   const showPill = isTerminal && !isFailed
 
   return (
     <div className="mx-auto max-w-2xl">
       <BackLink />
 
-      <div className="mt-4 grid gap-5 sm:grid-cols-[13rem_1fr] sm:items-start">
-        {/* Photo display: `Item.photo_url` (added in sandbox-yqf.19) is a
-            relative path (e.g. "/uploads/<uuid>.jpg") served by the
-            backend's StaticFiles mount, which now requires an Authorization
-            header (sandbox-dfr.3) -- a plain `<img src>` can't attach one, so
-            `useAuthedImageUrl` (sandbox-dfr.5) fetches the photo bytes
-            authenticated via `apiFetch` and exposes them as a `blob:` object
-            URL instead. With no `photo_url` a placeholder renders; while the
-            fetch is in flight a "Loading photo..." placeholder renders; if it
-            failed (`status === 'error'`, sandbox-dfr.9) a distinct "Photo
-            unavailable" state renders instead of a broken-image icon. */}
-        {!item.photo_url ? (
-          <div
-            className="grid aspect-square w-full place-items-center rounded-2xl border border-dashed border-line bg-sunken p-4 text-center text-sm text-muted sm:w-52"
-            data-testid="photo-placeholder"
-          >
-            <p>Photo unavailable.</p>
-          </div>
-        ) : photoStatus === 'error' ? (
-          <div
-            className="grid aspect-square w-full place-items-center rounded-2xl border border-dashed border-line bg-sunken p-4 text-center text-sm text-muted sm:w-52"
-            data-testid="photo-error"
-          >
-            <div className="flex flex-col items-center gap-1.5">
-              <AlertCircle size={20} />
-              <p>Photo unavailable.</p>
-            </div>
-          </div>
-        ) : photoObjectUrl ? (
-          <img
-            className="aspect-square w-full rounded-2xl bg-sunken object-cover shadow-card sm:w-52"
-            src={photoObjectUrl}
-            alt={photoAlt}
-          />
-        ) : (
-          <div
-            className="grid aspect-square w-full place-items-center rounded-2xl border border-dashed border-line bg-sunken p-4 text-center text-sm text-muted sm:w-52"
-            data-testid="photo-placeholder"
-          >
-            <p>Loading photo...</p>
-          </div>
-        )}
+      <div className="mt-4 grid min-w-0 gap-5">
+        <PhotoCarousel item={item} onItemChange={setItem} />
 
         <div className="min-w-0">
           <h1 className="text-xs font-semibold uppercase tracking-wider text-muted">

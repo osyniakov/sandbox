@@ -49,6 +49,7 @@ REVISION_MARKERS: dict[str, tuple[tuple[str, str], ...]] = {
     "c19b13a0cfc6": (("items", "search_query_used"),),
     "ed31718d3904": (("comparable_listings", "price_type"),),
     "85b6c1c63d41": (("items", "decision_confidence"),),
+    "86771ea861cc": (("item_photos", "photo_path"),),
 }
 
 

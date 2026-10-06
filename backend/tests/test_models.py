@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.orm import Session
 
 from app.db import init_db, make_engine, make_session_factory
-from app.models import ComparableListing, Decision, Item, ItemStatus
+from app.models import ComparableListing, Decision, Item, ItemPhoto, ItemStatus
 
 
 @pytest.fixture()
@@ -331,3 +331,41 @@ def test_price_columns_round_trip_as_python_float(session: Session) -> None:
     assert parsed["price"] == pytest.approx(24.5)
     assert isinstance(parsed["suggested_price"], float)
     assert isinstance(parsed["price"], float)
+
+
+def test_item_photos_ordered_by_position(session: Session) -> None:
+    item = Item(photo_path="cover.jpg")
+    item.photos = [
+        ItemPhoto(photo_path="c.jpg", position=2),
+        ItemPhoto(photo_path="a.jpg", position=0),
+        ItemPhoto(photo_path="b.jpg", position=1),
+    ]
+    session.add(item)
+    session.commit()
+    session.expire_all()
+
+    loaded = session.get(Item, item.id)
+    assert [p.photo_path for p in loaded.photos] == ["a.jpg", "b.jpg", "c.jpg"]
+    assert loaded.photos[0].created_at is not None
+    assert loaded.photos[0].item is loaded
+
+
+def test_deleting_item_cascades_item_photos(session: Session) -> None:
+    item = Item(photo_path="cover.jpg")
+    item.photos = [ItemPhoto(photo_path="a.jpg", position=0), ItemPhoto(photo_path="b.jpg", position=1)]
+    session.add(item)
+    session.commit()
+
+    session.delete(item)
+    session.commit()
+
+    assert session.query(ItemPhoto).count() == 0
+
+
+def test_create_all_creates_item_photos_table(tmp_path: Path) -> None:
+    from sqlalchemy import inspect
+
+    engine = make_engine(f"sqlite:///{tmp_path / 'fresh.db'}")
+    init_db(engine)
+    assert inspect(engine).has_table("item_photos")
+    engine.dispose()

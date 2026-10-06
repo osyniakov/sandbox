@@ -15,7 +15,7 @@ an already-loaded ``Item`` ORM instance, call
 Provider abstraction
 ---------------------
 The actual LLM call is isolated behind the ``IdentificationProvider``
-protocol (``identify(photo_path, hint=None) -> dict``). ``ClaudeVisionProvider`` is
+protocol (``identify(photo_paths, hint=None) -> dict``). ``ClaudeVisionProvider`` is
 the default concrete implementation, using Anthropic's Messages API
 (image content blocks). Swapping to a different vision provider later
 only requires implementing a new ``IdentificationProvider`` -- the
@@ -57,6 +57,7 @@ import logging
 import mimetypes
 import os
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
@@ -99,6 +100,15 @@ return the JSON object, but set "name" to "" and "confidence" to "low".
 """
 
 
+# Only the first N photos of an item are sent to the vision model.
+MAX_IDENTIFICATION_PHOTOS = 5
+
+# Budgets for base64-encoded image data per request (the API rejects images
+# over ~5MB each and requests over ~32MB total). Applied to non-cover photos.
+MAX_ENCODED_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_TOTAL_ENCODED_BYTES = 20 * 1024 * 1024
+
+
 @runtime_checkable
 class IdentificationProvider(Protocol):
     """Interface for anything that can turn a photo into a raw identification dict.
@@ -110,8 +120,11 @@ class IdentificationProvider(Protocol):
     an exception was raised (see module docstring).
     """
 
-    def identify(self, photo_path: str, hint: str | None = None) -> dict[str, Any]:
-        """Return a dict describing the item in ``photo_path``.
+    def identify(self, photo_paths: Sequence[str], hint: str | None = None) -> dict[str, Any]:
+        """Return a dict describing the item shown in ``photo_paths``.
+
+        ``photo_paths`` is an ordered sequence of photos that all show the
+        same item (e.g. from different angles); the first is the cover.
 
         ``hint`` is an optional user-provided free-text hint about the
         item (e.g. "this is a broken toaster") that implementations may
@@ -211,14 +224,49 @@ class ClaudeVisionProvider:
         self._client = anthropic.Anthropic(api_key=api_key)
         return self._client
 
-    def identify(self, photo_path: str, hint: str | None = None) -> dict[str, Any]:
-        try:
-            image_bytes = Path(photo_path).read_bytes()
-        except OSError as exc:
-            raise IdentificationError(f"Could not read photo at {photo_path!r}: {exc}") from exc
+    def identify(self, photo_paths: Sequence[str], hint: str | None = None) -> dict[str, Any]:
+        if isinstance(photo_paths, str):  # tolerate a bare path
+            photo_paths = [photo_paths]
+        if not photo_paths:
+            raise IdentificationError("No photos provided for identification")
 
-        media_type = mimetypes.guess_type(photo_path)[0] or "image/jpeg"
-        image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+        image_blocks: list[dict[str, Any]] = []
+        total_encoded = 0
+        skipped: list[str] = []
+        for index, photo_path in enumerate(photo_paths):
+            try:
+                image_bytes = Path(photo_path).read_bytes()
+            except OSError as exc:
+                raise IdentificationError(
+                    f"Could not read photo at {photo_path!r}: {exc}"
+                ) from exc
+            media_type = mimetypes.guess_type(photo_path)[0] or "image/jpeg"
+            image_b64 = base64.standard_b64encode(image_bytes).decode("utf-8")
+            # The cover (first photo) is always sent, as before; later photos
+            # are dropped if they would blow the per-image or total budget.
+            if index > 0:
+                if len(image_b64) > MAX_ENCODED_IMAGE_BYTES:
+                    skipped.append(photo_path)
+                    continue
+                if total_encoded + len(image_b64) > MAX_TOTAL_ENCODED_BYTES:
+                    skipped.extend(photo_paths[index:])
+                    break
+            total_encoded += len(image_b64)
+            image_blocks.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": image_b64,
+                    },
+                }
+            )
+
+        if skipped:
+            logger.warning(
+                "Skipping %d photo(s) over the request size budget: %r", len(skipped), skipped
+            )
 
         client = self._get_client()
 
@@ -230,6 +278,11 @@ class ClaudeVisionProvider:
         # keeps the response-format instructions intact and makes the hint
         # unable to masquerade as a new instruction.
         prompt_text = _IDENTIFICATION_PROMPT
+        if len(image_blocks) > 1:
+            prompt_text += (
+                f"\nNote: the {len(image_blocks)} photos above all show the same "
+                "item from different angles; identify that one item.\n"
+            )
         hint = _sanitize_hint(hint) if hint else hint
         if hint:
             prompt_text += (
@@ -248,14 +301,7 @@ class ClaudeVisionProvider:
                     {
                         "role": "user",
                         "content": [
-                            {
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": media_type,
-                                    "data": image_b64,
-                                },
-                            },
+                            *image_blocks,
                             {"type": "text", "text": prompt_text},
                         ],
                     }
@@ -317,13 +363,17 @@ class ItemIdentificationService:
         standard ``logging`` module, and reported through the return
         value rather than propagating.
         """
+        photo_paths: list[str] = [item.photo_path]
         try:
-            raw = self._provider.identify(item.photo_path, hint=item.user_hint)
+            photo_paths = [p.photo_path for p in item.photos][:MAX_IDENTIFICATION_PHOTOS]
+            if not photo_paths:
+                photo_paths = [item.photo_path]
+            raw = self._provider.identify(photo_paths, hint=item.user_hint)
         except Exception:
             logger.exception(
-                "Identification failed for item id=%s photo_path=%r",
+                "Identification failed for item id=%s photo_paths=%r",
                 getattr(item, "id", None),
-                item.photo_path,
+                photo_paths,
             )
             item.status = ItemStatus.IDENTIFICATION_FAILED
             return False
