@@ -26,6 +26,7 @@ exists (pending Railway access -- see the sandbox-64f epic notes).
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import sqlalchemy
@@ -50,6 +51,7 @@ REVISION_MARKERS: dict[str, tuple[tuple[str, str], ...]] = {
     "ed31718d3904": (("comparable_listings", "price_type"),),
     "85b6c1c63d41": (("items", "decision_confidence"),),
     "86771ea861cc": (("item_photos", "photo_path"),),
+    "b7a2c4d9e1f3": (("items", "owner_email"),),
 }
 
 
@@ -156,7 +158,52 @@ def upgrade_to_head(database_url: str) -> None:
     command.upgrade(config, "head")
 
 
+def claim_legacy_items(database_url: str) -> int:
+    """Assign NULL-owner items to the first ``ALLOWED_EMAILS`` entry.
+
+    Idempotent: only rows with ``owner_email IS NULL`` are touched, so a
+    second call claims nothing. If ``ALLOWED_EMAILS`` is unset/empty, nothing
+    is changed (a warning is logged when NULL-owner items exist). Running this
+    on every start covers the case where the env var is set only after the
+    first deploy. Returns the number of items claimed.
+    """
+    from app.auth import _parse_allowed_emails
+
+    owners = _parse_allowed_emails(os.environ.get("ALLOWED_EMAILS"))
+    owner = owners[0] if owners else None
+
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        with engine.begin() as connection:
+            if owner is None:
+                orphans = connection.execute(
+                    sqlalchemy.text("SELECT COUNT(*) FROM items WHERE owner_email IS NULL")
+                ).scalar_one()
+                if orphans:
+                    logger.warning(
+                        "%d item(s) have no owner and ALLOWED_EMAILS is unset; "
+                        "they stay unclaimed until it is set.",
+                        orphans,
+                    )
+                return 0
+            result = connection.execute(
+                sqlalchemy.text("UPDATE items SET owner_email = :owner WHERE owner_email IS NULL"),
+                {"owner": owner},
+            )
+            claimed = result.rowcount or 0
+    finally:
+        engine.dispose()
+    logger.info("Claimed %d legacy item(s) for %s", claimed, owner)
+    return claimed
+
+
 if __name__ == "__main__":
     from app.db import get_database_url
 
-    upgrade_to_head(get_database_url())
+    _url = get_database_url()
+    upgrade_to_head(_url)
+    # Alembic's fileConfig (run during upgrade) resets the root logger to
+    # WARNING; reconfigure afterwards so the claim INFO line is visible.
+    logging.basicConfig(level=logging.INFO, force=True)
+    logging.getLogger(__name__).disabled = False
+    claim_legacy_items(_url)

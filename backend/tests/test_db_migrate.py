@@ -413,6 +413,12 @@ def _chain_post_baseline() -> list[str]:
     return [r.revision for r in revs[1:]]
 
 
+def _rev_before(revision: str) -> str:
+    """Id of the revision immediately below ``revision`` (post-baseline chain)."""
+    chain = _chain_post_baseline()
+    return chain[chain.index(revision) - 1]
+
+
 def test_revision_markers_cover_chain_in_order() -> None:
     """Drift guard: every post-baseline migration needs a marker entry, in chain order."""
     from app.db_migrate import REVISION_MARKERS
@@ -524,7 +530,7 @@ def test_item_photos_backfill_one_row_per_existing_item(tmp_path, monkeypatch) -
 
     database_url = _make_database_url(tmp_path, monkeypatch, "photos_backfill.db")
     config = _build_config(database_url)
-    command.upgrade(config, _chain_post_baseline()[-2])
+    command.upgrade(config, _rev_before("86771ea861cc"))
 
     engine = sqlalchemy.create_engine(database_url)
     try:
@@ -552,7 +558,7 @@ def test_item_photos_backfill_one_row_per_existing_item(tmp_path, monkeypatch) -
 def test_unstamped_db_below_item_photos_is_stamped_and_backfilled(tmp_path, monkeypatch) -> None:
     """A legacy DB without item_photos is stamped below that revision, then backfilled."""
     database_url = _make_database_url(tmp_path, monkeypatch, "photos_legacy.db")
-    _build_unstamped_at(database_url, _chain_post_baseline()[-2])
+    _build_unstamped_at(database_url, _rev_before("86771ea861cc"))
 
     upgrade_to_head(database_url)
 
@@ -570,10 +576,222 @@ def test_detect_stamp_missing_marker_table_counts_as_absent(tmp_path, monkeypatc
     from app.db_migrate import _detect_stamp_revision
 
     database_url = _make_database_url(tmp_path, monkeypatch, "photos_detect.db")
-    _build_unstamped_at(database_url, _chain_post_baseline()[-2])
+    _build_unstamped_at(database_url, _rev_before("86771ea861cc"))
     engine = sqlalchemy.create_engine(database_url)
     try:
         stamp = _detect_stamp_revision(sqlalchemy.inspect(engine), "baseline-unused")
     finally:
         engine.dispose()
-    assert stamp == _chain_post_baseline()[-2]
+    assert stamp == _rev_before("86771ea861cc")
+
+
+# --- items.owner_email (sandbox-zp8.1) ---------------------------------------
+
+
+def _insert_items(engine: sqlalchemy.engine.Engine, count: int) -> None:
+    with engine.begin() as connection:
+        for i in range(count):
+            connection.execute(
+                sqlalchemy.text(
+                    "INSERT INTO items (photo_path, decision, status, created_at, updated_at) "
+                    "VALUES (:p, 'pending', 'pending_identification', '2024-01-01', '2024-01-01')"
+                ),
+                {"p": f"{i}.jpg"},
+            )
+
+
+def _owners(engine: sqlalchemy.engine.Engine) -> list[str | None]:
+    with engine.connect() as connection:
+        return [r[0] for r in connection.execute(sqlalchemy.text("SELECT owner_email FROM items ORDER BY id"))]
+
+
+def _upgrade_to_previous_head_with_items(tmp_path, monkeypatch, name: str, count: int = 3) -> str:
+    from alembic import command
+
+    from app.db_migrate import _build_config
+
+    database_url = _make_database_url(tmp_path, monkeypatch, name)
+    command.upgrade(_build_config(database_url), _rev_before("b7a2c4d9e1f3"))
+    engine = sqlalchemy.create_engine(database_url)
+    _insert_items(engine, count)
+    engine.dispose()
+    return database_url
+
+
+def test_migration_adds_owner_email_column_and_index(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("ALLOWED_EMAILS", raising=False)
+    database_url = _make_database_url(tmp_path, monkeypatch, "owner_col.db")
+    upgrade_to_head(database_url)
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        assert "owner_email" in _table_columns(engine, "items")
+        index_names = {i["name"] for i in sqlalchemy.inspect(engine).get_indexes("items")}
+        assert "ix_items_owner_email" in index_names
+    finally:
+        engine.dispose()
+
+
+def test_migration_backfills_with_env_set_normalised(tmp_path, monkeypatch) -> None:
+    database_url = _upgrade_to_previous_head_with_items(tmp_path, monkeypatch, "owner_set.db")
+    monkeypatch.setenv("ALLOWED_EMAILS", "  Boss@Example.COM , other@example.com")
+    upgrade_to_head(database_url)
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        assert _owners(engine) == ["boss@example.com"] * 3
+    finally:
+        engine.dispose()
+
+
+def test_migration_leaves_null_with_env_unset(tmp_path, monkeypatch) -> None:
+    database_url = _upgrade_to_previous_head_with_items(tmp_path, monkeypatch, "owner_unset.db")
+    monkeypatch.delenv("ALLOWED_EMAILS", raising=False)
+    upgrade_to_head(database_url)
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        assert _owners(engine) == [None] * 3
+    finally:
+        engine.dispose()
+
+
+def test_migration_with_zero_items_and_env_set(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("ALLOWED_EMAILS", "a@example.com")
+    database_url = _make_database_url(tmp_path, monkeypatch, "owner_empty.db")
+    upgrade_to_head(database_url)
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        assert _owners(engine) == []
+    finally:
+        engine.dispose()
+
+
+def test_owner_email_downgrade_drops_index_and_column(tmp_path, monkeypatch) -> None:
+    from alembic import command
+
+    from app.db_migrate import _build_config
+
+    monkeypatch.delenv("ALLOWED_EMAILS", raising=False)
+    database_url = _make_database_url(tmp_path, monkeypatch, "owner_down.db")
+    upgrade_to_head(database_url)
+    command.downgrade(_build_config(database_url), "-1")
+    engine = sqlalchemy.create_engine(database_url)
+    try:
+        assert "owner_email" not in _table_columns(engine, "items")
+        assert "ix_items_owner_email" not in {i["name"] for i in sqlalchemy.inspect(engine).get_indexes("items")}
+    finally:
+        engine.dispose()
+
+
+def test_claim_legacy_items_claims_later_and_is_idempotent(tmp_path, monkeypatch) -> None:
+    from app.db_migrate import claim_legacy_items
+
+    monkeypatch.delenv("ALLOWED_EMAILS", raising=False)
+    database_url = _make_database_url(tmp_path, monkeypatch, "claim.db")
+    upgrade_to_head(database_url)
+    engine = sqlalchemy.create_engine(database_url)
+    _insert_items(engine, 2)
+    try:
+        assert claim_legacy_items(database_url) == 0  # unset: no-op
+        assert _owners(engine) == [None, None]
+
+        monkeypatch.setenv("ALLOWED_EMAILS", " First@Example.com,second@example.com")
+        assert claim_legacy_items(database_url) == 2
+        assert _owners(engine) == ["first@example.com"] * 2
+        assert claim_legacy_items(database_url) == 0  # idempotent
+
+        # Already-owned items are never reassigned.
+        monkeypatch.setenv("ALLOWED_EMAILS", "other@example.com")
+        _insert_items(engine, 1)
+        assert claim_legacy_items(database_url) == 1
+        assert _owners(engine) == ["first@example.com"] * 2 + ["other@example.com"]
+    finally:
+        engine.dispose()
+
+
+def test_claim_legacy_items_warns_when_unset_and_orphans_exist(tmp_path, monkeypatch) -> None:
+    import logging
+
+    from app.db_migrate import claim_legacy_items
+
+    monkeypatch.delenv("ALLOWED_EMAILS", raising=False)
+    database_url = _make_database_url(tmp_path, monkeypatch, "claim_warn.db")
+    upgrade_to_head(database_url)
+    engine = sqlalchemy.create_engine(database_url)
+    _insert_items(engine, 1)
+    engine.dispose()
+    # alembic's fileConfig disables loggers and replaces root handlers
+    # (dropping caplog's), so attach a handler to our logger directly.
+    records: list[logging.LogRecord] = []
+
+    class _Capture(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(record)
+
+    logger = logging.getLogger("app.db_migrate")
+    logger.disabled = False
+    handler = _Capture(level=logging.WARNING)
+    logger.addHandler(handler)
+    try:
+        assert claim_legacy_items(database_url) == 0
+    finally:
+        logger.removeHandler(handler)
+    assert any("ALLOWED_EMAILS" in r.getMessage() for r in records)
+
+
+def test_claim_legacy_items_zero_items(tmp_path, monkeypatch) -> None:
+    from app.db_migrate import claim_legacy_items
+
+    monkeypatch.setenv("ALLOWED_EMAILS", "a@example.com")
+    database_url = _make_database_url(tmp_path, monkeypatch, "claim_empty.db")
+    upgrade_to_head(database_url)
+    assert claim_legacy_items(database_url) == 0
+
+
+def _run_main(tmp_path, allowed: str | None) -> str:
+    import os
+    import subprocess
+    import sys
+
+    from app.db_migrate import ALEMBIC_INI_PATH
+
+    env = {k: v for k, v in os.environ.items() if k not in ("ALLOWED_EMAILS", "DATABASE_URL")}
+    env["DATA_DIR"] = str(tmp_path)
+    if allowed is not None:
+        env["ALLOWED_EMAILS"] = allowed
+    proc = subprocess.run(
+        [sys.executable, "-m", "app.db_migrate"],
+        cwd=ALEMBIC_INI_PATH.parent,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return proc.stdout + proc.stderr
+
+
+def _seed_unowned_item(tmp_path, monkeypatch) -> None:
+    # Build the DB at head with env unset (migration backfill cannot claim),
+    # so the item is unowned and only claim_legacy_items can claim it.
+    from alembic import command
+
+    from app.db_migrate import _build_config
+
+    # Mirror app.db._default_db_path() for DATA_DIR (DEFAULT_DB_PATH is
+    # fixed at import time, so never use it here).
+    url = f"sqlite:///{tmp_path / 'declutter.db'}"
+    monkeypatch.delenv("ALLOWED_EMAILS", raising=False)
+    command.upgrade(_build_config(url), "head")
+    engine = sqlalchemy.create_engine(url)
+    _insert_items(engine, 1)
+    engine.dispose()
+
+
+def test_main_entrypoint_logs_claim_count(tmp_path, monkeypatch) -> None:
+    _seed_unowned_item(tmp_path, monkeypatch)
+    output = _run_main(tmp_path, "Owner@Example.com")
+    assert "Claimed 1 legacy item(s) for owner@example.com" in output
+
+
+def test_main_entrypoint_logs_warning_when_unset(tmp_path, monkeypatch) -> None:
+    _seed_unowned_item(tmp_path, monkeypatch)
+    output = _run_main(tmp_path, None)
+    assert "1 item(s) have no owner and ALLOWED_EMAILS is unset" in output
