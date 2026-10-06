@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import ItemPhoto from './ItemPhoto.jsx'
-import { AlertCircle, Camera, ChevronLeft, ChevronRight } from './icons.jsx'
+import { AlertCircle, Camera, ChevronLeft, ChevronRight, Download } from './icons.jsx'
+import { baseNameFor, extensionFor, fetchPhotoFile, savePhotos } from './savePhotos.js'
 import { addItemPhotos, removeItemPhoto } from './itemsApi.js'
 import { prepareUploadImage } from './imageResize.js'
 
@@ -30,6 +31,11 @@ function PhotoCarousel({ item, onItemChange }) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [confirmId, setConfirmId] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [status, setStatus] = useState('')
+  const savingRef = useRef(false)
+  // url -> { promise, file }: prefetched Files, only when Web Share exists.
+  const cacheRef = useRef(new Map())
 
   const pendingRef = useRef(null)
   const pendingTimerRef = useRef(null)
@@ -134,6 +140,82 @@ function PhotoCarousel({ item, onItemChange }) {
     })
   }
 
+  // Keep the cache bounded to the current photos; prefetch only when
+  // navigator.canShare exists (iOS needs share called without an await).
+  const urlsKey = photos.map((ph) => ph.url).join('\n')
+  useEffect(() => {
+    const cache = cacheRef.current
+    const urls = urlsKey ? urlsKey.split('\n') : []
+    for (const key of [...cache.keys()]) if (!urls.includes(key)) cache.delete(key)
+    if (typeof navigator === 'undefined' || !navigator.canShare) return
+    for (const url of urls) {
+      if (cache.has(url)) continue
+      const entry = { file: null, promise: null }
+      entry.promise = fetchPhotoFile(url, 'photo').then(
+        (file) => {
+          entry.file = file
+          return file
+        },
+        (err) => {
+          if (cache.get(url) === entry) cache.delete(url) // silent; click retries
+          throw err
+        },
+      )
+      entry.promise.catch(() => {})
+      cache.set(url, entry)
+    }
+  }, [urlsKey])
+
+  function named(file, url, index, base) {
+    const name = `${base}-${index + 1}.${extensionFor(file.type, url)}`
+    return new File([file], name, { type: file.type })
+  }
+
+  // If every file is prefetched, share is called synchronously in the click.
+  async function save(indices) {
+    if (savingRef.current) return
+    savingRef.current = true
+    setSaving(true)
+    setError('')
+    setStatus('')
+    try {
+      const base = baseNameFor(item)
+      const cache = cacheRef.current
+      const entries = indices.map((i) => cache.get(photos[i].url))
+      const ready = entries.every((e) => e?.file)
+      let files
+      let awaited = false
+      if (ready) {
+        files = indices.map((i, k) => named(entries[k].file, photos[i].url, i, base))
+      } else {
+        awaited = true
+        files = []
+        for (const i of indices) {
+          const url = photos[i].url
+          const cached = cache.get(url)
+          let file = cached?.file
+          if (!file) {
+            file = await (cached?.promise ?? fetchPhotoFile(url, 'photo')).catch(() =>
+              fetchPhotoFile(url, 'photo'),
+            )
+            // Write back so the next tap can share synchronously.
+            if (photos.some((ph) => ph.url === url) && cacheRef.current === cache) {
+              cache.set(url, { file, promise: Promise.resolve(file) })
+            }
+          }
+          files.push(named(file, url, i, base))
+        }
+      }
+      const result = await savePhotos(files, { retryOnNotAllowed: awaited && !!navigator.canShare })
+      if (result === 'retry') setStatus('Photos ready \u2014 tap Save again')
+    } catch (err) {
+      setError(err.message || 'Could not save the photo.')
+    } finally {
+      savingRef.current = false
+      setSaving(false)
+    }
+  }
+
   async function confirmRemove(photoId) {
     setConfirmId(null)
     await run((signal) => removeItemPhoto(item.id, photoId, signal))
@@ -199,7 +281,15 @@ function PhotoCarousel({ item, onItemChange }) {
                     </button>
                   )
                 )}
-                {/* Slot: the Save button (next bead) goes here. */}
+                <button
+                  type="button"
+                  aria-label={`Save photo ${index + 1}`}
+                  onClick={() => save([index])}
+                  disabled={saving}
+                  className="ml-auto inline-flex rounded-lg border border-line p-1.5 text-muted hover:text-primary disabled:opacity-60"
+                >
+                  <Download size={16} />
+                </button>
               </TileControls>
             </div>
           ))}
@@ -256,7 +346,24 @@ function PhotoCarousel({ item, onItemChange }) {
             <ChevronRight size={16} />
           </button>
         )}
+        {total >= 2 && (
+          <button
+            type="button"
+            onClick={() => save(photos.map((_, i) => i))}
+            disabled={saving}
+            className="ml-auto inline-flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1 font-semibold hover:text-primary disabled:opacity-60"
+          >
+            <Download size={14} />
+            <span>{saving ? 'Saving...' : 'Save all photos'}</span>
+          </button>
+        )}
       </div>
+
+      {status && (
+        <p role="status" className="mt-2 text-sm text-muted">
+          {status}
+        </p>
+      )}
 
       {error && (
         <div

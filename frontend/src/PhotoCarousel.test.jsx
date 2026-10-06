@@ -228,4 +228,126 @@ describe('PhotoCarousel', () => {
     expect(screen.queryByRole('button', { name: 'Remove photo 1' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Remove photo 2' })).toBeInTheDocument()
   })
+
+  describe('saving', () => {
+    let downloads
+    beforeEach(() => {
+      downloads = []
+      URL.createObjectURL = vi.fn(() => 'blob:x')
+      URL.revokeObjectURL = vi.fn()
+      vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function () {
+        downloads.push(this.download)
+      })
+    })
+    afterEach(() => {
+      vi.restoreAllMocks()
+      delete navigator.share
+      delete navigator.canShare
+    })
+
+    it('Save photo N shares that single file', async () => {
+      mockFetch(() => Promise.reject(new Error('unexpected')))
+      navigator.canShare = () => true
+      navigator.share = vi.fn().mockResolvedValue()
+      const user = userEvent.setup()
+      render(<PhotoCarousel item={makeItem(3, { identified_name: 'Bohrmaschine Größe' })} onItemChange={vi.fn()} />)
+      await user.click(screen.getByRole('button', { name: 'Save photo 2' }))
+      await waitFor(() => expect(navigator.share).toHaveBeenCalledTimes(1))
+      const { files } = navigator.share.mock.calls[0][0]
+      expect(files.map((f) => f.name)).toEqual(['bohrmaschine-groesse-2.jpg'])
+    })
+
+    it('Save all shares every file; hidden for a single photo; works for null ids', async () => {
+      mockFetch(() => Promise.reject(new Error('unexpected')))
+      navigator.canShare = () => true
+      navigator.share = vi.fn().mockResolvedValue()
+      const user = userEvent.setup()
+      const legacy = makeItem(2, { identified_name: null })
+      legacy.photos.forEach((p) => { p.id = null })
+      const { rerender } = render(<PhotoCarousel item={legacy} onItemChange={vi.fn()} />)
+      await user.click(screen.getByRole('button', { name: 'Save all photos' }))
+      await waitFor(() => expect(navigator.share).toHaveBeenCalledTimes(1))
+      expect(navigator.share.mock.calls[0][0].files.map((f) => f.name)).toEqual(['item-7-1.jpg', 'item-7-2.jpg'])
+      rerender(<PhotoCarousel item={makeItem(1)} onItemChange={vi.fn()} />)
+      expect(screen.queryByRole('button', { name: 'Save all photos' })).not.toBeInTheDocument()
+    })
+
+    it('downloads when share is unavailable', async () => {
+      mockFetch(() => Promise.reject(new Error('unexpected')))
+      const user = userEvent.setup()
+      render(<PhotoCarousel item={makeItem(2)} onItemChange={vi.fn()} />)
+      await user.click(screen.getByRole('button', { name: 'Save all photos' }))
+      await waitFor(() => expect(downloads).toEqual(['drill-1.jpg', 'drill-2.jpg']))
+    })
+
+    it('shows an alert and re-enables buttons when the fetch fails', async () => {
+      fetch.mockImplementation((url) =>
+        url.includes('p2.jpg')
+          ? Promise.resolve({ ok: false, status: 500 })
+          : Promise.resolve(photoResponse()),
+      )
+      const user = userEvent.setup()
+      render(<PhotoCarousel item={makeItem(2)} onItemChange={vi.fn()} />)
+      await user.click(screen.getByRole('button', { name: 'Save photo 2' }))
+      expect(await screen.findByRole('alert')).toHaveTextContent(/could not load/i)
+      expect(screen.getByRole('button', { name: 'Save photo 2' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Save all photos' })).toBeEnabled()
+    })
+
+    it('shares synchronously from prefetched files without refetching', async () => {
+      mockFetch(() => Promise.reject(new Error('unexpected')))
+      navigator.canShare = () => true
+      navigator.share = vi.fn().mockResolvedValue()
+      render(<PhotoCarousel item={makeItem(2)} onItemChange={vi.fn()} />)
+      await waitFor(() => expect(fetch.mock.calls.filter((c) => c[0].includes('/uploads/')).length).toBeGreaterThanOrEqual(2))
+      await new Promise((r) => setTimeout(r, 50))
+      const before = fetch.mock.calls.length
+      fireEvent.click(screen.getByRole('button', { name: 'Save all photos' }))
+      expect(navigator.share).toHaveBeenCalledTimes(1)
+      expect(navigator.share.mock.calls[0][0].files.map((f) => f.name)).toEqual(['drill-1.jpg', 'drill-2.jpg'])
+      expect(fetch.mock.calls.length).toBe(before)
+    })
+
+    it('shows a tap-again status, without downloading, on NotAllowedError after awaiting', async () => {
+      mockFetch(() => Promise.reject(new Error('unexpected')))
+      navigator.canShare = () => true
+      navigator.share = vi.fn().mockRejectedValue(Object.assign(new Error('n'), { name: 'NotAllowedError' }))
+      render(<PhotoCarousel item={makeItem(2)} onItemChange={vi.fn()} />)
+      fireEvent.click(screen.getByRole('button', { name: 'Save all photos' }))
+      expect(await screen.findByRole('status')).toHaveTextContent(/tap Save again/)
+      expect(downloads).toEqual([])
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    })
+
+    it('does not prefetch when canShare is undefined', async () => {
+      mockFetch(() => Promise.reject(new Error('unexpected')))
+      render(<PhotoCarousel item={makeItem(2)} onItemChange={vi.fn()} />)
+      await new Promise((r) => setTimeout(r, 30))
+      expect(fetch.mock.calls.filter((c) => c[0].includes('/uploads/')).length).toBe(2) // images only
+      fireEvent.click(screen.getByRole('button', { name: 'Save photo 1' }))
+      await waitFor(() => expect(downloads).toEqual(['drill-1.jpg']))
+    })
+
+    it('caches click-time fetches after a failed prefetch so the second tap shares synchronously', async () => {
+      let fail = true
+      fetch.mockImplementation((url) =>
+        fail && url.includes('p1.jpg') ? Promise.reject(new Error('net')) : Promise.resolve(photoResponse()),
+      )
+      navigator.canShare = () => true
+      navigator.share = vi
+        .fn()
+        .mockRejectedValueOnce(Object.assign(new Error('n'), { name: 'NotAllowedError' }))
+        .mockResolvedValue()
+      render(<PhotoCarousel item={makeItem(1)} onItemChange={vi.fn()} />)
+      await new Promise((r) => setTimeout(r, 30))
+      fail = false
+      fireEvent.click(screen.getByRole('button', { name: 'Save photo 1' }))
+      expect(await screen.findByRole('status')).toHaveTextContent(/tap Save again/)
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Save photo 1' })).toBeEnabled())
+      const before = fetch.mock.calls.length
+      fireEvent.click(screen.getByRole('button', { name: 'Save photo 1' }))
+      expect(navigator.share).toHaveBeenCalledTimes(2)
+      expect(fetch.mock.calls.length).toBe(before)
+    })
+  })
 })
