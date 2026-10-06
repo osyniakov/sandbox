@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import ItemPhoto from './ItemPhoto.jsx'
 import { AlertCircle, Camera, ChevronLeft, ChevronRight, Download } from './icons.jsx'
-import { baseNameFor, extensionFor, fetchPhotoFile, savePhotos } from './savePhotos.js'
+import { baseNameFor, extensionFor, savePhotos } from './savePhotos.js'
 import { addItemPhotos, removeItemPhoto } from './itemsApi.js'
 import { prepareUploadImage } from './imageResize.js'
+import { evictPhotoBlob, getPhotoBlob, peekPhotoBlob } from './photoBlobCache.js'
 
 export const MAX_PHOTOS = 10
 const TILE_GAP_PX = 12
@@ -34,8 +35,6 @@ function PhotoCarousel({ item, onItemChange }) {
   const [saving, setSaving] = useState(false)
   const [status, setStatus] = useState('')
   const savingRef = useRef(false)
-  // url -> { promise, file }: prefetched Files, only when Web Share exists.
-  const cacheRef = useRef(new Map())
 
   const pendingRef = useRef(null)
   const pendingTimerRef = useRef(null)
@@ -140,38 +139,24 @@ function PhotoCarousel({ item, onItemChange }) {
     })
   }
 
-  // Keep the cache bounded to the current photos; prefetch only when
-  // navigator.canShare exists (iOS needs share called without an await).
+  // Prefetch into the shared blob cache (display fetches dedupe with it) only
+  // when navigator.canShare exists: iOS needs share called without an await.
   const urlsKey = photos.map((ph) => ph.url).join('\n')
   useEffect(() => {
-    const cache = cacheRef.current
-    const urls = urlsKey ? urlsKey.split('\n') : []
-    for (const key of [...cache.keys()]) if (!urls.includes(key)) cache.delete(key)
     if (typeof navigator === 'undefined' || !navigator.canShare) return
-    for (const url of urls) {
-      if (cache.has(url)) continue
-      const entry = { file: null, promise: null }
-      entry.promise = fetchPhotoFile(url, 'photo').then(
-        (file) => {
-          entry.file = file
-          return file
-        },
-        (err) => {
-          if (cache.get(url) === entry) cache.delete(url) // silent; click retries
-          throw err
-        },
-      )
-      entry.promise.catch(() => {})
-      cache.set(url, entry)
+    for (const url of urlsKey ? urlsKey.split('\n') : []) {
+      getPhotoBlob(url).catch(() => {}) // silent; click retries
     }
   }, [urlsKey])
 
-  function named(file, url, index, base) {
-    const name = `${base}-${index + 1}.${extensionFor(file.type, url)}`
-    return new File([file], name, { type: file.type })
+  function named(blob, url, index, base) {
+    const name = `${base}-${index + 1}.${extensionFor(blob.type, url)}`
+    return new File([blob], name, { type: blob.type || 'image/jpeg' })
   }
 
-  // If every file is prefetched, share is called synchronously in the click.
+  // If every blob is cached, share is called synchronously in the click.
+  // (No "url still current" write-back is needed: the shared cache owns the
+  // blobs, and a removed photo's entry is evicted on remove.)
   async function save(indices) {
     if (savingRef.current) return
     savingRef.current = true
@@ -180,32 +165,16 @@ function PhotoCarousel({ item, onItemChange }) {
     setStatus('')
     try {
       const base = baseNameFor(item)
-      const cache = cacheRef.current
-      const entries = indices.map((i) => cache.get(photos[i].url))
-      const ready = entries.every((e) => e?.file)
-      let files
-      let awaited = false
-      if (ready) {
-        files = indices.map((i, k) => named(entries[k].file, photos[i].url, i, base))
-      } else {
-        awaited = true
-        files = []
-        for (const i of indices) {
-          const url = photos[i].url
-          const cached = cache.get(url)
-          let file = cached?.file
-          if (!file) {
-            file = await (cached?.promise ?? fetchPhotoFile(url, 'photo')).catch(() =>
-              fetchPhotoFile(url, 'photo'),
-            )
-            // Write back so the next tap can share synchronously.
-            if (photos.some((ph) => ph.url === url) && cacheRef.current === cache) {
-              cache.set(url, { file, promise: Promise.resolve(file) })
-            }
-          }
-          files.push(named(file, url, i, base))
+      const urls = indices.map((i) => photos[i].url)
+      const blobs = urls.map((url) => peekPhotoBlob(url))
+      const awaited = !blobs.every(Boolean)
+      if (awaited) {
+        for (let k = 0; k < urls.length; k++) {
+          if (blobs[k]) continue
+          blobs[k] = await getPhotoBlob(urls[k]).catch(() => getPhotoBlob(urls[k]))
         }
       }
+      const files = indices.map((i, k) => named(blobs[k], urls[k], i, base))
       const result = await savePhotos(files, { retryOnNotAllowed: awaited && !!navigator.canShare })
       if (result === 'retry') setStatus('Photos ready \u2014 tap Save again')
     } catch (err) {
@@ -216,9 +185,13 @@ function PhotoCarousel({ item, onItemChange }) {
     }
   }
 
-  async function confirmRemove(photoId) {
+  async function confirmRemove(photo) {
     setConfirmId(null)
-    await run((signal) => removeItemPhoto(item.id, photoId, signal))
+    await run(async (signal) => {
+      const updated = await removeItemPhoto(item.id, photo.id, signal)
+      evictPhotoBlob(photo.url)
+      return updated
+    })
   }
 
   return (
@@ -262,7 +235,7 @@ function PhotoCarousel({ item, onItemChange }) {
                       </button>
                       <button
                         type="button"
-                        onClick={() => confirmRemove(photo.id)}
+                        onClick={() => confirmRemove(photo)}
                         disabled={busy}
                         className="whitespace-nowrap rounded-lg bg-toss-soft px-2 py-1 font-semibold text-toss"
                       >

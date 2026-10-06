@@ -1,15 +1,14 @@
-# ruff: noqa: F811, F401
 """Tests for multi-photo create, add/remove photo, and photos in item JSON."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi.testclient import TestClient
+import pytest
 
 import app.main as main_module
 from app.models import Item, ItemPhoto, ItemStatus
-from tests.test_items_upload import _make_jpeg_bytes, client, db_session_factory  # noqa: F401
+from tests.conftest import _make_jpeg_bytes
 
 JPEG = _make_jpeg_bytes()
 
@@ -201,13 +200,76 @@ def test_legacy_item_remove_cover_after_add(client, db_session_factory, auth_hea
     assert len(r.json()["photos"]) == 1
 
 
-def test_legacy_item_delete_photo_unknown_id_is_404_not_materialized(
+def test_legacy_item_delete_photo_only_photo_is_409_not_materialized(
     client, db_session_factory, auth_headers
 ) -> None:
     iid, _ = _make_legacy_item(db_session_factory)
-    assert client.delete(f"/items/{iid}/photos/1", headers=auth_headers).status_code in (404, 409)
+    r = client.delete(f"/items/{iid}/photos/1", headers=auth_headers)
+    # The legacy cover is materialized in-request as photo id 1 (fresh DB),
+    # so id 1 is found but is the item's only photo -> 409, then rolled back.
+    assert r.status_code == 409
+    assert r.json()["detail"] == "An item must keep at least one photo."
     s = db_session_factory()
     try:
         assert s.query(ItemPhoto).filter_by(item_id=iid).count() == 0
     finally:
         s.close()
+
+
+def test_delete_photo_without_token_returns_401(client, db_session_factory, auth_headers) -> None:
+    iid = _create(client, auth_headers, 2)
+    photo_id = client.get(f"/items/{iid}", headers=auth_headers).json()["photos"][0]["id"]
+    before = _uploads()
+    r = client.delete(f"/items/{iid}/photos/{photo_id}")
+    assert r.status_code == 401
+    assert _uploads() == before
+
+
+def test_save_upload_oserror_mid_write_removes_partial_file(
+    client, auth_headers, monkeypatch
+) -> None:
+    real_open = Path.open
+
+    class _FailingWriter:
+        def __init__(self, f):
+            self._f = f
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            self._f.close()
+            return False
+
+        def write(self, data):
+            self._f.write(data[:1])
+            raise OSError("disk full")
+
+    def fake_open(self, mode="r", *a, **kw):
+        f = real_open(self, mode, *a, **kw)
+        return _FailingWriter(f) if mode == "wb" else f
+
+    monkeypatch.setattr(Path, "open", fake_open)
+    # Existing behavior for an unhandled OSError: it propagates (500 in prod).
+    with pytest.raises(OSError, match="disk full"):
+        client.post("/items", files=_files(1), headers=auth_headers)
+    assert _uploads() == []
+
+
+def test_delete_item_commit_failure_keeps_files(
+    client, db_session_factory, auth_headers, monkeypatch
+) -> None:
+    from sqlalchemy.orm import Session
+
+    iid = _create(client, auth_headers, 2)
+    before = _uploads()
+    assert len(before) == 2
+
+    def boom(self):
+        raise RuntimeError("commit failed")
+
+    with monkeypatch.context() as m:
+        m.setattr(Session, "commit", boom)
+        with pytest.raises(RuntimeError, match="commit failed"):
+            client.delete(f"/items/{iid}", headers=auth_headers)
+    assert _uploads() == before

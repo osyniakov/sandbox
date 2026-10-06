@@ -1,6 +1,7 @@
 """Shared pytest fixtures for the backend test suite.
 
-Currently holds a single fixture, ``auth_headers``, used by every test
+Holds ``auth_headers`` plus the shared ``client``/``db_session_factory``
+fixtures and ``_make_jpeg_bytes`` helper. ``auth_headers`` is used by every test
 file that calls a route gated behind ``app.main.require_user`` (the
 ``/items*`` routes and ``GET /uploads/{filename}``; see sandbox-dfr.3).
 Introduced as a top-level ``conftest.py`` (none existed before) rather
@@ -14,9 +15,18 @@ remember to import a helper function.
 
 from __future__ import annotations
 
-import pytest
+import io
+from collections.abc import Iterator
+from pathlib import Path
 
+import pytest
+from fastapi.testclient import TestClient
+from PIL import Image
+
+import app.main as main_module
 from app.auth import issue_session_token
+from app.db import get_session, make_engine, make_session_factory
+from app.main import app
 
 
 @pytest.fixture()
@@ -46,3 +56,43 @@ def auth_headers(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
     token = issue_session_token("test@example.com")
     return {"Authorization": f"Bearer {token}"}
+
+
+def _make_jpeg_bytes() -> bytes:
+    """A tiny but genuinely valid JPEG, generated with Pillow."""
+    image = Image.new("RGB", (2, 2), color=(255, 0, 0))
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+@pytest.fixture()
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    db_path = tmp_path / "test.db"
+    test_engine = make_engine(f"sqlite:///{db_path}")
+    factory = make_session_factory(test_engine)
+
+    def _get_session_override() -> Iterator:
+        session = factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_session] = _get_session_override
+    monkeypatch.setattr(main_module, "engine", test_engine)
+    monkeypatch.setattr(main_module, "UPLOAD_DIR", tmp_path / "uploads")
+
+    with TestClient(app) as test_client:
+        yield test_client
+
+    app.dependency_overrides.clear()
+    test_engine.dispose()
+    if db_path.exists():
+        db_path.unlink()
+
+
+@pytest.fixture()
+def db_session_factory(client: TestClient):
+    """A session factory bound to the same temp engine the client uses."""
+    return make_session_factory(main_module.engine)

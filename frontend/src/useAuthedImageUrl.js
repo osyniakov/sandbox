@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { apiFetch } from './api.js'
+import { fetchPhotoBlob, getPhotoBlob, isCacheablePhotoUrl } from './photoBlobCache.js'
 
 // Authenticated photo-fetch hook (sandbox-dfr.5, CRITICAL fix flagged in
 // that bead's review). `GET /uploads/{filename}` (sandbox-dfr.3) now
@@ -45,15 +45,12 @@ export function useAuthedImageUrl(photoUrl) {
 
     async function load() {
       try {
-        const response = await apiFetch(photoUrl)
-        if (cancelled) return
-        if (!response.ok) {
-          // Includes 404 and the 401 case described above (apiFetch has
-          // already reacted to the 401): a terminal failure for this image.
-          setResult({ key: photoUrl, url: null, status: 'error' })
-          return
-        }
-        const blob = await response.blob()
+        // /uploads photos share one blob (and one download) with the Save
+        // path. Unmount never aborts that shared fetch; its result is just
+        // ignored here. Anything else is fetched uncached.
+        const blob = await (isCacheablePhotoUrl(photoUrl)
+          ? getPhotoBlob(photoUrl)
+          : fetchPhotoBlob(photoUrl))
         if (cancelled) return
         createdUrl = URL.createObjectURL(blob)
         setResult({ key: photoUrl, url: createdUrl, status: 'loaded' })
