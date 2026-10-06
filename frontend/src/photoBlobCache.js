@@ -70,6 +70,11 @@ export function evictPhotoBlob(url) {
   cache.delete(url)
 }
 
-export function __resetPhotoBlobCacheForTests() {
+// Empties the cache (sign-out / session expiry). Entries are detached, so an
+// in-flight fetch finishing later only sets blob on its orphaned entry and is
+// never written back. Never revokes object URLs: the hook owns those.
+export function clearPhotoBlobCache() {
   cache.clear()
 }
+
+export const __resetPhotoBlobCacheForTests = clearPhotoBlobCache

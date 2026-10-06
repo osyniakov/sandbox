@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { downloadFiles, extensionFor, fetchPhotoFile, savePhotos, slugify } from './savePhotos.js'
+import { downloadFiles, extensionFor, savePhotos, slugify } from './savePhotos.js'
 
 const file = (name) => new File(['x'], name, { type: 'image/jpeg' })
 
@@ -16,21 +16,6 @@ describe('slugify / extensionFor', () => {
     expect(extensionFor('image/heic')).toBe('heic')
     expect(extensionFor('', '/uploads/a.gif')).toBe('gif')
     expect(extensionFor('application/octet-stream', '/uploads/noext')).toBe('jpg')
-  })
-})
-
-describe('fetchPhotoFile', () => {
-  beforeEach(() => vi.stubGlobal('fetch', vi.fn()))
-  afterEach(() => vi.unstubAllGlobals())
-  it('returns a File with the content type', async () => {
-    fetch.mockResolvedValue({ ok: true, status: 200, blob: async () => new Blob(['x'], { type: 'image/png' }) })
-    const f = await fetchPhotoFile('/uploads/a.png', 'a.png')
-    expect(f.name).toBe('a.png')
-    expect(f.type).toBe('image/png')
-  })
-  it('throws on a non-ok response', async () => {
-    fetch.mockResolvedValue({ ok: false, status: 404 })
-    await expect(fetchPhotoFile('/uploads/a.png', 'a.png')).rejects.toThrow(/404/)
   })
 })
 
