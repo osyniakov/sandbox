@@ -29,6 +29,23 @@ from app.db import get_session, make_engine, make_session_factory
 from app.main import app
 
 
+TEST_USER_EMAIL = "test@example.com"
+"""Email behind the default ``auth_headers`` fixture; tests that seed ``Item``
+rows directly must set ``owner_email=TEST_USER_EMAIL`` for them to be visible."""
+
+
+@pytest.fixture()
+def auth_headers_for(monkeypatch: pytest.MonkeyPatch):
+    """Factory: ``auth_headers_for("bob@example.com")`` -> Authorization header
+    dict with a real session token for that email (for multi-user tests)."""
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
+
+    def _make(email: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {issue_session_token(email)}"}
+
+    return _make
+
+
 @pytest.fixture()
 def auth_headers(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     """A ready-to-use ``{"Authorization": "Bearer <token>"}`` header dict
@@ -54,7 +71,7 @@ def auth_headers(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     tests using this fixture don't need to configure it.
     """
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
-    token = issue_session_token("test@example.com")
+    token = issue_session_token(TEST_USER_EMAIL)
     return {"Authorization": f"Bearer {token}"}
 
 

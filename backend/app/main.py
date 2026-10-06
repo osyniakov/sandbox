@@ -53,6 +53,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, selectinload
 
 from app.auth import AuthError, issue_session_token, verify_google_id_token, verify_session_token
@@ -361,6 +362,54 @@ def require_user(authorization: str | None = Header(None)) -> str:
 # ``verify_session_token`` (the brief's minimum bar) would be: there is
 # exactly one place in this codebase that parses an ``Authorization:
 # Bearer <token>`` header, full stop.
+def _normalize_owner(email: str) -> str:
+    """Canonical owner identity: the session email, stripped and lowercased."""
+    return email.strip().lower()
+
+
+def _user_owns_upload(filename: str, user: str) -> bool:
+    """True iff ``filename`` (the part of the request path after
+    ``UPLOAD_URL_PREFIX``) is a photo of an item owned by ``user``.
+
+    Photos are stored as ``str(UPLOAD_DIR / <name>)`` in
+    ``ItemPhoto.photo_path`` / legacy ``Item.photo_path``; that exact string
+    is compared by final path segment (basename) against the user's own
+    rows only, since rows may hold paths from an earlier UPLOAD_DIR. Anything that isn't a plain
+    single path segment (empty, ``.``/``..``, separators, NUL) has no DB row
+    by construction and is rejected without a DB query.
+    """
+    if (
+        not filename
+        or filename in {".", ".."}
+        or "/" in filename
+        or "\\" in filename
+        or "\x00" in filename
+    ):
+        return False
+    def _basename(stored: str) -> str:
+        # Stored paths may come from an earlier UPLOAD_DIR/DATA_DIR and may use
+        # either separator; only the final segment identifies the file.
+        return stored.replace("\\", "/").rsplit("/", 1)[-1]
+
+    try:
+        with Session(engine) as session:
+            candidates = session.query(Item.photo_path).filter(Item.owner_email == user)
+            for (stored,) in candidates:
+                if _basename(stored) == filename:
+                    return True
+            photo_rows = (
+                session.query(ItemPhoto.photo_path)
+                .join(Item, Item.id == ItemPhoto.item_id)
+                .filter(Item.owner_email == user)
+            )
+            return any(_basename(stored) == filename for (stored,) in photo_rows)
+    except SQLAlchemyError:
+        # Fail closed (404, same as "no such file") if the DB is unusable,
+        # e.g. tables not created yet; never serve a file we can't attribute.
+        logging.getLogger(__name__).exception("uploads ownership lookup failed")
+        return False
+
+
 @app.middleware("http")
 async def _require_auth_for_uploads(request: Request, call_next):
     """Require a valid session (same check as ``require_user``) for any
@@ -376,9 +425,12 @@ async def _require_auth_for_uploads(request: Request, call_next):
     if request.url.path.startswith(UPLOAD_URL_PREFIX):
         authorization = request.headers.get("authorization")
         try:
-            require_user(authorization)
+            user = _normalize_owner(require_user(authorization))
         except HTTPException as exc:
             return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+        filename = request.url.path[len(UPLOAD_URL_PREFIX) :].lstrip("/")
+        if not _user_owns_upload(filename, user):
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
     return await call_next(request)
 
 
@@ -706,6 +758,7 @@ async def create_item(
             photo_path=str(saved_paths[0]),
             status=ItemStatus.PENDING_IDENTIFICATION,
             user_hint=user_hint,
+            owner_email=_normalize_owner(user),
         )
         item.photos = [
             ItemPhoto(photo_path=str(p), position=i) for i, p in enumerate(saved_paths)
@@ -846,6 +899,15 @@ def _serialize_item(item: Item) -> dict[str, object]:
     }
 
 
+def _get_owned_item(session: Session, item_id: int, user: str) -> Item:
+    """Load ``item_id`` if owned by ``user``; otherwise 404 with the same
+    detail as a nonexistent item (missing, other owner, or NULL owner)."""
+    item = session.get(Item, item_id)
+    if item is None or item.owner_email is None or item.owner_email != _normalize_owner(user):
+        raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
+    return item
+
+
 @app.get("/items/{item_id}")
 def get_item(
     item_id: int,
@@ -863,9 +925,7 @@ def get_item(
     ``app/pipeline.py``'s module docstring for the full polling contract
     (which ``status`` values are terminal vs. still-processing).
     """
-    item = session.get(Item, item_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
+    item = _get_owned_item(session, item_id, user)
 
     return _serialize_item(item)
 
@@ -890,7 +950,11 @@ def list_items(
     (via ``_serialize_item``, including ``comparable_listings``), ordered
     by ``id`` ascending for a stable, deterministic response order.
     """
-    query = session.query(Item).options(selectinload(Item.photos))
+    query = (
+        session.query(Item)
+        .options(selectinload(Item.photos))
+        .filter(Item.owner_email == _normalize_owner(user))
+    )
     if status is not None:
         query = query.filter(Item.status == status)
     if decision is not None:
@@ -992,9 +1056,7 @@ def update_item_status(
     On success, returns 200 with the updated, freshly-serialized item
     (same shape as ``GET /items/{id}``).
     """
-    item = session.get(Item, item_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
+    item = _get_owned_item(session, item_id, user)
 
     valid_next_statuses = MANUAL_STATUS_TRANSITIONS.get(item.status, frozenset())
     if body.status not in valid_next_statuses:
@@ -1042,9 +1104,7 @@ def delete_item(
     Returns 200 with a small JSON dict (not a bare 204) to match every
     other endpoint in this file returning a JSON body.
     """
-    item = session.get(Item, item_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
+    item = _get_owned_item(session, item_id, user)
 
     # Collect paths first, commit the DB delete, and only then unlink the
     # files: a failed commit must not leave rows pointing at missing files.
@@ -1069,9 +1129,7 @@ async def add_item_photos(
 ) -> dict[str, object]:
     """Append 1+ photos to an item (total after add <= 10; else 400, nothing
     saved). Does NOT re-run identification/search/pricing or touch status."""
-    item = session.get(Item, item_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
+    item = _get_owned_item(session, item_id, user)
     uploads = [u for u in (photos or []) if u.filename]
     if not uploads:
         raise HTTPException(status_code=400, detail="No photo file was uploaded.")
@@ -1108,9 +1166,7 @@ def delete_item_photo(
 ) -> dict[str, object]:
     """Remove one photo: 404 if not on this item, 409 if it is the last one.
     Renumbers positions and promotes the new position-0 photo to cover."""
-    item = session.get(Item, item_id)
-    if item is None:
-        raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
+    item = _get_owned_item(session, item_id, user)
     _ensure_photo_rows(session, item)
     target = next((p for p in item.photos if p.id == photo_id), None)
     if target is None:
