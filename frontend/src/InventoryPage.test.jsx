@@ -294,6 +294,24 @@ describe('InventoryPage', () => {
     expect(itemCalls()).toHaveLength(1)
   })
 
+  it('shows an N photos badge on the card only when the item has several photos', async () => {
+    const multi = {
+      ...DECIDED_SELL_ITEM,
+      photos: [
+        { id: 1, url: '/uploads/a.jpg', position: 0 },
+        { id: 2, url: '/uploads/b.jpg', position: 1 },
+      ],
+    }
+    const single = {
+      ...LISTED_ITEM,
+      photos: [{ id: 3, url: '/uploads/c.jpg', position: 0 }],
+    }
+    fetch.mockResolvedValue({ ok: true, status: 200, json: async () => [multi, single] })
+    renderInventoryPage()
+    expect(await screen.findByText('2 photos')).toBeInTheDocument()
+    expect(screen.queryByText('1 photos')).not.toBeInTheDocument()
+  })
+
   it('shows the summary line, omitting the sell value when it is zero', async () => {
     fetch.mockResolvedValue({
       ok: true,

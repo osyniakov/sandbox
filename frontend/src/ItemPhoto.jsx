@@ -7,11 +7,11 @@ import { AlertCircle } from './icons.jsx'
 // "no photo yet" / "still loading" / "ready" states ItemResultPage.jsx handles
 // for its single photo -- see useAuthedImageUrl.js for the authenticated
 // blob-URL rationale. `className` controls the size (default: 80px tile).
-function ItemPhoto({ item, className = 'h-20 w-20 shrink-0' }) {
+function ItemPhoto({ item, className = 'h-20 w-20 shrink-0', alt: altOverride }) {
   const { url: photoObjectUrl, status } = useAuthedImageUrl(item.photo_url)
-  const alt = item.identified_name
+  const alt = altOverride || (item.identified_name
     ? `Photo of ${item.identified_name}`
-    : `Photo of item #${item.id}`
+    : `Photo of item #${item.id}`)
 
   const tile = `${className} flex items-center justify-center rounded-xl border border-dashed border-line bg-sunken text-center text-xs text-muted`
 

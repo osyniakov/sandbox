@@ -56,3 +56,43 @@ export async function patchItemStatus(id, status, signal) {
   }
   return response.json()
 }
+
+async function failureMessage(response, fallback) {
+  // A 401 means the session expired -- apiFetch (api.js) has already
+  // cleared the stale token and dispatched SESSION_EXPIRED_EVENT.
+  if (response.status === 401) {
+    return 'Your session has expired. Please sign in again.'
+  }
+  let detail = `${fallback} (${response.status} ${response.statusText})`
+  try {
+    const body = await response.json()
+    if (body && typeof body.detail === 'string') {
+      detail = body.detail
+    }
+  } catch {
+    // Body wasn't JSON -- keep the generic message.
+  }
+  return detail
+}
+
+// Appends photos to an item; resolves to the serialized item.
+export async function addItemPhotos(id, files, signal) {
+  const form = new FormData()
+  for (const file of files) {
+    form.append('photos', file)
+  }
+  const response = await apiFetch(`/items/${id}/photos`, { method: 'POST', body: form, signal })
+  if (!response.ok) {
+    throw new Error(await failureMessage(response, 'Failed to add photos'))
+  }
+  return response.json()
+}
+
+// Removes one photo from an item; resolves to the serialized item.
+export async function removeItemPhoto(id, photoId, signal) {
+  const response = await apiFetch(`/items/${id}/photos/${photoId}`, { method: 'DELETE', signal })
+  if (!response.ok) {
+    throw new Error(await failureMessage(response, 'Failed to remove photo'))
+  }
+  return response.json()
+}
