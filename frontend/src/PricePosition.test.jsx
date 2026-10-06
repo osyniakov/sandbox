@@ -45,7 +45,8 @@ describe('PricePosition', () => {
   })
 
   it.each([
-    ['non-sell decision', { decision: 'give_away' }],
+    ['throw_away decision', { decision: 'throw_away' }],
+    ['unknown decision', { decision: 'keep' }],
     ['null suggested price', { suggestedPrice: null }],
     ['fewer than 2 comparables', { comparableListings: comps(30) }],
     ['fewer than 2 numeric prices', { comparableListings: [{ id: 1, price: 30 }, { id: 2, price: null }] }],
@@ -53,5 +54,28 @@ describe('PricePosition', () => {
   ])('renders nothing for %s', (_name, props) => {
     const { container } = renderStrip(props)
     expect(container).toBeEmptyDOMElement()
+  })
+
+  describe('give_away', () => {
+    it('renders heading, dots, count and sr-only text without a marker', () => {
+      renderStrip({ decision: 'give_away', suggestedPrice: null, comparableListings: comps(25, 30, 45) })
+      expect(screen.getByRole('heading', { name: 'What similar items sell for' })).toBeInTheDocument()
+      expect(screen.getAllByTestId('price-dot')).toHaveLength(3)
+      expect(screen.queryByTestId('price-marker')).not.toBeInTheDocument()
+      expect(screen.getByText('Comparable listings range from €25 to €45.')).toBeInTheDocument()
+      expect(screen.getByText('3 comparables')).toBeInTheDocument()
+    })
+
+    it('renders nothing with fewer than 2 prices', () => {
+      const { container } = renderStrip({ decision: 'give_away', comparableListings: comps(30) })
+      expect(container).toBeEmptyDOMElement()
+    })
+
+    it('ignores a suggested price when present', () => {
+      renderStrip({ decision: 'give_away', suggestedPrice: 35 })
+      expect(screen.queryByTestId('price-marker')).not.toBeInTheDocument()
+      expect(screen.queryByText(/Suggested price/)).not.toBeInTheDocument()
+      expect(screen.getByRole('heading', { name: 'What similar items sell for' })).toBeInTheDocument()
+    })
   })
 })
