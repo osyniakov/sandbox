@@ -601,6 +601,12 @@ async def _save_upload(request: Request, upload: UploadFile, file_count: int = 1
                     oversized = True
                     break
                 dest_file.write(chunk)
+    except BaseException:
+        # Any failure after ``open("wb")`` created the file (disk full,
+        # I/O error, client disconnect/cancellation mid-read) must not
+        # leave a partial file behind; re-raise unchanged.
+        dest_path.unlink(missing_ok=True)
+        raise
     finally:
         await upload.close()
 
@@ -1024,10 +1030,9 @@ def delete_item(
 
     Returns 404 if no ``Item`` with ``item_id`` exists (same message style
     as ``update_item_status``/``get_item``). On success, deletes the
-    item's uploaded photo file from disk FIRST (before the DB row), via
-    ``Path.unlink(missing_ok=True)`` -- ``missing_ok=True`` so an
-    already-missing photo file (e.g. removed out-of-band) doesn't turn
-    this into a 500 -- then deletes the ``Item`` row itself.
+    item's ``Item`` row (committed first), THEN its photo files from disk via
+    ``Path.unlink(missing_ok=True)`` (OSError ignored, so an
+    already-missing or undeletable file never turns this into a 500).
     ``Item.comparable_listings``'s ``cascade="all, delete-orphan"`` (see
     ``app/models.py``) makes SQLAlchemy delete the item's
     ``ComparableListing`` rows automatically as part of the same
@@ -1041,10 +1046,16 @@ def delete_item(
     if item is None:
         raise HTTPException(status_code=404, detail=f"No item with id {item_id}.")
 
-    for photo_path in {item.photo_path, *(p.photo_path for p in item.photos)}:
-        Path(photo_path).unlink(missing_ok=True)
+    # Collect paths first, commit the DB delete, and only then unlink the
+    # files: a failed commit must not leave rows pointing at missing files.
+    paths = {item.photo_path, *(p.photo_path for p in item.photos)}
     session.delete(item)
     session.commit()
+    for photo_path in paths:
+        try:
+            Path(photo_path).unlink(missing_ok=True)
+        except OSError:
+            pass
     return {"id": item_id, "deleted": True}
 
 
@@ -1120,6 +1131,9 @@ def delete_item_photo(
     item.photo_path = min(item.photos, key=lambda p: p.position).photo_path
     session.commit()
     if removed_path != item.photo_path:
-        Path(removed_path).unlink(missing_ok=True)
+        try:
+            Path(removed_path).unlink(missing_ok=True)
+        except OSError:
+            pass
     session.refresh(item)
     return _serialize_item(item)

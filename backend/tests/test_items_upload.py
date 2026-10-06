@@ -4,8 +4,8 @@ Each test gets its own throwaway SQLite DB file and its own throwaway
 uploads directory (both under pytest's ``tmp_path``), consistent with the
 pattern in ``test_models.py``, so nothing here ever touches the real dev
 DB file (``backend/data/declutter.db``) or the real ``backend/uploads/``
-directory. See the ``client`` fixture below for how that isolation is
-wired: it monkeypatches ``app.main.engine`` and ``app.main.UPLOAD_DIR``
+directory. See the ``client`` fixture for how that isolation is
+wired (in ``tests/conftest.py``): it monkeypatches ``app.main.engine`` and ``app.main.UPLOAD_DIR``
 *before* the ``TestClient`` lifespan (which calls ``init_db``/creates the
 uploads dir) runs, and overrides the ``get_session`` FastAPI dependency
 to hand out sessions bound to the temp engine.
@@ -14,57 +14,14 @@ to hand out sessions bound to the temp engine.
 from __future__ import annotations
 
 import io
-from collections.abc import Iterator
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
 import app.main as main_module
-from app.db import get_session, make_engine, make_session_factory
-from app.main import app
 from app.models import Item, ItemStatus
-
-
-def _make_jpeg_bytes() -> bytes:
-    """A tiny but genuinely valid JPEG, generated with Pillow."""
-    image = Image.new("RGB", (2, 2), color=(255, 0, 0))
-    buf = io.BytesIO()
-    image.save(buf, format="JPEG")
-    return buf.getvalue()
-
-
-@pytest.fixture()
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
-    db_path = tmp_path / "test.db"
-    test_engine = make_engine(f"sqlite:///{db_path}")
-    factory = make_session_factory(test_engine)
-
-    def _get_session_override() -> Iterator:
-        session = factory()
-        try:
-            yield session
-        finally:
-            session.close()
-
-    app.dependency_overrides[get_session] = _get_session_override
-    monkeypatch.setattr(main_module, "engine", test_engine)
-    monkeypatch.setattr(main_module, "UPLOAD_DIR", tmp_path / "uploads")
-
-    with TestClient(app) as test_client:
-        yield test_client
-
-    app.dependency_overrides.clear()
-    test_engine.dispose()
-    if db_path.exists():
-        db_path.unlink()
-
-
-@pytest.fixture()
-def db_session_factory(client: TestClient):
-    """A session factory bound to the same temp engine the client uses."""
-    return make_session_factory(main_module.engine)
+from tests.conftest import _make_jpeg_bytes
 
 
 # ---------------------------------------------------------------------------
