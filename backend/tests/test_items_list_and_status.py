@@ -22,6 +22,7 @@ import app.main as main_module
 from app.db import get_session, make_engine, make_session_factory
 from app.main import MANUAL_STATUS_TRANSITIONS, app
 from app.models import ComparableListing, Decision, Item, ItemStatus
+from tests.conftest import TEST_USER_EMAIL
 
 
 @pytest.fixture()
@@ -69,6 +70,7 @@ def _make_item(
     session = db_session_factory()
     try:
         item = Item(
+            owner_email=TEST_USER_EMAIL,
             photo_path="/x/uploads/fake.jpg",
             status=status,
             decision=decision,
@@ -839,6 +841,7 @@ def _make_item_with_photo(
     session = db_session_factory()
     try:
         item = Item(
+            owner_email=TEST_USER_EMAIL,
             photo_path=str(photo_path),
             status=status,
         )

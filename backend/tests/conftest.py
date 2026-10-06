@@ -29,6 +29,23 @@ from app.db import get_session, make_engine, make_session_factory
 from app.main import app
 
 
+TEST_USER_EMAIL = "test@example.com"
+"""Email behind the default ``auth_headers`` fixture; tests that seed ``Item``
+rows directly must set ``owner_email=TEST_USER_EMAIL`` for them to be visible."""
+
+
+@pytest.fixture()
+def auth_headers_for(monkeypatch: pytest.MonkeyPatch):
+    """Factory: ``auth_headers_for("bob@example.com")`` -> Authorization header
+    dict with a real session token for that email (for multi-user tests)."""
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
+
+    def _make(email: str) -> dict[str, str]:
+        return {"Authorization": f"Bearer {issue_session_token(email)}"}
+
+    return _make
+
+
 @pytest.fixture()
 def auth_headers(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     """A ready-to-use ``{"Authorization": "Bearer <token>"}`` header dict
@@ -44,17 +61,10 @@ def auth_headers(monkeypatch: pytest.MonkeyPatch) -> dict[str, str]:
     ``tests/test_auth.py``/``tests/test_auth_endpoints.py`` -- cleaned up
     automatically after the test.
 
-    Deliberately does NOT touch ``ALLOWED_EMAILS``: ``verify_session_token``
-    (what every gated route actually calls, via ``require_user``) only
-    checks the token's own signature/expiry, never ``ALLOWED_EMAILS`` again
-    -- that whitelist is only consulted once, at the point of exchanging a
-    Google ID token for a session token in ``POST /auth/google`` (see
-    ``app.auth.verify_google_id_token``). So minting a session token
-    directly, as this fixture does, never touches the whitelist at all, and
-    tests using this fixture don't need to configure it.
+    Does not touch ``ALLOWED_EMAILS`` (no longer a sign-in allowlist).
     """
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
-    token = issue_session_token("test@example.com")
+    token = issue_session_token(TEST_USER_EMAIL)
     return {"Authorization": f"Bearer {token}"}
 
 

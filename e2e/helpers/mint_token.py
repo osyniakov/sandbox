@@ -90,9 +90,9 @@ def main() -> int:
         return 1
     if not email:
         print(
-            "E2E_TEST_EMAIL is not set -- this must be an email already "
-            "present in the real deployed backend's ALLOWED_EMAILS "
-            "whitelist, supplied externally.",
+            "E2E_TEST_EMAIL is not set -- supply the test identity's email "
+            "externally. It needs no whitelisting (sign-in is open); the "
+            "suite runs in that account's own workspace.",
             file=sys.stderr,
         )
         return 1

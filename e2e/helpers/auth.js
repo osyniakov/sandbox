@@ -59,7 +59,7 @@ function mintSessionToken() {
     throw new Error(
       `signInAs() requires ${missing.join(' and ')} to be set in the ` +
         "environment (the real deployed backend's actual SESSION_SECRET, " +
-        'and an email already present in its ALLOWED_EMAILS whitelist -- ' +
+        'and the test identity email (no whitelisting needed) -- ' +
         "see e2e/README.md). The orchestrator supplies these; this helper " +
         'only consumes them.'
     )
@@ -110,8 +110,8 @@ function mintSessionToken() {
 //
 // No email parameter: this harness only ever signs in as the one
 // designated E2E test identity (E2E_TEST_EMAIL), not an arbitrary email --
-// see the bead description for why (the identity must be present on the
-// real backend's ALLOWED_EMAILS whitelist ahead of time).
+// see the bead description for why. Sign-in is open (no whitelist), and
+// the suite runs in that account's own private workspace.
 export async function signInAs(page) {
   const token = mintSessionToken()
 

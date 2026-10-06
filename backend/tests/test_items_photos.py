@@ -8,7 +8,7 @@ import pytest
 
 import app.main as main_module
 from app.models import Item, ItemPhoto, ItemStatus
-from tests.conftest import _make_jpeg_bytes
+from tests.conftest import TEST_USER_EMAIL, _make_jpeg_bytes
 
 JPEG = _make_jpeg_bytes()
 
@@ -167,7 +167,11 @@ def _make_legacy_item(db_session_factory) -> tuple[int, Path]:
     path.write_bytes(JPEG)
     s = db_session_factory()
     try:
-        item = Item(photo_path=str(path), status=ItemStatus.PENDING_IDENTIFICATION)
+        item = Item(
+            photo_path=str(path),
+            status=ItemStatus.PENDING_IDENTIFICATION,
+            owner_email=TEST_USER_EMAIL,
+        )
         s.add(item)
         s.commit()
         return item.id, path

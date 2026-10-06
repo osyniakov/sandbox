@@ -96,12 +96,24 @@ def test_auth_google_failed_verification_returns_401(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setattr(
-        main_module, "verify_google_id_token", _fake_verify_failure("not whitelisted")
+        main_module, "verify_google_id_token", _fake_verify_failure("email not verified")
     )
 
     response = client.post("/auth/google", json={"id_token": "fake-bad-token"})
 
     assert response.status_code == 401
+
+
+def test_auth_me_lowercases_legacy_mixed_case_session_token(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
+    token = issue_session_token("Mixed.Case@Example.com")
+
+    response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+
+    assert response.status_code == 200
+    assert response.json() == {"email": "mixed.case@example.com"}
 
 
 # ---------------------------------------------------------------------------

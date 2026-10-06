@@ -108,6 +108,11 @@ class Item(Base):
 
     photo_path: Mapped[str] = mapped_column(String, nullable=False)
 
+    # Lowercased email of the owning user (the session token's identity).
+    # Nullable at the DB level only so legacy pre-multi-tenancy rows can
+    # exist until claimed; application code always sets it.
+    owner_email: Mapped[str | None] = mapped_column(String(320), nullable=True, index=True)
+
     identified_name: Mapped[str | None] = mapped_column(String, nullable=True)
     category: Mapped[str | None] = mapped_column(String, nullable=True)
     brand: Mapped[str | None] = mapped_column(String, nullable=True)

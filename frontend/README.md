@@ -14,7 +14,7 @@ isn't running at the default local address:
 cp .env.example .env
 ```
 
-Sign-in also needs `VITE_GOOGLE_CLIENT_ID` set (build-time, same as
+Sign-in is open to any Google account with a verified email; each account sees only its own items. Sign-in also needs `VITE_GOOGLE_CLIENT_ID` set (build-time, same as
 `VITE_API_BASE_URL` above) — see "Access control" in the repo-root
 `README.md` for the full Google OAuth Client ID setup.
 

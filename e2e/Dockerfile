@@ -38,9 +38,9 @@
 #                         Consumed by helpers/mint_token.py to mint a
 #                         validly-signed session token. Must exactly match
 #                         the real backend's configured SESSION_SECRET.
-#   E2E_TEST_EMAIL        The designated E2E test identity's email. Must
-#                         already be present in the real deployed
-#                         backend's ALLOWED_EMAILS whitelist.
+#   E2E_TEST_EMAIL        The designated E2E test identity's email. No
+#                         whitelisting needed (sign-in is open); runs in
+#                         that account's own workspace.
 #
 # Optional environment variables at runtime (see playwright.config.js for
 # full detail and defaults):
