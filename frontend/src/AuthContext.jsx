@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react'
+import { clearPhotoBlobCache } from './photoBlobCache.js'
 import { API_BASE_URL, SESSION_EXPIRED_EVENT, SESSION_TOKEN_STORAGE_KEY } from './api.js'
 
 // Auth gate for the whole app (sandbox-dfr.4). This context is the single
@@ -58,6 +59,7 @@ export function AuthProvider({ children }) {
 
         if (!response.ok) {
           localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY)
+          clearPhotoBlobCache()
           if (!cancelled) {
             setIsAuthenticated(false)
             setEmail(null)
@@ -97,6 +99,7 @@ export function AuthProvider({ children }) {
   // to update React state so the UI re-renders the sign-in gate.
   useEffect(() => {
     function handleSessionExpired() {
+      clearPhotoBlobCache()
       setIsAuthenticated(false)
       setEmail(null)
     }
@@ -129,6 +132,7 @@ export function AuthProvider({ children }) {
       // (clearing the local session below) still happens regardless.
     } finally {
       localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY)
+      clearPhotoBlobCache()
       setIsAuthenticated(false)
       setEmail(null)
     }

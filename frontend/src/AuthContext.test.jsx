@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AuthProvider, useAuth } from './AuthContext.jsx'
+import { getPhotoBlob, peekPhotoBlob } from './photoBlobCache.js'
 import { SESSION_EXPIRED_EVENT, SESSION_TOKEN_STORAGE_KEY } from './api.js'
 
 // A minimal consumer that surfaces AuthContext's state/methods as text/
@@ -192,5 +193,50 @@ describe('AuthContext', () => {
 
     expect(screen.getByTestId('authenticated')).toHaveTextContent('false')
     expect(screen.getByTestId('email')).toHaveTextContent('')
+  })
+
+  async function seedPhotoAndAuth(logoutResult) {
+    localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'valid-token')
+    fetch.mockResolvedValueOnce({ ok: true, status: 200, blob: async () => new Blob(['x'], { type: 'image/png' }) })
+    await getPhotoBlob('/uploads/a.png')
+    expect(peekPhotoBlob('/uploads/a.png')).toBeDefined()
+    fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ email: 'e@example.com' }) })
+    if (logoutResult) fetch.mockImplementationOnce(logoutResult)
+    renderAuthProbe()
+    await waitFor(() => {
+      expect(screen.getByTestId('authenticated')).toHaveTextContent('true')
+    })
+  }
+
+  it('signOut empties the photo blob cache', async () => {
+    await seedPhotoAndAuth(() => Promise.resolve({ ok: true, status: 200 }))
+    await userEvent.setup().click(screen.getByRole('button', { name: 'sign out' }))
+    await waitFor(() => expect(screen.getByTestId('authenticated')).toHaveTextContent('false'))
+    expect(peekPhotoBlob('/uploads/a.png')).toBeUndefined()
+  })
+
+  it('signOut empties the photo blob cache even if /auth/logout fails', async () => {
+    await seedPhotoAndAuth(() => Promise.reject(new TypeError('Failed to fetch')))
+    await userEvent.setup().click(screen.getByRole('button', { name: 'sign out' }))
+    await waitFor(() => expect(screen.getByTestId('authenticated')).toHaveTextContent('false'))
+    expect(peekPhotoBlob('/uploads/a.png')).toBeUndefined()
+  })
+
+  it('a session-expired event empties the photo blob cache', async () => {
+    await seedPhotoAndAuth()
+    act(() => {
+      window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT))
+    })
+    expect(peekPhotoBlob('/uploads/a.png')).toBeUndefined()
+  })
+
+  it('a rejected /auth/me on mount empties the photo blob cache', async () => {
+    fetch.mockResolvedValueOnce({ ok: true, status: 200, blob: async () => new Blob(['x'], { type: 'image/png' }) })
+    await getPhotoBlob('/uploads/a.png')
+    localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'stale')
+    fetch.mockResolvedValueOnce({ ok: false, status: 401 })
+    renderAuthProbe()
+    await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
+    expect(peekPhotoBlob('/uploads/a.png')).toBeUndefined()
   })
 })

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   MAX_ENTRIES,
   __resetPhotoBlobCacheForTests,
+  clearPhotoBlobCache,
   evictPhotoBlob,
   getPhotoBlob,
   peekPhotoBlob,
@@ -55,5 +56,21 @@ describe('photoBlobCache', () => {
     expect(peekPhotoBlob('/uploads/1.png')).toBeUndefined()
     expect(peekPhotoBlob('/uploads/0.png')).toBeDefined()
     expect(peekPhotoBlob('/uploads/new.png')).toBeDefined()
+  })
+
+  it('clearPhotoBlobCache empties the cache; an in-flight fetch finishing later is not re-cached', async () => {
+    await getPhotoBlob('/uploads/a.png')
+    const p = getPhotoBlob('/uploads/b.png')
+    clearPhotoBlobCache()
+    expect(peekPhotoBlob('/uploads/a.png')).toBeUndefined()
+    await p
+    expect(peekPhotoBlob('/uploads/b.png')).toBeUndefined()
+    await getPhotoBlob('/uploads/b.png')
+    expect(fetch).toHaveBeenCalledTimes(3)
+  })
+
+  it('resolves a typed blob and falls back to the Content-Type header', async () => {
+    fetch.mockResolvedValueOnce({ ok: true, status: 200, blob: async () => new Blob(['x']), headers: new Headers({ 'Content-Type': 'image/webp' }) })
+    expect((await getPhotoBlob('/uploads/c.webp')).type).toBe('image/webp')
   })
 })
