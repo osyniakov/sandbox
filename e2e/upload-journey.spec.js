@@ -56,8 +56,10 @@ test('uploading a real photo runs the full pipeline and reaches a terminal outco
   const photoInput = page.locator('#photo-input')
   await expect(photoInput).toBeVisible()
   await photoInput.setInputFiles(FIXTURE_PHOTO_PATH)
+  await page.getByRole('button', { name: /upload \d+ photos?/i }).click()
 
-  // UploadPage.jsx's handleFileChange POSTs to /items and, on success,
+  // Selecting the file only adds it to the photo tray; the "Upload 1 photo"
+  // click above triggers UploadPage.jsx's handleSubmit, which POSTs to /items and, on success,
   // navigates to `/items/${data.id}` (see its `navigate(...)` call) --
   // this confirms the upload itself succeeded and the app moved on to the
   // item's results page, before we start polling that page for the

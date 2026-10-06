@@ -14,8 +14,25 @@ vi.mock('./imageResize.js', () => ({
   prepareUploadImage: vi.fn(async (file) => file),
 }))
 
-function makeFixtureImageFile() {
-  return new File([new Uint8Array([1, 2, 3, 4])], 'fixture-photo.jpg', {
+// jsdom has no URL.createObjectURL; stub it so thumbnails can render and the
+// tests can assert URLs are revoked.
+let revokeSpy
+beforeEach(() => {
+  let n = 0
+  URL.createObjectURL = vi.fn(() => `blob:thumb-${++n}`)
+  revokeSpy = vi.fn()
+  URL.revokeObjectURL = revokeSpy
+})
+
+// Picking a photo no longer uploads: add it to the tray, then press Upload.
+async function addAndSubmit(user, input, files) {
+  await user.upload(input, files)
+  const button = screen.getByRole('button', { name: /upload \d+ photos?/i })
+  await user.click(button)
+}
+
+function makeFixtureImageFile(name = 'fixture-photo.jpg') {
+  return new File([new Uint8Array([1, 2, 3, 4])], name, {
     type: 'image/jpeg',
   })
 }
@@ -102,7 +119,7 @@ describe('UploadPage photo capture/upload flow', () => {
     const input = screen.getByLabelText(/take or choose a photo/i)
     const file = makeFixtureImageFile()
 
-    await user.upload(input, file)
+    await addAndSubmit(user, input, file)
 
     // On success, UploadPage navigates to `/items/42` (see App.jsx's
     // routing-decision comment) rather than showing an inline "Item #42
@@ -118,8 +135,8 @@ describe('UploadPage photo capture/upload flow', () => {
     expect(url).toContain('/items')
     expect(options.method).toBe('POST')
     // The multipart field name must match what the backend expects
-    // (`photo`, per backend/app/main.py's `create_item`).
-    expect(options.body.get('photo')).toBe(file)
+    // (repeated `photos`, per backend/app/main.py's `create_item`).
+    expect(options.body.getAll('photos')).toEqual([file])
   })
 
   it('updates the displayed hint value as the user types', async () => {
@@ -147,7 +164,7 @@ describe('UploadPage photo capture/upload flow', () => {
 
     const input = screen.getByLabelText(/take or choose a photo/i)
     const file = makeFixtureImageFile()
-    await user.upload(input, file)
+    await addAndSubmit(user, input, file)
 
     await waitFor(() => {
       expect(screen.getByText(/item #42/i)).toBeInTheDocument()
@@ -170,7 +187,7 @@ describe('UploadPage photo capture/upload flow', () => {
 
     const input = screen.getByLabelText(/take or choose a photo/i)
     const file = makeFixtureImageFile()
-    await user.upload(input, file)
+    await addAndSubmit(user, input, file)
 
     await waitFor(() => {
       expect(screen.getByText(/item #42/i)).toBeInTheDocument()
@@ -178,7 +195,7 @@ describe('UploadPage photo capture/upload flow', () => {
 
     expect(uploadFetch).toHaveBeenCalledTimes(1)
     const [, options] = uploadFetch.mock.calls[0]
-    expect(options.body.get('photo')).toBe(file)
+    expect(options.body.getAll('photos')).toEqual([file])
     expect(options.body.get('hint')).toBe('')
   })
 
@@ -197,7 +214,7 @@ describe('UploadPage photo capture/upload flow', () => {
     const input = screen.getByLabelText(/take or choose a photo/i)
     const file = makeFixtureImageFile()
 
-    await user.upload(input, file)
+    await addAndSubmit(user, input, file)
 
     expect(hintInput).toBeDisabled()
 
@@ -212,25 +229,30 @@ describe('UploadPage photo capture/upload flow', () => {
     })
   })
 
-  it('clears the hint field on reset after an error', async () => {
+  it('keeps the hint and the tray after an error, and Try again re-submits the same tray', async () => {
     const user = userEvent.setup()
     uploadFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
+    uploadFetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 42 }) })
 
     renderUploadPage()
 
-    const hintInput = screen.getByLabelText(/hint \(optional\)/i)
-    await user.type(hintInput, 'Bosch drill, orange casing')
-
+    await user.type(screen.getByLabelText(/hint \(optional\)/i), 'Bosch drill')
     const input = screen.getByLabelText(/take or choose a photo/i)
-    await user.upload(input, makeFixtureImageFile())
+    const file = makeFixtureImageFile()
+    await addAndSubmit(user, input, file)
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/could not reach the server/i)
     })
+    expect(screen.getByLabelText(/hint \(optional\)/i)).toHaveValue('Bosch drill')
+    expect(screen.getByRole('button', { name: 'Upload 1 photo' })).toBeEnabled()
 
     await user.click(screen.getByRole('button', { name: /try again/i }))
-
-    expect(screen.getByLabelText(/hint \(optional\)/i)).toHaveValue('')
+    await waitFor(() => expect(screen.getByText(/item #42/i)).toBeInTheDocument())
+    expect(uploadFetch).toHaveBeenCalledTimes(2)
+    const body = uploadFetch.mock.calls[1][1].body
+    expect(body.getAll('photos')).toEqual([file])
+    expect(body.get('hint')).toBe('Bosch drill')
   })
 
   it('disables the input while the upload is genuinely in flight, then navigates once it resolves', async () => {
@@ -252,13 +274,13 @@ describe('UploadPage photo capture/upload flow', () => {
     const input = screen.getByLabelText(/take or choose a photo/i)
     const file = makeFixtureImageFile()
 
-    await user.upload(input, file)
+    await addAndSubmit(user, input, file)
 
     // The fetch promise is still pending at this point (we haven't called
     // resolveFetch yet), so this genuinely proves the input is disabled
     // *while* the request is in flight, and a loading indicator is shown.
     expect(input).toBeDisabled()
-    expect(screen.getByRole('status')).toHaveTextContent(/uploading photo/i)
+    expect(screen.getByRole('status')).toHaveTextContent(/uploading 1 photo/i)
     expect(uploadFetch).toHaveBeenCalledTimes(1)
 
     resolveFetch({
@@ -291,7 +313,7 @@ describe('UploadPage photo capture/upload flow', () => {
     const input = screen.getByLabelText(/take or choose a photo/i)
     const file = makeFixtureImageFile()
 
-    await user.upload(input, file)
+    await addAndSubmit(user, input, file)
 
     // Request is still pending -- input should be disabled, blocking a
     // second selection.
@@ -301,7 +323,7 @@ describe('UploadPage photo capture/upload flow', () => {
     // Attempt a second file selection while the first request is still in
     // flight. `user.upload` is a no-op on a disabled input (mirrors real
     // browser behavior), so this must not trigger a second fetch call.
-    await user.upload(input, makeFixtureImageFile())
+    await addAndSubmit(user, input, makeFixtureImageFile())
 
     expect(uploadFetch).toHaveBeenCalledTimes(1)
 
@@ -324,7 +346,7 @@ describe('UploadPage photo capture/upload flow', () => {
     renderUploadPage()
 
     const input = screen.getByLabelText(/take or choose a photo/i)
-    await user.upload(input, makeFixtureImageFile())
+    await addAndSubmit(user, input, makeFixtureImageFile())
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/could not reach the server/i)
@@ -346,7 +368,7 @@ describe('UploadPage photo capture/upload flow', () => {
     renderUploadPage()
 
     const input = screen.getByLabelText(/take or choose a photo/i)
-    await user.upload(input, makeFixtureImageFile())
+    await addAndSubmit(user, input, makeFixtureImageFile())
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/uploaded file is empty/i)
@@ -365,7 +387,7 @@ describe('UploadPage photo capture/upload flow', () => {
     renderUploadPage()
 
     const input = screen.getByLabelText(/take or choose a photo/i)
-    await user.upload(input, makeFixtureImageFile())
+    await addAndSubmit(user, input, makeFixtureImageFile())
 
     await waitFor(() => {
       expect(screen.getByRole('alert')).toHaveTextContent(/session has expired/i)
@@ -386,22 +408,140 @@ describe('UploadPage photo capture/upload flow', () => {
 
     renderUploadPage()
     const raw = makeFixtureImageFile()
-    await user.upload(screen.getByLabelText(/take or choose a photo/i), raw)
+    await addAndSubmit(user, screen.getByLabelText(/take or choose a photo/i), raw)
 
     await waitFor(() => {
       expect(screen.getByText(/item #42/i)).toBeInTheDocument()
     })
     expect(prepareUploadImage).toHaveBeenCalledWith(raw)
-    expect(uploadFetch.mock.calls[0][1].body.get('photo')).toBe(prepared)
+    expect(uploadFetch.mock.calls[0][1].body.getAll('photos')).toEqual([prepared])
   })
 
   it('passes an abort signal to fetch', async () => {
     const user = userEvent.setup()
     uploadFetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 1 }) })
     renderUploadPage()
-    await user.upload(screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
+    await addAndSubmit(user, screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
     await waitFor(() => expect(screen.getByText(/item #1/i)).toBeInTheDocument())
     expect(uploadFetch.mock.calls[0][1].signal).toBeInstanceOf(AbortSignal)
+  })
+
+  describe('photo tray', () => {
+    const uploadButton = (n) => screen.getByRole('button', { name: `Upload ${n} ${n === 1 ? 'photo' : 'photos'}` })
+
+    it('does not upload on select; shows thumbnails, count and "Upload 2 photos" for 2 files', async () => {
+      const user = userEvent.setup()
+      renderUploadPage()
+      const input = screen.getByLabelText(/take or choose a photo/i)
+      expect(input).toHaveAttribute('multiple')
+      expect(screen.getByRole('button', { name: /upload photos/i })).toBeDisabled()
+
+      await user.upload(input, [makeFixtureImageFile('a.jpg'), makeFixtureImageFile('b.jpg')])
+
+      expect(uploadFetch).not.toHaveBeenCalled()
+      expect(screen.getAllByRole('img', { name: /selected photo/i })).toHaveLength(2)
+      expect(screen.getByText('2 of 10')).toBeInTheDocument()
+      expect(uploadButton(2)).toBeEnabled()
+      expect(screen.getByLabelText(/add more photos/i)).toBe(input)
+      expect(input.value).toBe('')
+    })
+
+    it('removes a photo, updating the count and revoking its thumbnail URL', async () => {
+      const user = userEvent.setup()
+      renderUploadPage()
+      await user.upload(screen.getByLabelText(/take or choose a photo/i), [
+        makeFixtureImageFile('a.jpg'),
+        makeFixtureImageFile('b.jpg'),
+      ])
+
+      await user.click(screen.getByRole('button', { name: 'Remove photo 1' }))
+
+      expect(screen.getAllByRole('img', { name: /selected photo/i })).toHaveLength(1)
+      expect(screen.getByText('1 of 10')).toBeInTheDocument()
+      expect(uploadButton(1)).toBeEnabled()
+      expect(revokeSpy).toHaveBeenCalledWith('blob:thumb-1')
+
+      await user.click(screen.getByRole('button', { name: 'Remove photo 1' }))
+      expect(screen.queryByRole('img', { name: /selected photo/i })).not.toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /upload photos/i })).toBeDisabled()
+      expect(screen.getByLabelText(/take or choose a photo/i)).toBeInTheDocument()
+    })
+
+    it('accumulates across several picks and lets the same file be picked again', async () => {
+      const user = userEvent.setup()
+      renderUploadPage()
+      const input = screen.getByLabelText(/take or choose a photo/i)
+      const file = makeFixtureImageFile()
+      await user.upload(input, file)
+      await user.upload(input, file)
+      expect(screen.getByText('2 of 10')).toBeInTheDocument()
+    })
+
+    it('caps the tray at 10 photos and shows a notice', async () => {
+      const user = userEvent.setup()
+      renderUploadPage()
+      const input = screen.getByLabelText(/take or choose a photo/i)
+      const files = Array.from({ length: 12 }, (_, i) => makeFixtureImageFile(`p${i}.jpg`))
+      await user.upload(input, files)
+
+      expect(screen.getAllByRole('img', { name: /selected photo/i })).toHaveLength(10)
+      expect(screen.getByText('10 of 10')).toBeInTheDocument()
+      expect(screen.getByText('Up to 10 photos per item.')).toBeInTheDocument()
+
+      await user.upload(input, makeFixtureImageFile('extra.jpg'))
+      expect(screen.getAllByRole('img', { name: /selected photo/i })).toHaveLength(10)
+      expect(screen.getByText('Up to 10 photos per item.')).toBeInTheDocument()
+    })
+
+    it('submits every photo as a `photos` part plus the hint, in order, and navigates', async () => {
+      const user = userEvent.setup()
+      uploadFetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 9 }) })
+      renderUploadPage()
+      await user.type(screen.getByLabelText(/hint \(optional\)/i), 'drill')
+      prepareUploadImage.mockClear()
+      const a = makeFixtureImageFile('a.jpg')
+      const b = makeFixtureImageFile('b.jpg')
+      await addAndSubmit(user, screen.getByLabelText(/take or choose a photo/i), [a, b])
+
+      await waitFor(() => expect(screen.getByText(/item #9/i)).toBeInTheDocument())
+      const body = uploadFetch.mock.calls[0][1].body
+      expect(body.getAll('photos')).toEqual([a, b])
+      expect(body.get('hint')).toBe('drill')
+      expect(prepareUploadImage).toHaveBeenCalledTimes(2)
+    })
+
+    it('disables remove, add and upload while uploading, and shows N-photo progress', async () => {
+      const user = userEvent.setup()
+      let resolveFetch
+      uploadFetch.mockReturnValueOnce(new Promise((resolve) => (resolveFetch = resolve)))
+      renderUploadPage()
+      const input = screen.getByLabelText(/take or choose a photo/i)
+      await addAndSubmit(user, input, [makeFixtureImageFile('a.jpg'), makeFixtureImageFile('b.jpg')])
+
+      expect(screen.getByRole('status')).toHaveTextContent(/uploading 2 photos/i)
+      expect(input).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Remove photo 1' })).toBeDisabled()
+      expect(uploadButton(2)).toBeDisabled()
+
+      resolveFetch({ ok: true, status: 201, json: async () => ({ id: 1 }) })
+      await waitFor(() => expect(screen.getByText(/item #1/i)).toBeInTheDocument())
+    })
+
+    it('revokes thumbnail URLs after a successful upload and on unmount', async () => {
+      const user = userEvent.setup()
+      uploadFetch.mockResolvedValueOnce({ ok: true, status: 201, json: async () => ({ id: 1 }) })
+      renderUploadPage()
+      await addAndSubmit(user, screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
+      await waitFor(() => expect(screen.getByText(/item #1/i)).toBeInTheDocument())
+      expect(revokeSpy).toHaveBeenCalledWith('blob:thumb-1')
+
+      cleanup()
+      revokeSpy.mockClear()
+      const { unmount } = renderUploadPage()
+      await user.upload(screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
+      unmount()
+      expect(revokeSpy).toHaveBeenCalledWith('blob:thumb-2')
+    })
   })
 
   describe('upload timeout', () => {
@@ -427,7 +567,7 @@ describe('UploadPage photo capture/upload flow', () => {
       renderUploadPage()
       const input = screen.getByLabelText(/take or choose a photo/i)
       const file = makeFixtureImageFile()
-      await user.upload(input, file)
+      await addAndSubmit(user, input, file)
       expect(input).toBeDisabled()
 
       await act(async () => {
@@ -438,8 +578,8 @@ describe('UploadPage photo capture/upload flow', () => {
       expect(input).not.toBeDisabled()
       expect(input.value).toBe('')
 
-      // Same file again must work.
-      await user.upload(input, file)
+      // Try again re-submits the same tray.
+      await user.click(screen.getByRole('button', { name: /try again/i }))
       await waitFor(() => {
         expect(screen.getByText(/item #7/i)).toBeInTheDocument()
       })
@@ -450,7 +590,7 @@ describe('UploadPage photo capture/upload flow', () => {
       const user = userEvent.setup()
       uploadFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
       renderUploadPage()
-      await user.upload(screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
+      await addAndSubmit(user, screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
       await waitFor(() => {
         expect(screen.getByRole('alert')).toHaveTextContent(/could not reach the server/i)
       })
@@ -465,7 +605,7 @@ describe('UploadPage photo capture/upload flow', () => {
       })
 
       renderUploadPage()
-      await user.upload(screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
+      await addAndSubmit(user, screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
       await waitFor(() => {
         expect(screen.getByText(/item #5/i)).toBeInTheDocument()
       })
@@ -494,9 +634,9 @@ describe('UploadPage photo capture/upload flow', () => {
     renderUploadPage()
     const input = screen.getByLabelText(/take or choose a photo|preparing/i)
     const file = makeFixtureImageFile()
-    await user.upload(input, file)
+    await addAndSubmit(user, input, file)
 
-    expect(screen.getByRole('status')).toHaveTextContent(/preparing photo/i)
+    expect(screen.getByRole('status')).toHaveTextContent(/preparing photos/i)
     expect(input).toBeDisabled()
     expect(uploadFetch).not.toHaveBeenCalled()
 
@@ -523,7 +663,7 @@ describe('UploadPage photo capture/upload flow', () => {
       })
 
       const { unmount } = renderUploadPage()
-      await user.upload(screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
+      await addAndSubmit(user, screen.getByLabelText(/take or choose a photo/i), makeFixtureImageFile())
       expect(signal.aborted).toBe(false)
 
       unmount()

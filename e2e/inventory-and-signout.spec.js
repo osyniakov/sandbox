@@ -77,11 +77,13 @@ test('an uploaded item appears in /inventory and a manual status transition upda
   await signInAs(page)
 
   // Same upload flow as sandbox-634.3/.4: select the fixture photo via
-  // UploadPage.jsx's `#photo-input`, which POSTs to /items and navigates
+  // UploadPage.jsx's `#photo-input` (adds it to the tray), then click
+  // the "Upload 1 photo" button, which POSTs to /items and navigates
   // to `/items/${data.id}` on success.
   const photoInput = page.locator('#photo-input')
   await expect(photoInput).toBeVisible()
   await photoInput.setInputFiles(FIXTURE_PHOTO_PATH)
+  await page.getByRole('button', { name: /upload \d+ photos?/i }).click()
   await expect(page).toHaveURL(/\/items\/[^/]+$/)
 
   // Extract the real item id from the URL -- needed below to
