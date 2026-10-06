@@ -1,4 +1,4 @@
-import { apiFetch } from './api.js'
+import { getPhotoBlob } from './photoBlobCache.js'
 
 const EXT_BY_TYPE = {
   'image/jpeg': 'jpg',
@@ -39,14 +39,10 @@ export function baseNameFor(item) {
 // `filename` may omit the extension: pass a function (contentType) => name
 // or a plain string used as-is.
 export async function fetchPhotoFile(url, filename) {
-  const response = await apiFetch(url)
-  if (!response.ok) {
-    throw new Error(`Could not load the photo (${response.status || 'error'}).`)
-  }
-  const blob = await response.blob()
-  const type = blob.type || response.headers?.get?.('Content-Type') || ''
+  const blob = await getPhotoBlob(url)
+  const type = blob.type || 'image/jpeg'
   const name = typeof filename === 'function' ? filename(type, url) : filename
-  return new File([blob], name, { type: type || 'image/jpeg' })
+  return new File([blob], name, { type })
 }
 
 export function photoFilename(base, n) {

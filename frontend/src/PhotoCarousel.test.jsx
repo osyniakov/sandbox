@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import userEvent from '@testing-library/user-event'
 import PhotoCarousel from './PhotoCarousel.jsx'
 import { API_BASE_URL } from './api.js'
+import { peekPhotoBlob } from './photoBlobCache.js'
 
 vi.mock('./imageResize.js', () => ({
   prepareUploadImage: vi.fn(async (file) => file),
@@ -306,6 +307,37 @@ describe('PhotoCarousel', () => {
       expect(navigator.share).toHaveBeenCalledTimes(1)
       expect(navigator.share.mock.calls[0][0].files.map((f) => f.name)).toEqual(['drill-1.jpg', 'drill-2.jpg'])
       expect(fetch.mock.calls.length).toBe(before)
+    })
+
+    it('makes one fetch per photo with display and Save prefetch both active', async () => {
+      mockFetch(() => Promise.reject(new Error('unexpected')))
+      navigator.canShare = () => true
+      navigator.share = vi.fn().mockResolvedValue()
+      render(<PhotoCarousel item={makeItem(3)} onItemChange={vi.fn()} />)
+      await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledTimes(3))
+      const uploads = fetch.mock.calls.filter((c) => c[0].includes('/uploads/')).map((c) => c[0])
+      expect(uploads).toHaveLength(3)
+      expect(new Set(uploads).size).toBe(3)
+    })
+
+    it('does not re-cache a photo removed while its Save fetch was in flight', async () => {
+      const releases = []
+      fetch.mockImplementation(
+        (url) =>
+          new Promise((resolve) => {
+            if (url.includes('/uploads/')) releases.push(() => resolve(photoResponse()))
+            else resolve({ ok: true, status: 200, json: async () => makeItem(1) })
+          }),
+      )
+      const user = userEvent.setup()
+      const onItemChange = vi.fn()
+      render(<PhotoCarousel item={makeItem(2)} onItemChange={onItemChange} />)
+      await user.click(screen.getByRole('button', { name: 'Remove photo 1' }))
+      await user.click(screen.getByRole('button', { name: 'Remove' }))
+      await waitFor(() => expect(onItemChange).toHaveBeenCalled())
+      releases.forEach((r) => r())
+      await new Promise((r) => setTimeout(r, 20))
+      expect(peekPhotoBlob('/uploads/p1.jpg')).toBeUndefined()
     })
 
     it('shows a tap-again status, without downloading, on NotAllowedError after awaiting', async () => {
