@@ -83,7 +83,7 @@ def db_session_factory(client: TestClient):
 
 def _upload(client: TestClient, auth_headers: dict[str, str]) -> dict[str, Any]:
     response = client.post(
-        "/items",
+        "/api/items",
         files={"photo": ("lamp.jpg", _make_jpeg_bytes(), "image/jpeg")},
         headers=auth_headers,
     )
@@ -181,7 +181,7 @@ def test_full_pipeline_reaches_decided_with_populated_fields(
     created = _upload(client, auth_headers)
     item_id = created["id"]
 
-    response = client.get(f"/items/{item_id}", headers=auth_headers)
+    response = client.get(f"/api/items/{item_id}", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
 
@@ -222,7 +222,7 @@ def test_full_pipeline_zero_comparables_still_reaches_decided(
     created = _upload(client, auth_headers)
     item_id = created["id"]
 
-    response = client.get(f"/items/{item_id}", headers=auth_headers)
+    response = client.get(f"/api/items/{item_id}", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
 
@@ -257,7 +257,7 @@ def test_identification_failure_sets_identification_failed_status(
     created = _upload(client, auth_headers)
     item_id = created["id"]
 
-    response = client.get(f"/items/{item_id}", headers=auth_headers)
+    response = client.get(f"/api/items/{item_id}", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
 
@@ -281,7 +281,7 @@ def test_search_failure_sets_search_failed_status_and_skips_decision(
     created = _upload(client, auth_headers)
     item_id = created["id"]
 
-    response = client.get(f"/items/{item_id}", headers=auth_headers)
+    response = client.get(f"/api/items/{item_id}", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
 
@@ -478,7 +478,7 @@ def test_listing_text_failure_does_not_halt_pipeline(
     created = _upload(client, auth_headers)
     item_id = created["id"]
 
-    response = client.get(f"/items/{item_id}", headers=auth_headers)
+    response = client.get(f"/api/items/{item_id}", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
 
@@ -523,7 +523,7 @@ def test_listing_text_raising_does_not_crash_pipeline(
     created = _upload(client, auth_headers)
     item_id = created["id"]
 
-    response = client.get(f"/items/{item_id}", headers=auth_headers)
+    response = client.get(f"/api/items/{item_id}", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
 
@@ -553,7 +553,7 @@ def test_listing_text_raising_does_not_crash_pipeline(
 def test_get_item_404_for_unknown_id(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    response = client.get("/items/999999", headers=auth_headers)
+    response = client.get("/api/items/999999", headers=auth_headers)
     assert response.status_code == 404
 
 
@@ -566,7 +566,7 @@ def test_get_item_returns_all_documented_fields(
     created = _upload(client, auth_headers)
     item_id = created["id"]
 
-    response = client.get(f"/items/{item_id}", headers=auth_headers)
+    response = client.get(f"/api/items/{item_id}", headers=auth_headers)
     assert response.status_code == 200
     body = response.json()
 

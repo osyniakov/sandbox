@@ -41,7 +41,7 @@ async def _raw_asgi_get(
     This matters because ``httpx`` (which ``fastapi.testclient.TestClient``
     is built on) normalizes ``..`` dot-segments out of a URL's path at
     *request-construction* time, per RFC 3986 -- so a test that just does
-    ``client.get("/uploads/../secret.txt")`` never actually sends a path
+    ``client.get("/api/uploads/../secret.txt")`` never actually sends a path
     containing ``..`` at all; by the time it leaves the client it has
     already been rewritten to ``/secret.txt``, and any 404 you observe
     proves nothing about this app's own containment logic (it 404s simply
@@ -152,7 +152,7 @@ def test_uploaded_photo_is_fetchable_at_its_photo_url(
     jpeg_bytes = _make_jpeg_bytes()
 
     upload_response = client.post(
-        "/items",
+        "/api/items",
         files={"photo": ("lamp.jpg", jpeg_bytes, "image/jpeg")},
         headers=auth_headers,
     )
@@ -160,14 +160,14 @@ def test_uploaded_photo_is_fetchable_at_its_photo_url(
     item_body = upload_response.json()
 
     get_item_response = client.get(
-        f"/items/{item_body['id']}", headers=auth_headers
+        f"/api/items/{item_body['id']}", headers=auth_headers
     )
     assert get_item_response.status_code == 200
     item = get_item_response.json()
 
     assert "photo_url" in item
-    assert item["photo_url"].startswith("/uploads/")
-    assert item["photo_url"] == f"/uploads/{Path(item['photo_path']).name}"
+    assert item["photo_url"].startswith("/api/uploads/")
+    assert item["photo_url"] == f"/api/uploads/{Path(item['photo_path']).name}"
 
     photo_response = client.get(item["photo_url"], headers=auth_headers)
     assert photo_response.status_code == 200
@@ -184,14 +184,14 @@ def test_uploaded_png_photo_served_with_image_png_content_type(
     png_bytes = buf.getvalue()
 
     upload_response = client.post(
-        "/items",
+        "/api/items",
         files={"photo": ("chair.png", png_bytes, "image/png")},
         headers=auth_headers,
     )
     assert upload_response.status_code == 201
     item_id = upload_response.json()["id"]
 
-    item = client.get(f"/items/{item_id}", headers=auth_headers).json()
+    item = client.get(f"/api/items/{item_id}", headers=auth_headers).json()
     photo_response = client.get(item["photo_url"], headers=auth_headers)
 
     assert photo_response.status_code == 200
@@ -207,7 +207,7 @@ def test_uploaded_png_photo_served_with_image_png_content_type(
 def test_missing_file_returns_404_not_error(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
-    response = client.get("/uploads/does-not-exist.jpg", headers=auth_headers)
+    response = client.get("/api/uploads/does-not-exist.jpg", headers=auth_headers)
     assert response.status_code == 404
 
 
@@ -218,7 +218,7 @@ def test_missing_authorization_header_returns_401_before_static_lookup(
     the auth middleware -- BEFORE the StaticFiles app underneath ever
     runs -- not fall through to a 404 as if it were merely a missing
     file (sandbox-dfr.3)."""
-    response = client.get("/uploads/does-not-exist.jpg")
+    response = client.get("/api/uploads/does-not-exist.jpg")
     assert response.status_code == 401
 
 
@@ -241,7 +241,7 @@ def test_uploads_mount_survives_upload_dir_not_yet_existing(
     assert not never_created_dir.exists()
 
     test_client = TestClient(app)  # no `with`: lifespan startup does not run
-    response = test_client.get("/uploads/anything.jpg", headers=auth_headers)
+    response = test_client.get("/api/uploads/anything.jpg", headers=auth_headers)
 
     assert response.status_code == 404
     assert not never_created_dir.exists()
@@ -271,7 +271,7 @@ def test_path_traversal_dotdot_does_not_escape_upload_dir_raw_asgi(
     secret_path.write_text("top secret, must never be served")
 
     status, body = asyncio.run(
-        _raw_asgi_get(app, "/uploads/../secret.txt", auth_headers)
+        _raw_asgi_get(app, "/api/uploads/../secret.txt", auth_headers)
     )
 
     assert status == 404
@@ -282,7 +282,7 @@ def test_path_traversal_deep_dotdot_toward_etc_passwd_does_not_escape_raw_asgi(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
     status, body = asyncio.run(
-        _raw_asgi_get(app, "/uploads/../../../../../../etc/passwd", auth_headers)
+        _raw_asgi_get(app, "/api/uploads/../../../../../../etc/passwd", auth_headers)
     )
 
     assert status == 404
@@ -301,7 +301,7 @@ def test_path_traversal_dotdot_does_not_escape_upload_dir(
     secret_path.write_text("top secret, must never be served")
 
     response = client.get(
-        "/uploads/../secret.txt", follow_redirects=False, headers=auth_headers
+        "/api/uploads/../secret.txt", follow_redirects=False, headers=auth_headers
     )
     assert response.status_code in (404, 403)
     assert b"top secret" not in response.content
@@ -315,7 +315,7 @@ def test_path_traversal_url_encoded_dotdot_does_not_escape(
 
     # %2e%2e%2f is a URL-encoded "../".
     response = client.get(
-        "/uploads/%2e%2e%2fsecret.txt", follow_redirects=False, headers=auth_headers
+        "/api/uploads/%2e%2e%2fsecret.txt", follow_redirects=False, headers=auth_headers
     )
     assert response.status_code in (404, 403)
     assert b"top secret" not in response.content
@@ -325,7 +325,7 @@ def test_path_traversal_encoded_dotdot_toward_etc_passwd_does_not_escape(
     client: TestClient, auth_headers: dict[str, str]
 ) -> None:
     response = client.get(
-        "/uploads/%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+        "/api/uploads/%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
         follow_redirects=False,
         headers=auth_headers,
     )

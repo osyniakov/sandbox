@@ -2,25 +2,25 @@
 
 Endpoints:
 
-* ``GET /health`` -- basic liveness check.
-* ``POST /items`` -- accept a multipart photo upload, store it on disk
+* ``GET /api/health`` -- basic liveness check.
+* ``POST /api/items`` -- accept a multipart photo upload, store it on disk
   under ``backend/uploads/``, create a new ``Item`` row with
   ``status=pending_identification``, and schedule the full
   identify -> search -> decide pipeline (``app/pipeline.py``) to run as a
   background task.
-* ``GET /items/{id}`` -- fetch a single ``Item`` (including its
+* ``GET /api/items/{id}`` -- fetch a single ``Item`` (including its
   comparable listings), showing whatever stage the pipeline has reached
   so far. See ``app/pipeline.py``'s module docstring for the full polling
   contract (which ``status`` values are terminal vs. still-processing).
-* ``GET /items`` -- list all items (same serialized shape as
-  ``GET /items/{id}``, each without needing a separate fetch),
+* ``GET /api/items`` -- list all items (same serialized shape as
+  ``GET /api/items/{id}``, each without needing a separate fetch),
   optionally filtered by ``status`` and/or ``decision`` query params.
-* ``PATCH /items/{id}/status`` -- manually advance an ``Item``'s status
+* ``PATCH /api/items/{id}/status`` -- manually advance an ``Item``'s status
   to ``listed`` / ``given_away`` / ``disposed`` once the user has acted
   on the app's recommendation (e.g. actually listed it on
   Kleinanzeigen). See ``MANUAL_STATUS_TRANSITIONS`` below for the full
   transition table and the reasoning behind it (sandbox-yqf.11).
-* ``DELETE /items/{id}`` -- permanently delete an ``Item``, its
+* ``DELETE /api/items/{id}`` -- permanently delete an ``Item``, its
   cascade-deleted ``comparable_listings`` rows, and its uploaded photo
   file on disk (sandbox-uii.1).
 
@@ -39,6 +39,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from fastapi import (
+    APIRouter,
     BackgroundTasks,
     Depends,
     FastAPI,
@@ -95,7 +96,7 @@ UPLOAD_DIR = _default_upload_dir()
 # that existing convention and stays correct across dev/LAN/deployed
 # hosts without this backend needing to know its own externally-visible
 # host/port.
-UPLOAD_URL_PREFIX = "/uploads"
+UPLOAD_URL_PREFIX = "/api/uploads"
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10MB
 _UPLOAD_READ_CHUNK_BYTES = 1024 * 1024  # stream to disk in 1MB chunks
@@ -166,6 +167,10 @@ def _parse_allowed_origins(raw: str | None) -> list[str]:
 ALLOWED_ORIGINS = _parse_allowed_origins(os.environ.get("ALLOWED_ORIGINS"))
 
 app = FastAPI(title="Basement Declutter API", lifespan=lifespan)
+
+# Every API route lives under /api (sandbox-3kd.1); included in ``app`` after
+# all routes are declared (bottom of this module).
+api = APIRouter(prefix="/api")
 
 # Allow the Vite dev server -- whether reached via localhost or, for
 # testing from a phone on the same LAN, the dev machine's LAN IP (e.g.
@@ -240,7 +245,7 @@ class _UploadsStaticFiles(StaticFiles):
 
 
 # Serves uploaded photos back over HTTP at ``UPLOAD_URL_PREFIX`` (e.g.
-# ``GET /uploads/<filename>``) so the frontend can render them (see
+# ``GET /api/uploads/<filename>``) so the frontend can render them (see
 # ``_serialize_item``'s ``photo_url`` field below). ``StaticFiles``
 # resolves each request path against its serving directory via
 # ``os.path.realpath`` and rejects any result that escapes that directory
@@ -250,7 +255,7 @@ class _UploadsStaticFiles(StaticFiles):
 app.mount(UPLOAD_URL_PREFIX, _UploadsStaticFiles(), name="uploads")
 
 
-@app.get("/health")
+@api.get("/health")
 def health() -> dict[str, str]:
     """Basic liveness check."""
     return {"status": "ok"}
@@ -273,7 +278,7 @@ class GoogleAuthRequest(BaseModel):
     id_token: str
 
 
-@app.post("/auth/google")
+@api.post("/auth/google")
 def auth_google(body: GoogleAuthRequest) -> dict[str, str]:
     """Exchange a Google ID token for one of this app's own session tokens.
 
@@ -336,10 +341,10 @@ def require_user(authorization: str | None = Header(None)) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Auth gate for the /uploads static-file mount (sandbox-dfr.3)
+# Auth gate for the /api/uploads static-file mount (sandbox-dfr.3)
 # ---------------------------------------------------------------------------
 #
-# ``GET /uploads/{filename}`` is served by ``_UploadsStaticFiles``, an ASGI
+# ``GET /api/uploads/{filename}`` is served by ``_UploadsStaticFiles``, an ASGI
 # sub-application wired in via ``app.mount(UPLOAD_URL_PREFIX, ...)`` above --
 # NOT a plain ``@app.get(...)`` route -- so a ``Depends(require_user)`` can't
 # be attached to it directly the way it can to the ``/items*`` routes below.
@@ -411,7 +416,7 @@ def _user_owns_upload(filename: str, user: str) -> bool:
 @app.middleware("http")
 async def _require_auth_for_uploads(request: Request, call_next):
     """Require a valid session (same check as ``require_user``) for any
-    request path under ``UPLOAD_URL_PREFIX`` (e.g. ``GET /uploads/x.jpg``).
+    request path under ``UPLOAD_URL_PREFIX`` (e.g. ``GET /api/uploads/x.jpg``; matched exactly as the prefix or prefix + ``/``, so ``/api/uploadsX`` is not gated).
 
     Returns a 401 JSON response (same ``{"detail": ...}`` shape
     ``require_user``'s ``HTTPException`` already produces) WITHOUT calling
@@ -420,25 +425,26 @@ async def _require_auth_for_uploads(request: Request, call_next):
     disk, for an unauthorized request. Every other path is passed through
     to ``call_next`` unchanged.
     """
-    if request.url.path.startswith(UPLOAD_URL_PREFIX):
+    path = request.url.path
+    if path == UPLOAD_URL_PREFIX or path.startswith(UPLOAD_URL_PREFIX + "/"):
         authorization = request.headers.get("authorization")
         try:
             user = _normalize_owner(require_user(authorization))
         except HTTPException as exc:
             return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-        filename = request.url.path[len(UPLOAD_URL_PREFIX) :].lstrip("/")
+        filename = path[len(UPLOAD_URL_PREFIX) :].lstrip("/")
         if not _user_owns_upload(filename, user):
             return JSONResponse(status_code=404, content={"detail": "Not Found"})
     return await call_next(request)
 
 
-@app.get("/auth/me")
+@api.get("/auth/me")
 def get_me(email: str = Depends(require_user)) -> dict[str, str]:
     """Return the authenticated caller's email, per its session token."""
     return {"email": email}
 
 
-@app.post("/auth/logout")
+@api.post("/auth/logout")
 def auth_logout(email: str = Depends(require_user)) -> dict[str, bool]:
     """Symmetric logout endpoint for the frontend to call.
 
@@ -465,7 +471,7 @@ def auth_logout(email: str = Depends(require_user)) -> dict[str, bool]:
 #
 # 2. Only the client-supplied ``Content-Type`` header was ever checked --
 #    never the actual bytes. This app now (as of sandbox-yqf.10/.19)
-#    mounts ``/uploads`` as a static file server and the frontend renders
+#    mounts ``/api/uploads`` as a static file server and the frontend renders
 #    ``<img src="{API_BASE_URL}{item.photo_url}">`` pointing straight at
 #    whatever was stored. An uploaded SVG can contain an embedded
 #    ``<script>``, so a stored malicious SVG is a *live* stored-XSS vector
@@ -707,7 +713,7 @@ async def _save_upload(request: Request, upload: UploadFile, file_count: int = 1
     return final_path
 
 
-@app.post("/items", status_code=201)
+@api.post("/items", status_code=201)
 async def create_item(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -793,7 +799,7 @@ def _serialize_comparable_listing(listing: ComparableListing) -> dict[str, objec
 
 
 def _photo_url(photo_path: str) -> str:
-    """Build the fetchable ``/uploads/...`` URL for a stored photo.
+    """Build the fetchable ``/api/uploads/...`` URL for a stored photo.
 
     Relative (no scheme/host) -- see ``UPLOAD_URL_PREFIX``'s docstring for
     why. Derived from just the filename (``Path(photo_path).name``), not
@@ -906,7 +912,7 @@ def _get_owned_item(session: Session, item_id: int, user: str) -> Item:
     return item
 
 
-@app.get("/items/{item_id}")
+@api.get("/items/{item_id}")
 def get_item(
     item_id: int,
     session: Session = Depends(get_session),
@@ -928,7 +934,7 @@ def get_item(
     return _serialize_item(item)
 
 
-@app.get("/items")
+@api.get("/items")
 def list_items(
     status: ItemStatus | None = None,
     decision: Decision | None = None,
@@ -1038,7 +1044,7 @@ MANUAL_STATUS_TRANSITIONS: dict[ItemStatus, frozenset[ItemStatus]] = {
 }
 
 
-@app.patch("/items/{item_id}/status")
+@api.patch("/items/{item_id}/status")
 def update_item_status(
     item_id: int,
     body: ItemStatusUpdateRequest,
@@ -1080,7 +1086,7 @@ def update_item_status(
     return _serialize_item(item)
 
 
-@app.delete("/items/{item_id}")
+@api.delete("/items/{item_id}")
 def delete_item(
     item_id: int,
     session: Session = Depends(get_session),
@@ -1117,7 +1123,7 @@ def delete_item(
     return {"id": item_id, "deleted": True}
 
 
-@app.post("/items/{item_id}/photos")
+@api.post("/items/{item_id}/photos")
 async def add_item_photos(
     item_id: int,
     request: Request,
@@ -1155,7 +1161,7 @@ async def add_item_photos(
     return _serialize_item(item)
 
 
-@app.delete("/items/{item_id}/photos/{photo_id}")
+@api.delete("/items/{item_id}/photos/{photo_id}")
 def delete_item_photo(
     item_id: int,
     photo_id: int,
@@ -1191,3 +1197,6 @@ def delete_item_photo(
             pass
     session.refresh(item)
     return _serialize_item(item)
+
+
+app.include_router(api)
