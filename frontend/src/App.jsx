@@ -21,7 +21,7 @@ import SignInPage from './SignInPage.jsx'
 //                    verbatim aside from navigating instead of showing
 //                    an inline "processing" message on success).
 //   `/items/:id`  -- the new results view (`ItemResultPage.jsx`), which
-//                    fetches + polls `GET /items/{id}` and is safe to
+//                    fetches + polls `GET /api/items/{id}` and is safe to
 //                    deep-link/refresh directly (e.g. from a future
 //                    inventory list, or a bookmarked/shared URL).
 //
@@ -46,7 +46,7 @@ import SignInPage from './SignInPage.jsx'
 // AppLayout (top bar, mobile tabs, account menu) via a layout route.
 // Auth gate (sandbox-dfr.4): wraps the routed app in `AuthProvider` and
 // decides what to render based on its state --
-//   - `isLoading` (the initial `GET /auth/me` validation of any stored
+//   - `isLoading` (the initial `GET /api/auth/me` validation of any stored
 //     token, see AuthContext.jsx): a minimal loading state, so an
 //     already-signed-in visitor doesn't see the sign-in page flash
 //     before immediately flipping to the app.

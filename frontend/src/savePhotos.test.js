@@ -14,8 +14,8 @@ describe('slugify / extensionFor', () => {
     expect(extensionFor('image/png')).toBe('png')
     expect(extensionFor('image/webp; x=1')).toBe('webp')
     expect(extensionFor('image/heic')).toBe('heic')
-    expect(extensionFor('', '/uploads/a.gif')).toBe('gif')
-    expect(extensionFor('application/octet-stream', '/uploads/noext')).toBe('jpg')
+    expect(extensionFor('', '/api/uploads/a.gif')).toBe('gif')
+    expect(extensionFor('application/octet-stream', '/api/uploads/noext')).toBe('jpg')
   })
 })
 

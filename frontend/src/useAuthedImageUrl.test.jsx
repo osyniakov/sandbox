@@ -45,7 +45,7 @@ describe('useAuthedImageUrl', () => {
       blob: async () => new Blob(['fake-image-bytes'], { type: 'image/jpeg' }),
     })
 
-    render(<ProbeComponent photoUrl="/uploads/a.jpg" />)
+    render(<ProbeComponent photoUrl="/api/uploads/a.jpg" />)
 
     // Starts in a loading/null state.
     expect(screen.getByTestId('object-url')).toHaveTextContent('')
@@ -58,14 +58,14 @@ describe('useAuthedImageUrl', () => {
 
     expect(fetch).toHaveBeenCalledTimes(1)
     const [url, options] = fetch.mock.calls[0]
-    expect(url).toBe(`${API_BASE_URL}/uploads/a.jpg`)
+    expect(url).toBe(`${API_BASE_URL}/api/uploads/a.jpg`)
     expect(options.headers.get('Authorization')).toBe('Bearer my-token')
   })
 
   it('reports status error (404) with a null url', async () => {
     fetch.mockResolvedValueOnce({ ok: false, status: 404, statusText: 'Not Found' })
 
-    render(<ProbeComponent photoUrl="/uploads/missing.jpg" />)
+    render(<ProbeComponent photoUrl="/api/uploads/missing.jpg" />)
 
     await waitFor(() => {
       expect(screen.getByTestId('status')).toHaveTextContent('error')
@@ -76,7 +76,7 @@ describe('useAuthedImageUrl', () => {
   it('reports status error when the fetch rejects (network error)', async () => {
     fetch.mockRejectedValueOnce(new TypeError('Failed to fetch'))
 
-    render(<ProbeComponent photoUrl="/uploads/a.jpg" />)
+    render(<ProbeComponent photoUrl="/api/uploads/a.jpg" />)
 
     await waitFor(() => {
       expect(screen.getByTestId('status')).toHaveTextContent('error')
@@ -91,7 +91,7 @@ describe('useAuthedImageUrl', () => {
     )
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
-    const { unmount } = render(<ProbeComponent photoUrl="/uploads/a.jpg" />)
+    const { unmount } = render(<ProbeComponent photoUrl="/api/uploads/a.jpg" />)
     await waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
     unmount()
     await act(async () => {
@@ -115,7 +115,7 @@ describe('useAuthedImageUrl', () => {
     const listener = vi.fn()
     window.addEventListener(SESSION_EXPIRED_EVENT, listener)
 
-    render(<ProbeComponent photoUrl="/uploads/a.jpg" />)
+    render(<ProbeComponent photoUrl="/api/uploads/a.jpg" />)
 
     await waitFor(() => {
       expect(listener).toHaveBeenCalledTimes(1)
@@ -139,7 +139,7 @@ describe('useAuthedImageUrl', () => {
     })
     const revokeSpy = vi.spyOn(URL, 'revokeObjectURL')
 
-    const { rerender } = render(<ProbeComponent photoUrl="/uploads/a.jpg" />)
+    const { rerender } = render(<ProbeComponent photoUrl="/api/uploads/a.jpg" />)
 
     let firstUrl
     await waitFor(() => {
@@ -147,7 +147,7 @@ describe('useAuthedImageUrl', () => {
       expect(firstUrl).toMatch(/^blob:/)
     })
 
-    rerender(<ProbeComponent photoUrl="/uploads/b.jpg" />)
+    rerender(<ProbeComponent photoUrl="/api/uploads/b.jpg" />)
 
     await waitFor(() => {
       expect(revokeSpy).toHaveBeenCalledWith(firstUrl)
@@ -164,7 +164,7 @@ describe('useAuthedImageUrl', () => {
     })
     const revokeSpy = vi.spyOn(URL, 'revokeObjectURL')
 
-    const { unmount } = render(<ProbeComponent photoUrl="/uploads/a.jpg" />)
+    const { unmount } = render(<ProbeComponent photoUrl="/api/uploads/a.jpg" />)
 
     let objectUrl
     await waitFor(() => {

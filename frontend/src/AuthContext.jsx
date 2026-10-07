@@ -4,18 +4,18 @@ import { API_BASE_URL, SESSION_EXPIRED_EVENT, SESSION_TOKEN_STORAGE_KEY } from '
 
 // Auth gate for the whole app (sandbox-dfr.4). This context is the single
 // source of truth for "is there a signed-in user right now", backed by
-// the session token this app issues itself (`POST /auth/google`, see
+// the session token this app issues itself (`POST /api/auth/google`, see
 // backend/app/main.py) and stores in `localStorage` under
 // `SESSION_TOKEN_STORAGE_KEY` (api.js).
 //
 // Shape: `{ email, isAuthenticated, isLoading, signOut, completeSignIn }`.
 //   - `isLoading` is true only during the initial mount check (validating
-//     any stored token against `GET /auth/me`); App.jsx uses this to show
+//     any stored token against `GET /api/auth/me`); App.jsx uses this to show
 //     a loading state instead of flashing the sign-in page before
 //     flipping to the authenticated app (or vice versa).
 //   - `completeSignIn(token, email)` is called by SignInPage.jsx once it
 //     has successfully exchanged a Google ID token for one of this app's
-//     session tokens via `POST /auth/google`.
+//     session tokens via `POST /api/auth/google`.
 //   - `signOut()` is exposed here for a later bead (sandbox-dfr.5) to
 //     wire up an actual sign-out control; this bead only needs it to
 //     work correctly when called.
@@ -34,7 +34,7 @@ export function AuthProvider({ children }) {
   const [isLoading, setIsLoading] = useState(true)
 
   // Initial mount check: if a token is already stored (e.g. from a
-  // previous visit), validate it against `GET /auth/me` before deciding
+  // previous visit), validate it against `GET /api/auth/me` before deciding
   // whether to show the app or the sign-in gate. If there's no stored
   // token at all, skip the network round-trip entirely -- there's
   // nothing to validate.
@@ -53,7 +53,7 @@ export function AuthProvider({ children }) {
       }
 
       try {
-        const response = await fetch(`${API_BASE_URL}/auth/me`, {
+        const response = await fetch(`${API_BASE_URL}/api/auth/me`, {
           headers: { Authorization: `Bearer ${token}` },
         })
 
@@ -120,13 +120,13 @@ export function AuthProvider({ children }) {
     const token = localStorage.getItem(SESSION_TOKEN_STORAGE_KEY)
     try {
       if (token) {
-        await fetch(`${API_BASE_URL}/auth/logout`, {
+        await fetch(`${API_BASE_URL}/api/auth/logout`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
         })
       }
     } catch {
-      // Best-effort: /auth/logout is a stateless no-op on the backend
+      // Best-effort: /api/auth/logout is a stateless no-op on the backend
       // (sandbox-dfr.2), so there's nothing to reconcile if this call
       // fails (network error, backend down, etc.) -- the important part
       // (clearing the local session below) still happens regardless.

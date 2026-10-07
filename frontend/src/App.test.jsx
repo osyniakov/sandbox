@@ -32,7 +32,7 @@ describe('App auth gate', () => {
     expect(screen.getByRole('heading', { name: /basement declutter/i })).toBeInTheDocument()
     expect(screen.getByText(/sign in with your google account/i)).toBeInTheDocument()
     expect(screen.queryByLabelText(/take or choose a photo/i)).not.toBeInTheDocument()
-    // No token stored -- /auth/me must not have been called.
+    // No token stored -- /api/auth/me must not have been called.
     expect(fetch).not.toHaveBeenCalled()
   })
 

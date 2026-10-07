@@ -31,7 +31,7 @@ export const DECISION_PILL_CLASSES = {
 }
 
 export async function patchItemStatus(id, status, signal) {
-  const response = await apiFetch(`/items/${id}/status`, {
+  const response = await apiFetch(`/api/items/${id}/status`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status }),
@@ -81,7 +81,7 @@ export async function addItemPhotos(id, files, signal) {
   for (const file of files) {
     form.append('photos', file)
   }
-  const response = await apiFetch(`/items/${id}/photos`, { method: 'POST', body: form, signal })
+  const response = await apiFetch(`/api/items/${id}/photos`, { method: 'POST', body: form, signal })
   if (!response.ok) {
     throw new Error(await failureMessage(response, 'Failed to add photos'))
   }
@@ -90,7 +90,7 @@ export async function addItemPhotos(id, files, signal) {
 
 // Removes one photo from an item; resolves to the serialized item.
 export async function removeItemPhoto(id, photoId, signal) {
-  const response = await apiFetch(`/items/${id}/photos/${photoId}`, { method: 'DELETE', signal })
+  const response = await apiFetch(`/api/items/${id}/photos/${photoId}`, { method: 'DELETE', signal })
   if (!response.ok) {
     throw new Error(await failureMessage(response, 'Failed to remove photo'))
   }

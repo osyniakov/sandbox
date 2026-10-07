@@ -40,7 +40,7 @@ function makeFixtureImageFile(name = 'fixture-photo.jpg') {
 // A stand-in for the real `/items/:id` route (`ItemResultPage`, tested
 // separately in ItemResultPage.test.jsx) so these tests can assert
 // UploadPage navigates to the right URL on success without also having
-// to mock ItemResultPage's own `GET /items/{id}` polling fetch.
+// to mock ItemResultPage's own `GET /api/items/{id}` polling fetch.
 function ItemIdProbe() {
   const { id } = useParams()
   return <p>Item #{id}</p>
@@ -52,7 +52,7 @@ function ItemIdProbe() {
 // unauthenticated/no-email WITHOUT calling `fetch` itself (see
 // AuthContext.jsx) -- this keeps every existing `fetch`-call-count
 // assertion below accurate (only UploadPage's own apiFetch call, never an
-// extra `/auth/me` call).
+// extra `/api/auth/me` call).
 function renderUploadPage() {
   return render(
     <AuthProvider>
@@ -66,7 +66,7 @@ function renderUploadPage() {
   )
 }
 
-// fetch is routed by URL/method: the "Recently added" strip's GET /items goes
+// fetch is routed by URL/method: the "Recently added" strip's GET /api/items goes
 // to `itemsFetch` (default: empty list), everything else (the upload POST) to
 // `uploadFetch`, so the upload tests' call-order/count assumptions are unchanged.
 let uploadFetch
@@ -75,7 +75,7 @@ function installFetch() {
   uploadFetch = vi.fn()
   itemsFetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => [] }))
   vi.stubGlobal('fetch', (url, options = {}) =>
-    url.endsWith('/items') && (options.method || 'GET') === 'GET'
+    url.endsWith('/api/items') && (options.method || 'GET') === 'GET'
       ? itemsFetch(url, options)
       : uploadFetch(url, options),
   )
@@ -132,7 +132,7 @@ describe('UploadPage photo capture/upload flow', () => {
 
     expect(uploadFetch).toHaveBeenCalledTimes(1)
     const [url, options] = uploadFetch.mock.calls[0]
-    expect(url).toContain('/items')
+    expect(url).toContain('/api/items')
     expect(options.method).toBe('POST')
     // The multipart field name must match what the backend expects
     // (repeated `photos`, per backend/app/main.py's `create_item`).

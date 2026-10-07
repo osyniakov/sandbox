@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { fetchPhotoBlob, getPhotoBlob, isCacheablePhotoUrl } from './photoBlobCache.js'
 
 // Authenticated photo-fetch hook (sandbox-dfr.5, CRITICAL fix flagged in
-// that bead's review). `GET /uploads/{filename}` (sandbox-dfr.3) now
+// that bead's review). `GET /api/uploads/{filename}` (sandbox-dfr.3) now
 // requires an `Authorization: Bearer <token>` header, but a plain
 // `<img src="...">` has no way to attach a custom header to the request the
 // browser makes for that `src` -- so pointing an `<img>` directly at a
@@ -15,7 +15,7 @@ import { fetchPhotoBlob, getPhotoBlob, isCacheablePhotoUrl } from './photoBlobCa
 // Authorization header + 401 handling as every other request in this app
 // applies here too) and renders them as a `blob:` object URL.
 //
-// Given a `photoUrl` (the relative `/uploads/<file>` path from the API --
+// Given a `photoUrl` (the relative `/api/uploads/<file>` path from the API --
 // e.g. `Item.photo_url`, see backend/app/models.py -- or `null`/`undefined`
 // if the item has no photo yet, same as before this hook existed), returns
 // `{ url, status }`: `status` is 'idle' (no photoUrl), 'loading' (fetch in
@@ -45,7 +45,7 @@ export function useAuthedImageUrl(photoUrl) {
 
     async function load() {
       try {
-        // /uploads photos share one blob (and one download) with the Save
+        // /api/uploads photos share one blob (and one download) with the Save
         // path. Unmount never aborts that shared fetch; its result is just
         // ignored here. Anything else is fetched uncached.
         const blob = await (isCacheablePhotoUrl(photoUrl)

@@ -1,7 +1,8 @@
-// Configurable via a Vite env var so the frontend can be pointed at a
-// different backend (e.g. a docker-compose service name, or a deployed
-// host) without code changes. See `.env.example`.
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+// Origin-only override (e.g. 'https://api.example.com'). Defaults to ''
+// so requests are same-origin relative URLs: the backend serves this app and
+// the API under '/api' (dev: the Vite proxy forwards '/api'). Request paths
+// passed to `apiFetch` already include the '/api' prefix; never add it here.
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
 
 // The Google OAuth 2.0 client ID this frontend was registered under with
 // Google Identity Services (GIS). Configurable via a Vite env var,
@@ -10,7 +11,7 @@ export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localho
 export const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID
 
 // The single localStorage key under which this app's session token (the
-// opaque string returned by `POST /auth/google`, NOT the raw Google ID
+// opaque string returned by `POST /api/auth/google`, NOT the raw Google ID
 // token) is stored. Exported so every piece of code that reads or writes
 // the session token (this file's `apiFetch`, `AuthContext.jsx`'s
 // `completeSignIn`/`signOut`/mount check, `SignInPage.jsx`) agrees on the

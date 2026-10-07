@@ -18,7 +18,7 @@ import PricePosition from './PricePosition.jsx'
 import { formatPrice } from './format.js'
 
 // `Item.status` values that mean "the pipeline is done with this item"
-// (see backend/app/pipeline.py's "Polling contract for GET /items/{id}"
+// (see backend/app/pipeline.py's "Polling contract for GET /api/items/{id}"
 // docstring, which this list mirrors exactly). `decided` is the pipeline's
 // own terminal status; `listed`/`given_away`/`disposed` are later,
 // post-decision statuses set by a future feature (sandbox-yqf.11), not by
@@ -313,7 +313,7 @@ export function buildKleinanzeigenSearchUrl(query) {
 }
 
 async function fetchItem(id, signal) {
-  const response = await apiFetch(`/items/${id}`, { signal })
+  const response = await apiFetch(`/api/items/${id}`, { signal })
   if (!response.ok) {
     // A 401 means the session expired while this page was open (e.g. in a
     // background tab) -- apiFetch (api.js) has already cleared the stale
@@ -335,7 +335,7 @@ async function fetchItem(id, signal) {
 }
 
 // The results page for a single item, rendered at `/items/:id`. Fetches
-// the item on mount and polls `GET /items/{id}` every `POLL_INTERVAL_MS`
+// the item on mount and polls `GET /api/items/{id}` every `POLL_INTERVAL_MS`
 // while its `status` is non-terminal (see TERMINAL_STATUSES above),
 // since the identify -> search -> decide pipeline runs as a background
 // task and populates fields progressively (see backend/app/pipeline.py).
