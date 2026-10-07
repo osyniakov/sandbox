@@ -1,3 +1,7 @@
+# TRANSITIONAL: superseded by the root /Dockerfile (single-container build).
+# Kept only so the existing Railway services keep building until the cutover
+# described in README.md; delete this file after the cutover.
+#
 # Production image for the FastAPI backend, used by platforms (e.g.
 # Railway) that build a service directly from a Dockerfile.
 #

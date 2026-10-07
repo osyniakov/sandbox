@@ -2,7 +2,8 @@
 // so requests are same-origin relative URLs: the backend serves this app and
 // the API under '/api' (dev: the Vite proxy forwards '/api'). Request paths
 // passed to `apiFetch` already include the '/api' prefix; never add it here.
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? ''
+// Trailing slashes are stripped so 'https://x.app/' can't yield '//api/...'.
+export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/+$/, '')
 
 // The Google OAuth 2.0 client ID this frontend was registered under with
 // Google Identity Services (GIS). Configurable via a Vite env var,

@@ -116,3 +116,17 @@ describe('apiFetch', () => {
     window.removeEventListener(SESSION_EXPIRED_EVENT, listener)
   })
 })
+
+describe('API_BASE_URL normalization', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  it('strips trailing slashes from VITE_API_BASE_URL', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://x.app//')
+    vi.resetModules()
+    const mod = await import('./api.js')
+    expect(mod.API_BASE_URL).toBe('https://x.app')
+  })
+})

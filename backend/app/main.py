@@ -1209,6 +1209,13 @@ def delete_item_photo(
 
 app.include_router(api)
 
+# Root-level liveness alias (transitional): the existing Railway healthcheck
+# path is /health. Same handler/response as /api/health; registered before the
+# SPA catch-all so it is never shadowed. Remove after the single-service cutover.
+app.add_api_route(
+    "/health", health, methods=["GET", "HEAD"], include_in_schema=False
+)
+
 # Serve the built frontend (if present) with an SPA fallback. Registered last
 # so the /api routes and the /api/uploads mount always take precedence.
 STATIC_DIR = os.environ.get(
