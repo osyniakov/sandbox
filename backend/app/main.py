@@ -62,6 +62,7 @@ from app.db import engine, get_session, init_db
 from app.models import ComparableListing, Decision, Item, ItemPhoto, ItemStatus
 from app.pipeline import run_pipeline_with_new_session
 from app.pricing import is_usable_comparable
+from app.spa import register_spa
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +167,14 @@ def _parse_allowed_origins(raw: str | None) -> list[str]:
 # used for UPLOAD_DIR/engine above.
 ALLOWED_ORIGINS = _parse_allowed_origins(os.environ.get("ALLOWED_ORIGINS"))
 
-app = FastAPI(title="Basement Declutter API", lifespan=lifespan)
+# Interactive docs live under /api so they cannot shadow SPA paths.
+app = FastAPI(
+    title="Basement Declutter API",
+    lifespan=lifespan,
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+)
 
 # Every API route lives under /api (sandbox-3kd.1); included in ``app`` after
 # all routes are declared (bottom of this module).
@@ -1200,3 +1208,10 @@ def delete_item_photo(
 
 
 app.include_router(api)
+
+# Serve the built frontend (if present) with an SPA fallback. Registered last
+# so the /api routes and the /api/uploads mount always take precedence.
+STATIC_DIR = os.environ.get(
+    "STATIC_DIR", str(Path(__file__).resolve().parent.parent / "static")
+)
+register_spa(app, STATIC_DIR)
