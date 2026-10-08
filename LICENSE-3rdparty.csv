@@ -7,6 +7,7 @@ certifi,2026.7.22,Mozilla Public License 2.0 (MPL 2.0),Kenneth Reitz
 cffi,2.1.1,MIT-0,"Armin Rigo, Maciej Fijalkowski"
 charset-normalizer,3.5.2,MIT,"""Ahmed R. TAHRI"" <tahri.ahmed@proton.me>"
 click,8.5.0,BSD-3-Clause,
+cookie,1.1.1,MIT,Roman Shtylman
 cryptography,50.0.2,Apache-2.0 OR BSD-3-Clause,The Python Cryptographic Authority and individual contributors <cryptography-dev@python.org>
 curl_cffi,0.16.3,MIT,lexiforest <infinitesheldon@gmail.com>
 distro,1.9.0,Apache Software License,Nir Cohen
@@ -37,7 +38,13 @@ pytest,8.3.3,MIT License,"Holger Krekel, Bruno Oliveira, Ronny Pfannschmidt, Flo
 python-dotenv,1.2.4,BSD-3-Clause,Saurabh Kumar <me+github@saurabh-kumar.com>
 python-multipart,0.0.32,Apache-2.0,Andrew Dunham <andrew@du.nham.ca>
 PyYAML,6.0.3,MIT License,Kirill Simonov
+react,19.2.8,MIT,
+react-dom,19.2.8,MIT,
+react-router,7.18.2,MIT,Remix Software
+react-router-dom,7.18.2,MIT,Remix Software
 requests,2.34.2,Apache Software License,Kenneth Reitz <me@kennethreitz.org>
+scheduler,0.27.0,MIT,
+set-cookie-parser,2.7.2,MIT,Nathan Friedly
 sniffio,1.3.1,Apache Software License; MIT License,"""Nathaniel J. Smith"" <njs@pobox.com>"
 SQLAlchemy,2.0.51,MIT,Mike Bayer
 starlette,0.38.6,BSD-3-Clause,Tom Christie <tom@tomchristie.com>

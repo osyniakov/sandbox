@@ -64,3 +64,66 @@ def test_check_fails_on_stale_csv_and_passes_when_fresh():
     assert ls.check_csv(rows, fresh, CONFIG) == []
     problems = ls.check_csv(rows, fresh + "extra,1,MIT,\n", CONFIG)
     assert len(problems) == 1 and "stale" in problems[0]
+
+
+NPM_JSON = {
+    "frontend@0.0.0": {"licenses": "UNLICENSED", "private": True},
+    "@scope/pkg@1.2.3": {"licenses": "MIT", "publisher": "Scoped Author"},
+    "dual@2.0.0": {"licenses": ["MIT", "GPL-3.0"], "publisher": "UNKNOWN"},
+    "Mystery@0.1.0": {"licenses": "UNKNOWN"},
+    "paren@3.0.0": {"licenses": "(MIT OR GPL-3.0)"},
+}
+
+
+def test_npm_rows_skip_private_root_and_keep_scoped_names():
+    rows = ls.rows_from_npm_licenses(NPM_JSON)
+    assert [r["Component"] for r in rows] == ["@scope/pkg", "dual", "Mystery", "paren"]
+    assert rows[0] == {
+        "Component": "@scope/pkg",
+        "Origin": "1.2.3",
+        "License": "MIT",
+        "Copyright": "Scoped Author",
+    }
+
+
+def test_npm_array_unknown_and_paren_licenses():
+    by_name = {r["Component"]: r for r in ls.rows_from_npm_licenses(NPM_JSON)}
+    assert by_name["dual"]["License"] == "MIT; GPL-3.0"
+    assert by_name["dual"]["Copyright"] == ""
+    assert by_name["Mystery"]["License"] == "UNKNOWN"
+    assert by_name["paren"]["License"] == "MIT OR GPL-3.0"
+    bad = ls.violations(list(by_name.values()), CONFIG)
+    assert {r["Component"] for r in bad} == {"dual", "Mystery"}
+
+
+def test_npm_missing_licenses_is_unknown():
+    rows = ls.rows_from_npm_licenses({"x@1.0.0": {}})
+    assert rows[0]["License"] == "UNKNOWN"
+
+
+def test_npm_reviewed_exception_must_store_license():
+    rows = ls.rows_from_npm_licenses({"x@1.0.0": {"licenses": "GPL-3.0"}})
+    ok = {**CONFIG, "reviewed": {"x": {"license": "GPL-3.0", "reason": "r"}}}
+    changed = {**CONFIG, "reviewed": {"x": {"license": "MIT-0", "reason": "r"}}}
+    assert ls.violations(rows, ok) == []
+    assert ls.violations(rows, changed) == rows
+
+
+def test_combined_sort_across_ecosystems_and_collision_kept():
+    py = ls.rows_from_pip_licenses(PIP_JSON)
+    npm = ls.rows_from_npm_licenses(
+        {"Beta@9.0.0": {"licenses": "MIT"}, "@scope/pkg@1.0.0": {"licenses": "MIT"}}
+    )
+    merged = ls.merge_rows(py, npm)
+    assert [r["Component"] for r in merged] == ["@scope/pkg", "Alpha", "Beta", "beta", "zeta"]
+    assert merged[2]["Origin"] == "9.0.0" and merged[3]["Origin"] == "3.1"
+    assert ls.collisions(py, npm) == ["beta"]
+
+
+def test_partial_check_accepts_subset_of_committed_csv():
+    npm = ls.rows_from_npm_licenses({"a@1.0.0": {"licenses": "MIT"}})
+    py = ls.rows_from_pip_licenses(PIP_JSON)
+    committed = ls.render_csv(ls.merge_rows(py, npm))
+    assert ls.check_csv(npm, committed, CONFIG, partial=True) == []
+    stale = ls.check_csv(npm, ls.render_csv(py), CONFIG, partial=True)
+    assert len(stale) == 1 and "stale" in stale[0]
