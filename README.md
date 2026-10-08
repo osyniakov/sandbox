@@ -210,6 +210,33 @@ must both be set to that *same* Client ID — they're just two
 differently-scoped env vars (backend runtime vs. frontend build-time),
 the same runtime-vs-build-time split as above.
 
+## License scan
+
+`LICENSE-3rdparty.csv` lists every third-party component (Python and npm
+production dependencies) with its license. `license-config.json` holds the
+allowed license list and reviewed exceptions.
+
+Regenerate after changing dependencies, in a venv with the pinned versions
+and `npm ci` done in `frontend/`:
+
+```bash
+pip install -r backend/requirements.txt -c backend/constraints.txt
+pip install -c backend/constraints.txt pip-licenses==5.5.5
+python scripts/license_scan.py generate
+```
+
+`generate --python` / `generate --npm` rewrite only one platform's rows.
+
+To accept a license that is not in the allowed list, review it and add the
+component to `"reviewed"` in `license-config.json` with the license string and
+a reason, e.g. `"somepkg": {"license": "LGPL-3.0", "reason": "dynamic use only"}`.
+
+CI fails on unknown or disallowed licenses (Python half in Backend CI, npm
+half in Frontend CI). It catches changed or added components in the CSV but
+not rows for removed ones: after removing a dependency, run a full
+`python scripts/license_scan.py generate` in the pinned venv with `npm ci`
+done.
+
 ## Database migrations
 
 Fresh tables are still created automatically by `create_all()` on app
