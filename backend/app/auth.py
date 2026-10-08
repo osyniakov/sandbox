@@ -29,6 +29,11 @@ in this codebase (e.g. ``app.db._default_db_path``):
   ``app.db_migrate`` / the owner_email migration.
 - ``SESSION_SECRET``: secret key used to sign/verify our own session
   tokens.
+
+Google ID tokens are additionally checked for an explicit issuer
+(``iss`` must be ``accounts.google.com`` or
+``https://accounts.google.com``) by this module itself, rather than
+relying solely on google-auth's internal check.
 """
 
 from __future__ import annotations
@@ -47,6 +52,10 @@ SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 # case so a token issued for a different purpose (were this secret ever
 # reused elsewhere) can't be replayed here.
 _SESSION_SALT = "app.auth.session"
+
+# The only issuers Google ID tokens may carry. Checked explicitly (exact
+# match) in addition to whatever ``verify_fn`` does internally.
+_GOOGLE_ISSUERS = frozenset({"accounts.google.com", "https://accounts.google.com"})
 
 
 class AuthError(Exception):
@@ -90,6 +99,8 @@ def verify_google_id_token(
     ``google.oauth2.id_token.verify_oauth2_token``), then additionally
     requires:
 
+    - the payload's ``iss`` claim to be exactly ``accounts.google.com``
+      or ``https://accounts.google.com`` (explicit issuer check).
     - ``GOOGLE_CLIENT_ID`` to be configured (non-empty) -- otherwise
       there is no audience to verify against, so this always raises.
     - the verified payload's ``email_verified`` claim to be exactly
@@ -124,6 +135,10 @@ def verify_google_id_token(
         payload = verify_fn(id_token_str, request, audience=client_id)
     except Exception as exc:  # noqa: BLE001 - deliberately broad, see docstring
         raise AuthError(f"Google ID token verification failed: {exc}") from exc
+
+    iss = payload.get("iss")
+    if not isinstance(iss, str) or iss not in _GOOGLE_ISSUERS:
+        raise AuthError("Google ID token has an unexpected issuer (iss claim)")
 
     if payload.get("email_verified") is not True:
         raise AuthError("Google ID token's email_verified claim is not True")

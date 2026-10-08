@@ -60,8 +60,10 @@ def test_parse_allowed_emails_comma_separated_drops_empty_entries() -> None:
 
 
 def _fake_verify_fn(payload: dict) -> callable:
+    full = {"iss": "https://accounts.google.com", **payload}
+
     def _verify(id_token_str, request, audience=None):
-        return payload
+        return full
 
     return _verify
 
@@ -127,6 +129,89 @@ def test_verify_google_id_token_verify_fn_raises_becomes_autherror(
 
     with pytest.raises(AuthError):
         verify_google_id_token("some-token", verify_fn=_boom)
+
+
+@pytest.mark.parametrize(
+    "iss",
+    ["https://evil.example.com", "accounts.google.com.evil.com", "", None, 5, ["https://accounts.google.com"], {}],
+)
+def test_verify_google_id_token_wrong_iss_raises(
+    monkeypatch: pytest.MonkeyPatch, iss: object
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
+
+    fake = _fake_verify_fn({"iss": iss, "email": "a@example.com", "email_verified": True})
+    with pytest.raises(AuthError):
+        verify_google_id_token("some-token", verify_fn=fake)
+
+
+def test_verify_google_id_token_missing_iss_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
+
+    def _verify(id_token_str, request, audience=None):
+        return {"email": "a@example.com", "email_verified": True}
+
+    with pytest.raises(AuthError):
+        verify_google_id_token("some-token", verify_fn=_verify)
+
+
+@pytest.mark.parametrize("iss", ["accounts.google.com", "https://accounts.google.com"])
+def test_verify_google_id_token_legitimate_iss_succeeds(
+    monkeypatch: pytest.MonkeyPatch, iss: str
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
+
+    fake = _fake_verify_fn({"iss": iss, "email": "A@example.com", "email_verified": True})
+    assert verify_google_id_token("some-token", verify_fn=fake) == "a@example.com"
+
+
+def test_verify_google_id_token_email_verified_missing_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
+
+    fake = _fake_verify_fn({"email": "a@example.com"})
+    with pytest.raises(AuthError):
+        verify_google_id_token("some-token", verify_fn=fake)
+
+
+def test_verify_google_id_token_email_verified_string_true_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
+
+    fake = _fake_verify_fn({"email": "a@example.com", "email_verified": "true"})
+    with pytest.raises(AuthError):
+        verify_google_id_token("some-token", verify_fn=fake)
+
+
+def test_verify_google_id_token_default_verify_fn_is_google_verify_oauth2_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import google.auth.transport.requests
+    import google.oauth2.id_token
+
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-123")
+    calls: list[tuple] = []
+
+    def _recorder(token, request, audience=None):
+        calls.append((token, request, audience))
+        return {
+            "iss": "accounts.google.com",
+            "email": "a@example.com",
+            "email_verified": True,
+        }
+
+    monkeypatch.setattr(google.oauth2.id_token, "verify_oauth2_token", _recorder)
+
+    assert verify_google_id_token("tok", verify_fn=None) == "a@example.com"
+    assert len(calls) == 1
+    token, request, audience = calls[0]
+    assert token == "tok"
+    assert isinstance(request, google.auth.transport.requests.Request)
+    assert audience == "client-123"
 
 
 # ---------------------------------------------------------------------------
