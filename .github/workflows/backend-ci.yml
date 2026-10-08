@@ -7,10 +7,16 @@ on:
     branches: [master]
     paths:
       - 'backend/**'
+      - 'scripts/license_scan.py'
+      - 'license-config.json'
+      - 'LICENSE-3rdparty.csv'
       - '.github/workflows/backend-ci.yml'
   pull_request:
     paths:
       - 'backend/**'
+      - 'scripts/license_scan.py'
+      - 'license-config.json'
+      - 'LICENSE-3rdparty.csv'
       - '.github/workflows/backend-ci.yml'
 
 jobs:
@@ -26,10 +32,26 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/constraints.txt
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt -c constraints.txt
 
       - name: Run tests
         run: pytest
+
+      # Python half of the license scan. The full (exact) check needs both
+      # ecosystems, but the npm half needs frontend/node_modules, so it runs in
+      # frontend-ci.yml (`npm run license`) instead of making this job depend
+      # on Node. These partial checks verify the rows they scan; a row for a
+      # removed component is not caught by CI (needs a full local `generate`).
+      # pip-licenses is a dev tool, not a runtime requirement; exact pin.
+      - name: Install license scan tool
+        working-directory: .
+        run: pip install -c backend/constraints.txt pip-licenses==5.5.5
+
+      - name: License scan (python)
+        working-directory: .
+        run: python scripts/license_scan.py check --python

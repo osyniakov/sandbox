@@ -7,10 +7,16 @@ on:
     branches: [master]
     paths:
       - 'frontend/**'
+      - 'scripts/license_scan.py'
+      - 'license-config.json'
+      - 'LICENSE-3rdparty.csv'
       - '.github/workflows/frontend-ci.yml'
   pull_request:
     paths:
       - 'frontend/**'
+      - 'scripts/license_scan.py'
+      - 'license-config.json'
+      - 'LICENSE-3rdparty.csv'
       - '.github/workflows/frontend-ci.yml'
 
 jobs:
@@ -39,3 +45,8 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      # npm half of the license scan (python half runs in backend-ci.yml).
+      # Runs `python3 ../scripts/license_scan.py check --npm` from frontend/.
+      - name: License scan (npm)
+        run: npm run license
