@@ -91,7 +91,7 @@ describe('SignInPage', () => {
     expect(localStorage.getItem(SESSION_TOKEN_STORAGE_KEY)).toBe('session-token-abc')
 
     const [url, options] = fetch.mock.calls[0]
-    expect(url).toBe(`${API_BASE_URL}/auth/google`)
+    expect(url).toBe(`${API_BASE_URL}/api/auth/google`)
     expect(options.method).toBe('POST')
     expect(JSON.parse(options.body)).toEqual({ id_token: 'fake-google-id-token' })
   })

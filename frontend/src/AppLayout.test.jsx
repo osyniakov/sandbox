@@ -114,7 +114,7 @@ describe('AppLayout', () => {
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
 
-  it('clicking "Sign out" clears the session (calls /auth/logout and removes the stored token)', async () => {
+  it('clicking "Sign out" clears the session (calls /api/auth/logout and removes the stored token)', async () => {
     const user = userEvent.setup()
     await renderLayout()
 
@@ -128,7 +128,7 @@ describe('AppLayout', () => {
     })
 
     const [logoutUrl, logoutOptions] = fetch.mock.calls[1]
-    expect(logoutUrl).toContain('/auth/logout')
+    expect(logoutUrl).toContain('/api/auth/logout')
     expect(logoutOptions.method).toBe('POST')
   })
 })

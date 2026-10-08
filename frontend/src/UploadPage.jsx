@@ -31,7 +31,7 @@ async function extractErrorMessage(response) {
 
 // "Recently added" strip: the 3 newest items. Purely optional -- renders
 // nothing while loading, on any failure, or with no items, and never blocks
-// uploading. GET /items returns every item ordered by id ascending.
+// uploading. GET /api/items returns every item ordered by id ascending.
 function RecentlyAdded() {
   const [items, setItems] = useState([])
 
@@ -39,7 +39,7 @@ function RecentlyAdded() {
     const controller = new AbortController()
     ;(async () => {
       try {
-        const response = await apiFetch('/items', { signal: controller.signal })
+        const response = await apiFetch('/api/items', { signal: controller.signal })
         if (!response.ok) return
         const data = await response.json()
         if (controller.signal.aborted || !Array.isArray(data)) return
@@ -213,7 +213,7 @@ function UploadPage() {
     timerRef.current = timer
 
     try {
-      const response = await apiFetch('/items', {
+      const response = await apiFetch('/api/items', {
         method: 'POST',
         body: formData,
         signal: controller.signal,

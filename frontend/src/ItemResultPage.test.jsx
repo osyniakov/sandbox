@@ -19,7 +19,7 @@ const MAX_POLL_MS = 2 * 60 * 1000
 const SELL_ITEM = {
   id: 1,
   photo_path: '/x/uploads/a.jpg',
-  photo_url: '/uploads/a.jpg',
+  photo_url: '/api/uploads/a.jpg',
   identified_name: 'Cordless Drill',
   category: 'Power Tools',
   brand: 'Bosch',
@@ -116,7 +116,7 @@ const THROW_AWAY_ITEM = {
 const PROCESSING_ITEM = {
   id: 4,
   photo_path: '/x/uploads/d.jpg',
-  photo_url: '/uploads/d.jpg',
+  photo_url: '/api/uploads/d.jpg',
   identified_name: null,
   category: null,
   brand: null,
@@ -182,15 +182,15 @@ async function advanceAndFlush(ms) {
   })
 }
 
-// Mocks `fetch` to route `GET /items/:id` (or any poll thereof) to
-// `itemResponse`/`item` and `GET /uploads/...` (the authenticated photo
+// Mocks `fetch` to route `GET /api/items/:id` (or any poll thereof) to
+// `itemResponse`/`item` and `GET /api/uploads/...` (the authenticated photo
 // fetch `useAuthedImageUrl` makes via apiFetch, sandbox-dfr.5) to a
 // separate, distinguishable response -- a single blanket
 // `fetch.mockResolvedValue` can't tell those two request kinds apart, and
 // the item-shaped response has no `.blob()` method the photo hook needs.
 function mockItemAndPhotoFetch(item, { photoOk = true } = {}) {
   fetch.mockImplementation((url) => {
-    if (typeof url === 'string' && url.includes('/uploads/')) {
+    if (typeof url === 'string' && url.includes('/api/uploads/')) {
       if (!photoOk) {
         return Promise.resolve({ ok: false, status: 404, statusText: 'Not Found' })
       }
@@ -205,16 +205,16 @@ function mockItemAndPhotoFetch(item, { photoOk = true } = {}) {
 }
 
 // Like mockItemAndPhotoFetch, but for the polling tests below: each
-// successive `GET /items/:id` call returns the next entry in
+// successive `GET /api/items/:id` call returns the next entry in
 // `itemSequence` (clamped to the last entry once exhausted), while `GET
-// /uploads/...` calls (the photo fetch every poll re-triggers whenever
+// /api/uploads/...` calls (the photo fetch every poll re-triggers whenever
 // `photo_url` changes, sandbox-dfr.5) are routed separately -- keeps the
 // two request kinds from consuming a single shared call queue out of
 // order, since ItemResultPage now fires both per poll.
 function mockPollingItemAndPhoto(itemSequence) {
   let itemCallIndex = 0
   fetch.mockImplementation((url) => {
-    if (typeof url === 'string' && url.includes('/uploads/')) {
+    if (typeof url === 'string' && url.includes('/api/uploads/')) {
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -227,11 +227,11 @@ function mockPollingItemAndPhoto(itemSequence) {
   })
 }
 
-// Counts only the `GET /items/:id` polling calls, excluding the separate
-// `GET /uploads/...` authenticated photo fetches (sandbox-dfr.5) that now
+// Counts only the `GET /api/items/:id` polling calls, excluding the separate
+// `GET /api/uploads/...` authenticated photo fetches (sandbox-dfr.5) that now
 // also flow through the same mocked `fetch`.
 function itemFetchCallCount() {
-  return fetch.mock.calls.filter(([url]) => typeof url === 'string' && !url.includes('/uploads/'))
+  return fetch.mock.calls.filter(([url]) => typeof url === 'string' && !url.includes('/api/uploads/'))
     .length
 }
 
@@ -766,7 +766,7 @@ describe('ItemResultPage', () => {
     })
 
     // The photo bytes are fetched via apiFetch against the relative
-    // photo_url (sandbox-dfr.5) -- GET /uploads/{filename} now requires an
+    // photo_url (sandbox-dfr.5) -- GET /api/uploads/{filename} now requires an
     // Authorization header a plain <img src> can't send.
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
@@ -788,7 +788,7 @@ describe('ItemResultPage', () => {
       resolvePhotoFetch = resolve
     })
     fetch.mockImplementation((url) => {
-      if (typeof url === 'string' && url.includes('/uploads/')) {
+      if (typeof url === 'string' && url.includes('/api/uploads/')) {
         return photoPromise
       }
       return Promise.resolve({ ok: true, status: 200, json: async () => SELL_ITEM })
@@ -984,7 +984,7 @@ describe('ItemResultPage status actions', () => {
 
   function mockWithPatch(item, patchResponse) {
     fetch.mockImplementation((url, options) => {
-      if (typeof url === 'string' && url.includes('/uploads/')) {
+      if (typeof url === 'string' && url.includes('/api/uploads/')) {
         return Promise.resolve({
           ok: true,
           status: 200,
@@ -1035,7 +1035,7 @@ describe('ItemResultPage status actions', () => {
       expect(screen.getByRole('button', { name })).toBeDisabled()
     }
     const patchCall = fetch.mock.calls.find(([, options]) => options?.method === 'PATCH')
-    expect(patchCall[0]).toBe(`${API_BASE_URL}/items/1/status`)
+    expect(patchCall[0]).toBe(`${API_BASE_URL}/api/items/1/status`)
     expect(JSON.parse(patchCall[1].body)).toEqual({ status: 'given_away' })
 
     await act(async () => {

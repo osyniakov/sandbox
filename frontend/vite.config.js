@@ -3,11 +3,17 @@ import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 import tailwindcss from '@tailwindcss/vite'
 
+// Dev only: forward same-origin /api calls to the backend.
+const DEV_API_PROXY = process.env.VITE_DEV_API_PROXY || 'http://localhost:8000'
+
 // https://vite.dev/config/
 export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    proxy: {
+      '/api': { target: DEV_API_PROXY, changeOrigin: true },
+    },
   },
   test: {
     environment: 'jsdom',
@@ -25,6 +31,10 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
+      workbox: {
+        // Never serve index.html for API or photo requests.
+        navigateFallbackDenylist: [/^\/api\//],
+      },
       manifest: {
         name: 'Basement Declutter',
         short_name: 'Declutter',

@@ -52,11 +52,11 @@ describe('AuthContext', () => {
 
     expect(screen.getByTestId('authenticated')).toHaveTextContent('false')
     expect(screen.getByTestId('email')).toHaveTextContent('')
-    // No token to validate -- /auth/me must not have been called.
+    // No token to validate -- /api/auth/me must not have been called.
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('with a stored token that /auth/me confirms is valid, becomes authenticated with the right email', async () => {
+  it('with a stored token that /api/auth/me confirms is valid, becomes authenticated with the right email', async () => {
     localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'valid-token')
     fetch.mockResolvedValueOnce({
       ok: true,
@@ -74,11 +74,11 @@ describe('AuthContext', () => {
     expect(screen.getByTestId('email')).toHaveTextContent('existing@example.com')
 
     const [url, options] = fetch.mock.calls[0]
-    expect(url).toContain('/auth/me')
+    expect(url).toContain('/api/auth/me')
     expect(options.headers.Authorization).toBe('Bearer valid-token')
   })
 
-  it('with a stored token that /auth/me rejects with 401, stays unauthenticated and clears the token', async () => {
+  it('with a stored token that /api/auth/me rejects with 401, stays unauthenticated and clears the token', async () => {
     localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'stale-token')
     fetch.mockResolvedValueOnce({
       ok: false,
@@ -112,7 +112,7 @@ describe('AuthContext', () => {
     expect(localStorage.getItem(SESSION_TOKEN_STORAGE_KEY)).toBe('new-token')
   })
 
-  it('signOut calls /auth/logout best-effort, clears the token, and reverts to unauthenticated', async () => {
+  it('signOut calls /api/auth/logout best-effort, clears the token, and reverts to unauthenticated', async () => {
     localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'valid-token')
     fetch
       .mockResolvedValueOnce({
@@ -139,11 +139,11 @@ describe('AuthContext', () => {
     expect(localStorage.getItem(SESSION_TOKEN_STORAGE_KEY)).toBeNull()
 
     const [logoutUrl, logoutOptions] = fetch.mock.calls[1]
-    expect(logoutUrl).toContain('/auth/logout')
+    expect(logoutUrl).toContain('/api/auth/logout')
     expect(logoutOptions.method).toBe('POST')
   })
 
-  it('signOut still clears local state even if the /auth/logout call fails', async () => {
+  it('signOut still clears local state even if the /api/auth/logout call fails', async () => {
     localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'valid-token')
     fetch
       .mockResolvedValueOnce({
@@ -198,8 +198,8 @@ describe('AuthContext', () => {
   async function seedPhotoAndAuth(logoutResult) {
     localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'valid-token')
     fetch.mockResolvedValueOnce({ ok: true, status: 200, blob: async () => new Blob(['x'], { type: 'image/png' }) })
-    await getPhotoBlob('/uploads/a.png')
-    expect(peekPhotoBlob('/uploads/a.png')).toBeDefined()
+    await getPhotoBlob('/api/uploads/a.png')
+    expect(peekPhotoBlob('/api/uploads/a.png')).toBeDefined()
     fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ email: 'e@example.com' }) })
     if (logoutResult) fetch.mockImplementationOnce(logoutResult)
     renderAuthProbe()
@@ -212,14 +212,14 @@ describe('AuthContext', () => {
     await seedPhotoAndAuth(() => Promise.resolve({ ok: true, status: 200 }))
     await userEvent.setup().click(screen.getByRole('button', { name: 'sign out' }))
     await waitFor(() => expect(screen.getByTestId('authenticated')).toHaveTextContent('false'))
-    expect(peekPhotoBlob('/uploads/a.png')).toBeUndefined()
+    expect(peekPhotoBlob('/api/uploads/a.png')).toBeUndefined()
   })
 
-  it('signOut empties the photo blob cache even if /auth/logout fails', async () => {
+  it('signOut empties the photo blob cache even if /api/auth/logout fails', async () => {
     await seedPhotoAndAuth(() => Promise.reject(new TypeError('Failed to fetch')))
     await userEvent.setup().click(screen.getByRole('button', { name: 'sign out' }))
     await waitFor(() => expect(screen.getByTestId('authenticated')).toHaveTextContent('false'))
-    expect(peekPhotoBlob('/uploads/a.png')).toBeUndefined()
+    expect(peekPhotoBlob('/api/uploads/a.png')).toBeUndefined()
   })
 
   it('a session-expired event empties the photo blob cache', async () => {
@@ -227,16 +227,16 @@ describe('AuthContext', () => {
     act(() => {
       window.dispatchEvent(new CustomEvent(SESSION_EXPIRED_EVENT))
     })
-    expect(peekPhotoBlob('/uploads/a.png')).toBeUndefined()
+    expect(peekPhotoBlob('/api/uploads/a.png')).toBeUndefined()
   })
 
-  it('a rejected /auth/me on mount empties the photo blob cache', async () => {
+  it('a rejected /api/auth/me on mount empties the photo blob cache', async () => {
     fetch.mockResolvedValueOnce({ ok: true, status: 200, blob: async () => new Blob(['x'], { type: 'image/png' }) })
-    await getPhotoBlob('/uploads/a.png')
+    await getPhotoBlob('/api/uploads/a.png')
     localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'stale')
     fetch.mockResolvedValueOnce({ ok: false, status: 401 })
     renderAuthProbe()
     await waitFor(() => expect(screen.getByTestId('loading')).toHaveTextContent('false'))
-    expect(peekPhotoBlob('/uploads/a.png')).toBeUndefined()
+    expect(peekPhotoBlob('/api/uploads/a.png')).toBeUndefined()
   })
 })

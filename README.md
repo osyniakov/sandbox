@@ -41,7 +41,7 @@ Other environment variables, all optional with sensible defaults:
 | `ANTHROPIC_API_KEY` | backend | — (required for real identification) | Claude vision API key |
 | `ANTHROPIC_VISION_MODEL` | backend | `claude-sonnet-5` | override the vision model |
 | `ALLOWED_ORIGINS` | backend | `http://localhost:5173,http://127.0.0.1:5173` | comma-separated CORS allowlist |
-| `VITE_API_BASE_URL` | frontend | `http://localhost:8000` | where the frontend calls the backend |
+| `VITE_API_BASE_URL` | frontend (build) | unset (same-origin `/api`) | optional origin-only override for where the frontend calls the backend; normally unset in the single-container deploy. Transitional two-service Railway deploys set it to the backend URL |
 | `GOOGLE_CLIENT_ID` | backend | — (required for sign-in) | OAuth 2.0 client ID that Google ID tokens must be issued for; see [Access control](#access-control) |
 | `VITE_GOOGLE_CLIENT_ID` | frontend | — (required for sign-in) | same Google OAuth client ID, exposed to the frontend build so it can render the Sign-In button; see [Access control](#access-control) |
 | `ALLOWED_EMAILS` | backend | — (optional) | no longer restricts sign-in; its first entry owns pre-multi-tenancy items (see [Access control](#access-control)) |
@@ -88,7 +88,7 @@ docker compose up
 This builds and starts:
 
 - `backend` — served at `http://localhost:8000` (health check at
-  `http://localhost:8000/health`).
+  `http://localhost:8000/api/health`).
 - `frontend` — Vite dev server at `http://localhost:5173`.
 
 Stop with `Ctrl+C`, or `docker compose down` to remove the containers.
@@ -116,27 +116,56 @@ without an image rebuild.
 
 ## Deployment
 
-`backend/Dockerfile.railway` and `frontend/Dockerfile.railway` are
-production-oriented Dockerfiles kept separate from the dev-oriented
-`backend/Dockerfile` / `frontend/Dockerfile` used above by Docker Compose
-(which have no production build step and use a JSON-array `CMD` that
-doesn't support runtime `$PORT` substitution). They exist specifically
-for platforms like Railway that build a service directly from a
-Dockerfile — point the service's `dockerfilePath` explicitly at the
-`.railway` file (auto-detection picks up the dev Dockerfile instead).
+Production is a **single container**: the root `Dockerfile` (build context =
+repo root) builds the frontend with Node, then produces a Python image whose
+FastAPI backend serves both the `/api` routes and the built frontend (SPA
+fallback, from `/app/static`). The frontend calls same-origin `/api` paths, so
+there is no CORS setup and no `VITE_API_BASE_URL`. Run
+`python -m app.db_migrate` and then uvicorn on `$PORT` (default 8000) via the
+image's shell-form `CMD`. Liveness check: `GET /api/health`.
 
-For the frontend image, `VITE_API_BASE_URL` and `VITE_GOOGLE_CLIENT_ID`
-must both be passed as Docker **build args** (`--build-arg
-VITE_API_BASE_URL=<url> --build-arg VITE_GOOGLE_CLIENT_ID=<id>`, or the
-platform's equivalent build-arg setting), not just a runtime/service env
-var — Vite inlines `VITE_*` variables into the compiled JS bundle at build time, so
-setting it only as a runtime env var has no effect on the built image.
+`VITE_GOOGLE_CLIENT_ID` must be passed as a Docker **build arg** (on Railway:
+set it as a service variable; Railway forwards variables declared as `ARG`),
+because Vite inlines `VITE_*` variables into the JS bundle at build time.
+
+The dev-oriented `backend/Dockerfile` / `frontend/Dockerfile` are used only by
+Docker Compose. `backend/Dockerfile.railway` and `frontend/Dockerfile.railway`
+are **transitional** (the pre-cutover two-service setup) and are deleted after
+the cutover below, together with the root `/health` alias in
+`backend/app/main.py`.
+
+### Railway cutover (manual, one-time)
+
+Merging changes nothing on Railway: the old backend service keeps building
+`backend/Dockerfile.railway` (API only; `/health` still answers via the alias),
+and the old frontend service keeps calling `<backend>/api/...` with CORS. To
+move to the single service, do these in order:
+
+1. Backend service → Variables: add `VITE_GOOGLE_CLIENT_ID` (same Client ID as
+   `GOOGLE_CLIENT_ID`); it is needed as a build arg. Keep `DATA_DIR=/data` and
+   the volume mounted at `/data`.
+2. Backend service → Settings → **Root Directory**: set to empty (repo root).
+3. Backend service → Settings → **Dockerfile Path**: set to `Dockerfile`.
+   Change Root Directory and Dockerfile Path together, before any redeploy:
+   changing only one makes the build fail (the live deploy keeps running).
+4. Backend service → Settings → **Healthcheck Path**: set to `/api/health`
+   (leaving it at `/health` also works while the alias exists).
+5. Redeploy the backend service and check `/api/health` and `/`.
+6. Networking: add the public domain (move the frontend's custom domain, or
+   generate a Railway domain) on the backend service.
+7. Google Cloud Console → Credentials → your OAuth client → **Authorized
+   JavaScript origins**: add that origin.
+8. GitHub → Settings → Secrets and variables → Actions: update the
+   `E2E_FRONTEND_URL` secret to that origin.
+9. Delete the old frontend service.
+10. `ALLOWED_ORIGINS` can then be removed from the backend service (same-origin
+    needs no CORS allowlist).
 
 The backend keeps its SQLite database (`declutter.db`) and uploaded photos
 under `DATA_DIR`. On Railway, `DATA_DIR=/data` and a persistent volume
 (`backend-data`) is mounted at `/data` on the backend service. Without that
-volume, every deploy starts with an empty database. The two deployed
-Railway services (backend, frontend) deploy from `master`, so every push
+volume, every deploy starts with an empty database. The deployed
+Railway service(s) deploy from `master`, so every push
 to `master` redeploys them. The e2e suite is no longer auto-deployed on
 Railway; it is run manually from GitHub Actions (see "End-to-end tests").
 
@@ -167,7 +196,7 @@ project):
    Credentials → OAuth client ID**, and choose application type **Web
    application**.
 4. Under **Authorized JavaScript origins**, add both the deployed
-   frontend URL and `http://localhost:5173` (for local dev). No
+   app URL (the single service's public origin) and `http://localhost:5173` (for local dev). No
    **Authorized redirect URI** is needed — this app uses Google
    Identity Services' token sign-in flow (a JS-rendered button that
    returns an ID token directly), not a redirect-based OAuth flow.
@@ -179,7 +208,7 @@ project):
 `GOOGLE_CLIENT_ID` (backend) and `VITE_GOOGLE_CLIENT_ID` (frontend)
 must both be set to that *same* Client ID — they're just two
 differently-scoped env vars (backend runtime vs. frontend build-time),
-the same pattern already used for `VITE_API_BASE_URL` above.
+the same runtime-vs-build-time split as above.
 
 ## Database migrations
 
@@ -225,7 +254,7 @@ There is no automatic run on merge, so trigger it after a deploy finishes.
 The workflow needs these repository secrets (Settings → Secrets and
 variables → Actions):
 
-- `E2E_FRONTEND_URL` — base URL of the deployed frontend to test.
+- `E2E_FRONTEND_URL` — base URL of the deployed app to test (the single service's public origin).
 - `E2E_SESSION_SECRET` — the deployed backend's real `SESSION_SECRET`,
   used to mint the test session token.
 - `E2E_TEST_EMAIL` — the test identity's email; it needs no whitelisting
@@ -251,7 +280,7 @@ uvicorn app.main:app --reload --port 8000
 Verify:
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8000/api/health
 # {"status":"ok"}
 ```
 
@@ -274,7 +303,7 @@ npm run dev
 This starts the Vite dev server (default `http://localhost:5173`). Use
 `npm run build` to produce a production build in `frontend/dist`
 (includes the generated PWA manifest and service worker). See
-`frontend/README.md` for the `VITE_API_BASE_URL` setup and a full
+`frontend/README.md` for the dev proxy setup and a full
 walkthrough of testing from your phone (the point of this app is
 camera capture, so a desktop-only test misses the main use case).
 
@@ -304,14 +333,14 @@ camera capture, so a desktop-only test misses the main use case).
   an optional `hint` form field (string, trimmed, max 500 chars after
   trimming — whitespace-only or empty is treated as absent, longer
   values get a 400) with extra context for the vision model.
-- `GET /items/{id}` — full item detail (identification, decision,
+- `GET /api/items/{id}` — full item detail (identification, decision,
   comparable listings, status, hint, `suggested_title` /
   `suggested_description`).
-- `GET /items?status=&decision=` — list items, optionally filtered.
-- `PATCH /items/{id}/status` — manually transition status (e.g.
+- `GET /api/items?status=&decision=` — list items, optionally filtered.
+- `PATCH /api/items/{id}/status` — manually transition status (e.g.
   `{"status": "listed"}`); rejects invalid transitions with a 400
   explaining what's actually valid from the item's current state.
-- `GET /uploads/{filename}` — serves the stored photo.
+- `GET /api/uploads/{filename}` — serves the stored photo.
 
 ### How the pipeline behaves without a working step
 

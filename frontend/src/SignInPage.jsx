@@ -10,7 +10,7 @@ import { AlertCircle, Box } from './icons.jsx'
 const GOOGLE_SCRIPT_POLL_INTERVAL_MS = 100
 const GOOGLE_SCRIPT_POLL_TIMEOUT_MS = 8000
 
-// Extracts a human-readable message from a failed `POST /auth/google`
+// Extracts a human-readable message from a failed `POST /api/auth/google`
 // response. Mirrors UploadPage.jsx's `extractErrorMessage` helper: the
 // backend returns FastAPI-style `{"detail": "..."}` bodies for its 4xx
 // errors (e.g. 401 for an invalid token or unverified email -- see
@@ -49,7 +49,7 @@ function SignInPage() {
     async function handleCredentialResponse(response) {
       setErrorMessage('')
       try {
-        const result = await fetch(`${API_BASE_URL}/auth/google`, {
+        const result = await fetch(`${API_BASE_URL}/api/auth/google`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id_token: response.credential }),

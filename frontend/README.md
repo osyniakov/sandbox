@@ -4,18 +4,20 @@ See the repo-root `README.md` for how to run this alongside the backend.
 
 ## Backend API URL
 
-The photo capture/upload page (`src/App.jsx`) calls the backend's
-`POST /items` endpoint. The base URL is read from the `VITE_API_BASE_URL`
-Vite env var, defaulting to `http://localhost:8000` if unset. Copy
-`.env.example` to `.env` (or `.env.local`) and edit it if your backend
-isn't running at the default local address:
+The app calls the backend with same-origin `/api/...` paths. In production the
+backend serves the built app itself (see the root `Dockerfile`), so no API URL
+is configured. In dev, `npm run dev` proxies `/api` to
+`http://localhost:8000`; override the target with `VITE_DEV_API_PROXY`
+(docker-compose sets it to `http://backend:8000`). `VITE_API_BASE_URL` is an
+optional origin-only override (no `/api` suffix), normally left unset; the
+transitional two-service Railway frontend still sets it to the backend URL.
+Copy `.env.example` to `.env` (or `.env.local`) to edit these:
 
 ```sh
 cp .env.example .env
 ```
 
-Sign-in is open to any Google account with a verified email; each account sees only its own items. Sign-in also needs `VITE_GOOGLE_CLIENT_ID` set (build-time, same as
-`VITE_API_BASE_URL` above) — see "Access control" in the repo-root
+Sign-in is open to any Google account with a verified email; each account sees only its own items. Sign-in also needs `VITE_GOOGLE_CLIENT_ID` set (build-time) — see "Access control" in the repo-root
 `README.md` for the full Google OAuth Client ID setup.
 
 ## Test from your phone
@@ -44,47 +46,29 @@ end:
    This prints something like `192.168.1.50`. That's the placeholder
    used in the example below — substitute your own.
 
-2. **Point the frontend at the backend via that IP** (not
-   `localhost`, since `localhost` on the phone means the phone itself).
-   Set `VITE_API_BASE_URL` in `frontend/.env` (or `.env.local`):
+2. **Nothing to point at the backend** — `npm run dev` proxies `/api`
+   to the backend, and the phone only talks to the Vite server. Just make
+   sure the backend is running on the dev machine at port 8000 (or set
+   `VITE_DEV_API_PROXY`).
 
-   ```sh
-   # frontend/.env
-   VITE_API_BASE_URL=http://192.168.1.50:8000
-   ```
-
-3. **Allow that origin through the backend's CORS allowlist.** Set
-   `ALLOWED_ORIGINS` (comma-separated if you need more than one) when
-   starting the backend:
-
-   ```sh
-   # from backend/
-   ALLOWED_ORIGINS=http://192.168.1.50:5173 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-   ```
-
-   If unset, `ALLOWED_ORIGINS` defaults to
-   `http://localhost:5173,http://127.0.0.1:5173` (today's dev-only
-   default), which is why the app works out of the box on a single
-   machine but not from a phone until you set this.
+3. **CORS is not involved** (requests are same-origin through the proxy).
 
 4. **Start the frontend** as usual (`npm run dev`) and, on your phone
-   (same Wi-Fi network), browse to `http://192.168.1.50:5173`.
+   (same Wi-Fi network), browse to `http://<your-LAN-IP>:5173` (e.g. `http://192.168.1.50:5173`).
 
-Full worked example, run from the repo root in two terminals, after
-finding your LAN IP is `192.168.1.50`:
+Full worked example, run from the repo root in two terminals:
 
 ```sh
 # terminal 1 — backend
 cd backend
-ALLOWED_ORIGINS=http://192.168.1.50:5173 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 # terminal 2 — frontend
 cd frontend
-echo "VITE_API_BASE_URL=http://192.168.1.50:8000" > .env.local
 npm run dev
 ```
 
-Then, on your phone, open `http://192.168.1.50:5173` in a browser and
+Then, on your phone, open `http://<your-LAN-IP>:5173` (e.g. `http://192.168.1.50:5173`) in a browser and
 try the photo capture flow.
 
 ## Tests

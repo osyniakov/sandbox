@@ -76,7 +76,7 @@ def test_auth_google_success_returns_token_and_email(
         main_module, "verify_google_id_token", _fake_verify_success("alice@example.com")
     )
 
-    response = client.post("/auth/google", json={"id_token": "fake-valid-token"})
+    response = client.post("/api/auth/google", json={"id_token": "fake-valid-token"})
 
     assert response.status_code == 200
     body = response.json()
@@ -86,7 +86,7 @@ def test_auth_google_success_returns_token_and_email(
     # The returned token is a real, usable session token: it authenticates
     # a subsequent GET /auth/me call for the same email.
     me_response = client.get(
-        "/auth/me", headers={"Authorization": f"Bearer {body['token']}"}
+        "/api/auth/me", headers={"Authorization": f"Bearer {body['token']}"}
     )
     assert me_response.status_code == 200
     assert me_response.json() == {"email": "alice@example.com"}
@@ -99,7 +99,7 @@ def test_auth_google_failed_verification_returns_401(
         main_module, "verify_google_id_token", _fake_verify_failure("email not verified")
     )
 
-    response = client.post("/auth/google", json={"id_token": "fake-bad-token"})
+    response = client.post("/api/auth/google", json={"id_token": "fake-bad-token"})
 
     assert response.status_code == 401
 
@@ -110,7 +110,7 @@ def test_auth_me_lowercases_legacy_mixed_case_session_token(
     monkeypatch.setenv("SESSION_SECRET", "test-session-secret")
     token = issue_session_token("Mixed.Case@Example.com")
 
-    response = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+    response = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 200
     assert response.json() == {"email": "mixed.case@example.com"}
@@ -122,18 +122,18 @@ def test_auth_me_lowercases_legacy_mixed_case_session_token(
 
 
 def test_auth_me_no_authorization_header_returns_401(client: TestClient) -> None:
-    response = client.get("/auth/me")
+    response = client.get("/api/auth/me")
     assert response.status_code == 401
 
 
 def test_auth_me_malformed_header_returns_401(client: TestClient) -> None:
-    response = client.get("/auth/me", headers={"Authorization": "NotBearer sometoken"})
+    response = client.get("/api/auth/me", headers={"Authorization": "NotBearer sometoken"})
     assert response.status_code == 401
 
 
 def test_auth_me_garbage_token_returns_401(client: TestClient) -> None:
     response = client.get(
-        "/auth/me", headers={"Authorization": "Bearer this-is-not-a-real-token"}
+        "/api/auth/me", headers={"Authorization": "Bearer this-is-not-a-real-token"}
     )
     assert response.status_code == 401
 
@@ -145,13 +145,13 @@ def test_auth_me_garbage_token_returns_401(client: TestClient) -> None:
 
 def test_auth_logout_valid_session_returns_200(client: TestClient) -> None:
     token = issue_session_token("alice@example.com")
-    response = client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
+    response = client.post("/api/auth/logout", headers={"Authorization": f"Bearer {token}"})
     assert response.status_code == 200
     assert response.json() == {"ok": True}
 
 
 def test_auth_logout_no_session_returns_401(client: TestClient) -> None:
-    response = client.post("/auth/logout")
+    response = client.post("/api/auth/logout")
     assert response.status_code == 401
 
 
@@ -163,7 +163,7 @@ def test_auth_google_missing_session_secret_returns_503(
     )
     monkeypatch.delenv("SESSION_SECRET", raising=False)
 
-    response = client.post("/auth/google", json={"id_token": "fake-valid-token"})
+    response = client.post("/api/auth/google", json={"id_token": "fake-valid-token"})
 
     assert response.status_code == 503
     assert response.json() == {

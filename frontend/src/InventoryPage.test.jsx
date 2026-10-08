@@ -11,7 +11,7 @@ import { API_BASE_URL } from './api.js'
 const DECIDED_SELL_ITEM = {
   id: 1,
   photo_path: '/x/uploads/a.jpg',
-  photo_url: '/uploads/a.jpg',
+  photo_url: '/api/uploads/a.jpg',
   identified_name: 'Cordless Drill',
   category: 'Power Tools',
   brand: 'Bosch',
@@ -40,7 +40,7 @@ const LISTED_ITEM = {
 const PENDING_ITEM = {
   id: 3,
   photo_path: '/x/uploads/c.jpg',
-  photo_url: '/uploads/c.jpg',
+  photo_url: '/api/uploads/c.jpg',
   identified_name: null,
   category: null,
   brand: null,
@@ -75,14 +75,14 @@ function renderInventoryPage() {
   )
 }
 
-// Mocks `fetch` so `GET /items...` (list) and `PATCH /items/:id/status`
-// resolve via `itemsHandler`/`patchHandler`, while `GET /uploads/...` (each
+// Mocks `fetch` so `GET /api/items...` (list) and `PATCH /api/items/:id/status`
+// resolve via `itemsHandler`/`patchHandler`, while `GET /api/uploads/...` (each
 // item's authenticated photo thumbnail fetch, sandbox-dfr.5) resolves to a
 // fake Blob response -- a blanket mock can't tell these apart, and the
 // items-shaped response has no `.blob()` method the photo hook needs.
 function mockInventoryFetch({ itemsHandler, patchHandler }) {
   fetch.mockImplementation((url, options = {}) => {
-    if (typeof url === 'string' && url.includes('/uploads/')) {
+    if (typeof url === 'string' && url.includes('/api/uploads/')) {
       return Promise.resolve({
         ok: true,
         status: 200,
@@ -125,16 +125,16 @@ describe('InventoryPage', () => {
       expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
     })
 
-    expect(fetch).toHaveBeenCalledWith(`${API_BASE_URL}/items`, expect.anything())
+    expect(fetch).toHaveBeenCalledWith(`${API_BASE_URL}/api/items`, expect.anything())
     expect(screen.getByText(/old bookshelf/i)).toBeInTheDocument()
     expect(screen.getByText(/item #3/i)).toBeInTheDocument()
 
     // Each photo thumbnail is fetched authenticated (sandbox-dfr.5) and
     // rendered as a `blob:` object URL, not a raw unauthenticated
-    // `${API_BASE_URL}${photo_url}` <img src> -- GET /uploads/{filename}
+    // `${API_BASE_URL}${photo_url}` <img src> -- GET /api/uploads/{filename}
     // now requires an Authorization header a plain <img src> can't send.
     await waitFor(() => {
-      expect(fetch).toHaveBeenCalledWith(`${API_BASE_URL}/uploads/a.jpg`, expect.anything())
+      expect(fetch).toHaveBeenCalledWith(`${API_BASE_URL}/api/uploads/a.jpg`, expect.anything())
     })
 
     await waitFor(() => {
@@ -201,7 +201,7 @@ describe('InventoryPage', () => {
 
   it("shows 'Photo unavailable' on a tile whose authenticated photo fetch fails (404)", async () => {
     fetch.mockImplementation((url) => {
-      if (typeof url === 'string' && url.includes('/uploads/')) {
+      if (typeof url === 'string' && url.includes('/api/uploads/')) {
         return Promise.resolve({ ok: false, status: 404, statusText: 'Not Found' })
       }
       return Promise.resolve({ ok: true, status: 200, json: async () => [DECIDED_SELL_ITEM] })
@@ -222,7 +222,7 @@ describe('InventoryPage', () => {
       resolvePhotoFetch = resolve
     })
     fetch.mockImplementation((url) => {
-      if (typeof url === 'string' && url.includes('/uploads/')) {
+      if (typeof url === 'string' && url.includes('/api/uploads/')) {
         return photoPromise
       }
       return Promise.resolve({ ok: true, status: 200, json: async () => [DECIDED_SELL_ITEM] })
@@ -261,7 +261,7 @@ describe('InventoryPage', () => {
     await waitFor(() => {
       expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
     })
-    const itemCalls = () => fetch.mock.calls.filter(([url]) => !String(url).includes('/uploads/'))
+    const itemCalls = () => fetch.mock.calls.filter(([url]) => !String(url).includes('/api/uploads/'))
     expect(itemCalls()).toHaveLength(1)
 
     // Tile counts cover every item, whatever the status filter.
@@ -298,13 +298,13 @@ describe('InventoryPage', () => {
     const multi = {
       ...DECIDED_SELL_ITEM,
       photos: [
-        { id: 1, url: '/uploads/a.jpg', position: 0 },
-        { id: 2, url: '/uploads/b.jpg', position: 1 },
+        { id: 1, url: '/api/uploads/a.jpg', position: 0 },
+        { id: 2, url: '/api/uploads/b.jpg', position: 1 },
       ],
     }
     const single = {
       ...LISTED_ITEM,
-      photos: [{ id: 3, url: '/uploads/c.jpg', position: 0 }],
+      photos: [{ id: 3, url: '/api/uploads/c.jpg', position: 0 }],
     }
     fetch.mockResolvedValue({ ok: true, status: 200, json: async () => [multi, single] })
     renderInventoryPage()
@@ -416,7 +416,7 @@ describe('InventoryPage', () => {
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
-        `${API_BASE_URL}/items/1/status`,
+        `${API_BASE_URL}/api/items/1/status`,
         expect.objectContaining({
           method: 'PATCH',
           body: JSON.stringify({ status: 'listed' }),
@@ -603,7 +603,7 @@ describe('InventoryPage', () => {
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
-        `${API_BASE_URL}/items/1`,
+        `${API_BASE_URL}/api/items/1`,
         expect.objectContaining({ method: 'DELETE' }),
       )
     })
@@ -634,7 +634,7 @@ describe('InventoryPage', () => {
     expect(screen.getByRole('button', { name: /^delete$/i })).toHaveFocus()
 
     expect(fetch).not.toHaveBeenCalledWith(
-      `${API_BASE_URL}/items/1`,
+      `${API_BASE_URL}/api/items/1`,
       expect.objectContaining({ method: 'DELETE' }),
     )
     expect(screen.getByText(/cordless drill/i)).toBeInTheDocument()
@@ -730,7 +730,7 @@ describe('InventoryPage', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(trigger).toHaveFocus()
     expect(fetch).not.toHaveBeenCalledWith(
-      `${API_BASE_URL}/items/1`,
+      `${API_BASE_URL}/api/items/1`,
       expect.objectContaining({ method: 'DELETE' }),
     )
   })

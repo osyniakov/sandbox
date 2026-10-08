@@ -16,5 +16,7 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+    environment:
+      - VITE_DEV_API_PROXY=http://backend:8000
     depends_on:
       - backend

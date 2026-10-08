@@ -2,7 +2,7 @@ import { apiFetch } from './api.js'
 
 // Module-level, url-keyed cache of authenticated photo blobs, shared by the
 // display hook (useAuthedImageUrl) and the Save path (savePhotos/PhotoCarousel)
-// so each /uploads photo is downloaded once. Only /uploads photos should go
+// so each /api/uploads photo is downloaded once. Only /api/uploads photos should go
 // through it (see isCacheablePhotoUrl).
 //
 // Entry: { promise, blob }. `blob` is set once resolved. Eviction: failed
@@ -14,7 +14,7 @@ export const MAX_ENTRIES = 30
 const cache = new Map()
 
 export function isCacheablePhotoUrl(url) {
-  return typeof url === 'string' && url.startsWith('/uploads/')
+  return typeof url === 'string' && url.startsWith('/api/uploads/')
 }
 
 // Uncached authenticated blob fetch. Typed blob (falls back to the response

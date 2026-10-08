@@ -21,18 +21,28 @@ describe('apiFetch', () => {
     localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'my-token')
     fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
 
-    await apiFetch('/items')
+    await apiFetch('/api/items')
 
     expect(fetch).toHaveBeenCalledTimes(1)
     const [url, options] = fetch.mock.calls[0]
-    expect(url).toBe(`${API_BASE_URL}/items`)
+    expect(url).toBe(`${API_BASE_URL}/api/items`)
     expect(options.headers.get('Authorization')).toBe('Bearer my-token')
+  })
+
+  it('with no VITE_API_BASE_URL set, requests hit a relative same-origin /api URL', async () => {
+    // The default (unset) base URL is '' so the URL is relative to the origin.
+    expect(API_BASE_URL).toBe('')
+    fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
+
+    await apiFetch('/api/items')
+
+    expect(fetch.mock.calls[0][0]).toBe('/api/items')
   })
 
   it('omits the Authorization header when no token is present', async () => {
     fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
 
-    await apiFetch('/items')
+    await apiFetch('/api/items')
 
     expect(fetch).toHaveBeenCalledTimes(1)
     const [, options] = fetch.mock.calls[0]
@@ -43,7 +53,7 @@ describe('apiFetch', () => {
     localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'my-token')
     fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
 
-    await apiFetch('/items', {
+    await apiFetch('/api/items', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: '{}',
@@ -64,7 +74,7 @@ describe('apiFetch', () => {
     localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, 'my-token')
     fetch.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({}) })
 
-    await apiFetch('/items', { headers: makeHeaders() })
+    await apiFetch('/api/items', { headers: makeHeaders() })
 
     const [, options] = fetch.mock.calls[0]
     expect(options.headers.get('X-Custom')).toBe('abc')
@@ -82,7 +92,7 @@ describe('apiFetch', () => {
     const listener = vi.fn()
     window.addEventListener(SESSION_EXPIRED_EVENT, listener)
 
-    const response = await apiFetch('/items')
+    const response = await apiFetch('/api/items')
 
     expect(response.status).toBe(401)
     expect(localStorage.getItem(SESSION_TOKEN_STORAGE_KEY)).toBeNull()
@@ -98,11 +108,25 @@ describe('apiFetch', () => {
     const listener = vi.fn()
     window.addEventListener(SESSION_EXPIRED_EVENT, listener)
 
-    await apiFetch('/items')
+    await apiFetch('/api/items')
 
     expect(listener).not.toHaveBeenCalled()
     expect(localStorage.getItem(SESSION_TOKEN_STORAGE_KEY)).toBe('my-token')
 
     window.removeEventListener(SESSION_EXPIRED_EVENT, listener)
+  })
+})
+
+describe('API_BASE_URL normalization', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.resetModules()
+  })
+
+  it('strips trailing slashes from VITE_API_BASE_URL', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://x.app//')
+    vi.resetModules()
+    const mod = await import('./api.js')
+    expect(mod.API_BASE_URL).toBe('https://x.app')
   })
 })

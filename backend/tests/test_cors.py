@@ -53,7 +53,7 @@ def test_default_allowlist_rejects_lan_origin(monkeypatch: pytest.MonkeyPatch) -
     importlib.reload(main_module)
 
     client = TestClient(main_module.app)
-    response = client.get("/health", headers={"Origin": "http://192.168.1.50:5173"})
+    response = client.get("/api/health", headers={"Origin": "http://192.168.1.50:5173"})
 
     assert response.status_code == 200
     assert "access-control-allow-origin" not in response.headers
@@ -65,7 +65,7 @@ def test_default_allowlist_still_accepts_localhost(monkeypatch: pytest.MonkeyPat
     importlib.reload(main_module)
 
     client = TestClient(main_module.app)
-    response = client.get("/health", headers={"Origin": "http://localhost:5173"})
+    response = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
@@ -80,7 +80,7 @@ def test_allowed_origins_env_var_accepts_matching_lan_origin(
     importlib.reload(main_module)
 
     client = TestClient(main_module.app)
-    response = client.get("/health", headers={"Origin": lan_origin})
+    response = client.get("/api/health", headers={"Origin": lan_origin})
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == lan_origin
@@ -94,7 +94,7 @@ def test_allowed_origins_env_var_rejects_nonmatching_origin(
     importlib.reload(main_module)
 
     client = TestClient(main_module.app)
-    response = client.get("/health", headers={"Origin": "http://10.0.0.9:5173"})
+    response = client.get("/api/health", headers={"Origin": "http://10.0.0.9:5173"})
 
     assert response.status_code == 200
     assert "access-control-allow-origin" not in response.headers
@@ -110,7 +110,7 @@ def test_allowed_origins_env_var_supports_comma_separated_list(
     importlib.reload(main_module)
 
     client = TestClient(main_module.app)
-    response = client.get("/health", headers={"Origin": "http://192.168.1.50:5173"})
+    response = client.get("/api/health", headers={"Origin": "http://192.168.1.50:5173"})
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://192.168.1.50:5173"
@@ -124,7 +124,7 @@ def test_malformed_allowed_origins_falls_back_to_default(
     importlib.reload(main_module)
 
     client = TestClient(main_module.app)
-    response = client.get("/health", headers={"Origin": "http://localhost:5173"})
+    response = client.get("/api/health", headers={"Origin": "http://localhost:5173"})
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://localhost:5173"
@@ -138,7 +138,7 @@ def test_empty_string_allowed_origins_falls_back_to_default(
     importlib.reload(main_module)
 
     client = TestClient(main_module.app)
-    response = client.get("/health", headers={"Origin": "http://127.0.0.1:5173"})
+    response = client.get("/api/health", headers={"Origin": "http://127.0.0.1:5173"})
 
     assert response.status_code == 200
     assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5173"

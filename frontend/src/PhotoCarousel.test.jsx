@@ -12,7 +12,7 @@ vi.mock('./imageResize.js', () => ({
 function makeItem(count, extra = {}) {
   const photos = Array.from({ length: count }, (_, i) => ({
     id: i + 1,
-    url: `/uploads/p${i + 1}.jpg`,
+    url: `/api/uploads/p${i + 1}.jpg`,
     position: i,
   }))
   return {
@@ -32,7 +32,7 @@ const photoResponse = () => ({
 
 function mockFetch(handler) {
   fetch.mockImplementation((url, options) => {
-    if (typeof url === 'string' && url.includes('/uploads/')) {
+    if (typeof url === 'string' && url.includes('/api/uploads/')) {
       return Promise.resolve(photoResponse())
     }
     return handler(url, options)
@@ -139,7 +139,7 @@ describe('PhotoCarousel', () => {
 
   it('falls back to photo_url when photos is missing (no Remove)', async () => {
     mockFetch(() => Promise.reject(new Error('unexpected')))
-    const item = { id: 1, identified_name: 'Lamp', photo_url: '/uploads/a.jpg' }
+    const item = { id: 1, identified_name: 'Lamp', photo_url: '/api/uploads/a.jpg' }
     render(<PhotoCarousel item={item} onItemChange={vi.fn()} />)
     expect(await screen.findByRole('img')).toHaveAttribute('alt', 'Photo 1 of 1 of Lamp')
     expect(screen.queryByRole('button', { name: /remove photo/i })).not.toBeInTheDocument()
@@ -154,7 +154,7 @@ describe('PhotoCarousel', () => {
     const file = new File(['a'], 'a.jpg', { type: 'image/jpeg' })
     await user.upload(screen.getByTestId('add-photo-input'), file)
     await waitFor(() => expect(onItemChange).toHaveBeenCalledWith(updated))
-    const call = fetch.mock.calls.find(([url]) => url === `${API_BASE_URL}/items/7/photos`)
+    const call = fetch.mock.calls.find(([url]) => url === `${API_BASE_URL}/api/items/7/photos`)
     expect(call[1].method).toBe('POST')
     expect(call[1].body.getAll('photos')).toHaveLength(1)
   })
@@ -200,7 +200,7 @@ describe('PhotoCarousel', () => {
     await user.click(screen.getByRole('button', { name: 'Remove' }))
     await waitFor(() => expect(onItemChange).toHaveBeenCalledWith(updated))
     const call = fetch.mock.calls.find(([, o]) => o?.method === 'DELETE')
-    expect(call[0]).toBe(`${API_BASE_URL}/items/7/photos/2`)
+    expect(call[0]).toBe(`${API_BASE_URL}/api/items/7/photos/2`)
   })
 
   it('shows the error when removal fails with 409', async () => {
@@ -300,7 +300,7 @@ describe('PhotoCarousel', () => {
       navigator.canShare = () => true
       navigator.share = vi.fn().mockResolvedValue()
       render(<PhotoCarousel item={makeItem(2)} onItemChange={vi.fn()} />)
-      await waitFor(() => expect(fetch.mock.calls.filter((c) => c[0].includes('/uploads/')).length).toBeGreaterThanOrEqual(2))
+      await waitFor(() => expect(fetch.mock.calls.filter((c) => c[0].includes('/api/uploads/')).length).toBeGreaterThanOrEqual(2))
       await new Promise((r) => setTimeout(r, 50))
       const before = fetch.mock.calls.length
       fireEvent.click(screen.getByRole('button', { name: 'Save all photos' }))
@@ -315,7 +315,7 @@ describe('PhotoCarousel', () => {
       navigator.share = vi.fn().mockResolvedValue()
       render(<PhotoCarousel item={makeItem(3)} onItemChange={vi.fn()} />)
       await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledTimes(3))
-      const uploads = fetch.mock.calls.filter((c) => c[0].includes('/uploads/')).map((c) => c[0])
+      const uploads = fetch.mock.calls.filter((c) => c[0].includes('/api/uploads/')).map((c) => c[0])
       expect(uploads).toHaveLength(3)
       expect(new Set(uploads).size).toBe(3)
     })
@@ -325,7 +325,7 @@ describe('PhotoCarousel', () => {
       fetch.mockImplementation(
         (url) =>
           new Promise((resolve) => {
-            if (url.includes('/uploads/')) releases.push(() => resolve(photoResponse()))
+            if (url.includes('/api/uploads/')) releases.push(() => resolve(photoResponse()))
             else resolve({ ok: true, status: 200, json: async () => makeItem(1) })
           }),
       )
@@ -337,7 +337,7 @@ describe('PhotoCarousel', () => {
       await waitFor(() => expect(onItemChange).toHaveBeenCalled())
       releases.forEach((r) => r())
       await new Promise((r) => setTimeout(r, 20))
-      expect(peekPhotoBlob('/uploads/p1.jpg')).toBeUndefined()
+      expect(peekPhotoBlob('/api/uploads/p1.jpg')).toBeUndefined()
     })
 
     it('shows a tap-again status, without downloading, on NotAllowedError after awaiting', async () => {
@@ -355,7 +355,7 @@ describe('PhotoCarousel', () => {
       mockFetch(() => Promise.reject(new Error('unexpected')))
       render(<PhotoCarousel item={makeItem(2)} onItemChange={vi.fn()} />)
       await new Promise((r) => setTimeout(r, 30))
-      expect(fetch.mock.calls.filter((c) => c[0].includes('/uploads/')).length).toBe(2) // images only
+      expect(fetch.mock.calls.filter((c) => c[0].includes('/api/uploads/')).length).toBe(2) // images only
       fireEvent.click(screen.getByRole('button', { name: 'Save photo 1' }))
       await waitFor(() => expect(downloads).toEqual(['drill-1.jpg']))
     })

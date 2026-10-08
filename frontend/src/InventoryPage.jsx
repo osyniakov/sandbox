@@ -32,7 +32,7 @@ const DONE_STATUSES = ['listed', 'given_away', 'disposed']
 // One unfiltered request: the decision tiles need counts for every decision
 // regardless of the active filters, so filtering happens in memory.
 async function fetchItems(signal) {
-  const response = await apiFetch('/items', { signal })
+  const response = await apiFetch('/api/items', { signal })
   if (!response.ok) {
     // A 401 means the session expired while this page was open -- apiFetch
     // (api.js) has already cleared the stale token and dispatched
@@ -49,7 +49,7 @@ async function fetchItems(signal) {
 }
 
 async function deleteItem(id, signal) {
-  const response = await apiFetch(`/items/${id}`, {
+  const response = await apiFetch(`/api/items/${id}`, {
     method: 'DELETE',
     signal,
   })
@@ -82,11 +82,11 @@ function lowConfidenceCopy(item) {
 // Lists every `Item` (photo thumbnail, decision, status), filterable in
 // memory by status (chips) and decision (tiles), with per-item
 // buttons to manually advance status to any currently-valid next state
-// via `PATCH /items/{id}/status`. Which statuses are valid next states is
+// via `PATCH /api/items/{id}/status`. Which statuses are valid next states is
 // NOT duplicated here -- it's read directly from each item's
 // `valid_next_statuses` field, which the backend derives server-side from
 // `MANUAL_STATUS_TRANSITIONS` (see backend/app/main.py) and includes in
-// every `GET /items`/`GET /items/{id}` response (sandbox-yqf.21).
+// every `GET /api/items`/`GET /api/items/{id}` response (sandbox-yqf.21).
 function InventoryPage() {
   const [items, setItems] = useState([])
   const [statusFilter, setStatusFilter] = useState('')
