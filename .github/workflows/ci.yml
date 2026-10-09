@@ -53,3 +53,43 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  image:
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+
+      # VITE_GOOGLE_CLIENT_ID is a build-time placeholder, not a secret.
+      - name: Build image
+        run: docker build --build-arg VITE_GOOGLE_CLIENT_ID=ci-placeholder -t sandbox:ci .
+
+      - name: Start container
+        run: >
+          docker run -d --name app -p 8000:8000
+          -e SESSION_SECRET=ci-only-not-secret
+          -e DATA_DIR=/tmp/data
+          sandbox:ci
+
+      - name: Wait for health
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/api/health || true)
+            if [ "$code" = "200" ]; then
+              echo "healthy after $i attempt(s)"
+              exit 0
+            fi
+            echo "attempt $i: got HTTP $code"
+            sleep 2
+          done
+          echo "health check never returned 200"
+          exit 1
+
+      - name: Check frontend is served
+        run: curl -fsS http://localhost:8000/ | grep -q '<div id="root">'
+
+      - name: Container logs and cleanup
+        if: always()
+        run: |
+          docker logs app || true
+          docker rm -f app || true
